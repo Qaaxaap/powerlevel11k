@@ -692,18 +692,49 @@ function _p11k_prompt() {
   __p11k_last_bg='default'
   _p11k_render_line "${right[@]}"
   local right_prompt=$__p11k_out
-  # 两行布局：第一行 left+right（RPROMPT 右对齐），第二行 left2。
-  # 注意：right 元素里 newline 之后的元素 MVP 阶段合并进 RPROMPT
-  # （终端 RPROMPT 只右对齐最后一行，第二行右对齐需空格填充，TODO）。
+  # 两行布局：第一行 left+right（RPROMPT 原生右对齐），
+  # 第二行 left2 + right2（right2 用 gap 空格填充右对齐）。
   PROMPT="$left_prompt$POWERLEVEL9K_PROMPT_ADD_NEWLINE_PREFIX"
   RPROMPT="$right_prompt"
   if (( ${#line2} > 0 )); then
+    # 第二行 left
     __p11k_out=''
     __p11k_seg_count=0
     __p11k_last_bg='default'
     _p11k_render_line "${line2[@]}"
+    local left2=$__p11k_out
+    # 第二行 right（right 元素里 newline 之后的部分）
+    local right2=''
+    local -a right2_elems=()
+    local r_split=0 r_name
+    for r_name in "${right[@]}"; do
+      if [[ $r_name == newline ]]; then
+        r_split=1
+        continue
+      fi
+      (( r_split )) && right2_elems+=("$r_name")
+    done
+    if (( ${#right2_elems} > 0 )); then
+      __p11k_out=''
+      __p11k_seg_count=0
+      __p11k_last_bg='default'
+      _p11k_render_line "${right2_elems[@]}"
+      right2=$__p11k_out
+    fi
+    if [[ -n $right2 ]]; then
+      # gap 填充：可见宽度 = 去掉 %{...%} 与 %K{}/%F{} 转义后的长度
+      # （近似宽度，CJK 字符按 1 列计；精确宽度后续对齐 p10k）
+      # 可见宽度：用 sed 去掉 %{...%} 与 %K{}/%F{}/%B{} 转义后数长度
+      # （近似宽度，CJK 按 1 列计；精确宽度后续对齐 p10k）
+      local lw rw gap
+      lw=${#$(print -rn -- "$left2" | sed -E 's/%\{[^}]*\}//g; s/%[KFB]\{[^}]*\}//g')}
+      rw=${#$(print -rn -- "$right2" | sed -E 's/%\{[^}]*\}//g; s/%[KFB]\{[^}]*\}//g')}
+      gap=$(( COLUMNS - lw - rw ))
+      (( gap > 0 )) && left2+="${(l:$gap:: :)}"
+      left2+=$right2
+    fi
     PROMPT+="
-$__p11k_out"
+$left2"
   fi
   PROMPT+=$POWERLEVEL9K_PROMPT_ADD_NEWLINE_SUFFIX
   PROMPT+=" "
