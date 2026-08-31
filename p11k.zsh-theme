@@ -27,6 +27,9 @@ fi
 # 重复 source 保护：typeset -gr 二次定义会报 read-only 错误。
 (( $+__p11k_root_dir )) || typeset -gr __p11k_root_dir=${${(%):-%x}:A:h}
 (( $+__p11k_zdir )) || typeset -gr __p11k_zdir=$__p11k_root_dir/zsh
+# instant prompt 缓存目录（对齐 p10k：~/.cache 下）
+(( $+__p11k_cache_dir )) || typeset -gr __p11k_cache_dir=${XDG_CACHE_HOME:-$HOME/.cache}/p11k
+zmodload zsh/files 2>/dev/null || true
 
 # ────────────────────────── 配置加载 ──────────────────────────
 
@@ -45,6 +48,15 @@ fi
 # p10k 用 _p9k_init_lines 拆行；MVP 简化为两行：
 #   LEFT 元素按序渲染到 PROMPT；第一个 newline 之后的部分是第二行。
 typeset -ga __p11k_left_lines __p11k_right_lines
+
+# instant prompt 渲染时跳过的动态段（值会变或需子进程，对齐 p10k 的
+# instant_prompt_* 缺失即跳过行为）。__p11k_instant=1 时 _p11k_render_line
+# 跳过这些段。
+typeset -ga __p11k_dynamic_segs=(vcs status command_execution_time background_jobs \
+  time load ram swap disk_usage battery todo timewarrior taskwarrior nordvpn kubecontext)
+
+# instant prompt 缓存 sig 去重表（会话内每目录只 dump 一次）
+typeset -gA _p11k_dumped_instant_prompt_sigs
 
 # ────────────────────────── 渲染核心 ──────────────────────────
 
@@ -708,6 +720,8 @@ function _p11k_seg_vcs() {
 function _p11k_render_line() {
   local name
   for name in "$@"; do
+    # instant 渲染：跳过动态段（vcs/time/状态等）
+    (( ${+__p11k_instant} )) && [[ ${__p11k_dynamic_segs[(I)$name]} != 0 ]] && continue
     case $name in
       newline) continue;;
       os_icon) _p11k_seg_os_icon;;
@@ -787,6 +801,19 @@ function _p11k_render_line() {
   done
 }
 
+# _p11k_pad <left> <right>：右对齐拼接（gap 空格填充；宽度用 sed 剥
+# %{...%} 与 %K{}/%F{}/%B{} 转义后估算，CJK 按 1 列计，近似宽度）。
+function _p11k_pad() {
+  emulate -L zsh
+  local lw=${#$(print -rn -- "$1" | sed -E 's/%\{[^}]*\}//g; s/%[KFB]\{[^}]*\}//g')}
+  local rw=${#$(print -rn -- "$2" | sed -E 's/%\{[^}]*\}//g; s/%[KFB]\{[^}]*\}//g')}
+  local gap=$(( COLUMNS - lw - rw ))
+  local out=$1
+  (( gap > 0 )) && out+="${(l:$gap:: :)}"
+  out+=$2
+  print -rn -- "$out"
+}
+
 # 主渲染：precmd 调用。对齐 p10k 的布局：
 #   第一行 = LEFT 首个 newline 之前 + RPROMPT（右对齐）
 #   第二行 = LEFT 首个 newline 之后
@@ -850,16 +877,7 @@ function _p11k_prompt() {
       right2=$__p11k_out
     fi
     if [[ -n $right2 ]]; then
-      # gap 填充：可见宽度 = 去掉 %{...%} 与 %K{}/%F{} 转义后的长度
-      # （近似宽度，CJK 字符按 1 列计；精确宽度后续对齐 p10k）
-      # 可见宽度：用 sed 去掉 %{...%} 与 %K{}/%F{}/%B{} 转义后数长度
-      # （近似宽度，CJK 按 1 列计；精确宽度后续对齐 p10k）
-      local lw rw gap
-      lw=${#$(print -rn -- "$left2" | sed -E 's/%\{[^}]*\}//g; s/%[KFB]\{[^}]*\}//g')}
-      rw=${#$(print -rn -- "$right2" | sed -E 's/%\{[^}]*\}//g; s/%[KFB]\{[^}]*\}//g')}
-      gap=$(( COLUMNS - lw - rw ))
-      (( gap > 0 )) && left2+="${(l:$gap:: :)}"
-      left2+=$right2
+      left2=$(_p11k_pad "$left2" "$right2")
     fi
     PROMPT+="
 $left2"
@@ -883,6 +901,8 @@ function _p11k_precmd() {
   # gitstatus：异步查询当前目录（失败不传播，避免钩子返回非零）
   (( ${+functions[_p11k_gitstatus_query]} )) && _p11k_gitstatus_query || true
   _p11k_prompt
+  # instant prompt 缓存：首次渲染后写入（下次启动秒显）
+  _p11k_maybe_dump_instant_prompt
 }
 
 # preexec：记录命令开始时间
@@ -894,6 +914,194 @@ function _p11k_preexec() {
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _p11k_precmd
 add-zsh-hook preexec _p11k_preexec
+
+# ────────────────────────── instant prompt（对齐 p10k） ──────────────────────────
+# 机制（复刻 p10k）：
+#   生成：precmd 首次渲染后同步 dump（无 p10k 的 zle -F 调度，简化）；
+#        内容文件按 PWD 长度分文件，文件内多条记录用  分隔、
+#        key=PWD:ssh:root 匹配（对齐 p10k 的 prompt-${#pwd} 布局）。
+#   显示：用户 .zshrc 顶部 source 缓存模板（或本主题末尾兜底 source）。
+#        模板校验 tty/交互/zle 后打印 instant prompt 文本（terminfo[sc]
+#        保存光标），然后把 stdout 重定向进临时文件（吞掉 .zshrc 后续
+#        输出），unsetopt prompt_cr prompt_sp + DISABLE_UPDATE_PROMPT=true
+#        防止 zsh/oh-my-zsh 重绘 prompt 覆盖。
+#   清理：precmd 首钩子 sched +0 -> cleanup：恢复 fd、terminfo[rc] 恢复
+#        光标 + terminfo[ed] 清屏到末尾、cat 重放被吞的输出、
+#        setopt prompt_cr prompt_sp。
+
+# instant 版渲染：三段式（对齐 p10k 的 _p9k_set_instant_prompt）：
+#   _p11k__instant_prompt = 第一行(含换行)  第二行(含 gap 右对齐) 
+# 与 _p11k_prompt 的拆行/渲染逻辑保持同步；动态段被 __p11k_dynamic_segs 过滤。
+function _p11k_set_instant_prompt() {
+  emulate -L zsh
+  local -a left right line1 line2
+  left=("${POWERLEVEL9K_LEFT_PROMPT_ELEMENTS[@]}")
+  right=("${POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS[@]}")
+  local name split=0
+  for name in "${left[@]}"; do
+    if [[ $name == newline ]]; then
+      split=1
+      continue
+    fi
+    if (( split )); then
+      line2+=("$name")
+    else
+      line1+=("$name")
+    fi
+  done
+  __p11k_instant=1
+  __p11k_out=''
+  __p11k_seg_count=0
+  __p11k_last_bg=default
+  _p11k_render_line "${line1[@]}"
+  local l1=$__p11k_out
+  local left2=''
+  if (( ${#line2} > 0 )); then
+    __p11k_out=''
+    __p11k_seg_count=0
+    __p11k_last_bg=default
+    _p11k_render_line "${line2[@]}"
+    left2=$__p11k_out
+  fi
+  # 第二行右侧（RIGHT 里 newline 之后的元素）
+  local right2=''
+  local -a right2_elems=()
+  local r_split=0 r_name
+  for r_name in "${right[@]}"; do
+    if [[ $r_name == newline ]]; then
+      r_split=1
+      continue
+    fi
+    (( r_split )) && right2_elems+=("$r_name")
+  done
+  if (( ${#right2_elems} > 0 )); then
+    __p11k_out=''
+    __p11k_seg_count=0
+    __p11k_last_bg=default
+    _p11k_render_line "${right2_elems[@]}"
+    right2=$__p11k_out
+  fi
+  __p11k_instant=0
+  if [[ -n $right2 ]]; then
+    left2=$(_p11k_pad "$left2" "$right2")
+  fi
+  # 注意：$'...' 在双引号字符串内是字面文本，必须先赋值给变量
+  local lf=$'\n' us=$'\x1f'
+  _p11k__instant_prompt="$l1$POWERLEVEL9K_PROMPT_ADD_NEWLINE_PREFIX$lf$left2$POWERLEVEL9K_PROMPT_ADD_NEWLINE_SUFFIX $us"
+}
+
+# 写缓存：root_file（一次性模板）+ prompt_file（按 key 追加记录）
+function _p11k_dump_instant_prompt() {
+  emulate -L zsh
+  local user=${(%):-%n}
+  local root_dir=$__p11k_cache_dir
+  local prompt_dir=$root_dir/p11k-$user
+  local root_file=$root_dir/p11k-instant-prompt-$user.zsh
+  local prompt_file=$prompt_dir/prompt-${#PWD}
+  [[ -d $prompt_dir ]] || mkdir -p $prompt_dir || return 1
+  [[ -w $root_dir && -w $prompt_dir ]] || return 1
+  if [[ ! -e $root_file ]]; then
+    local tmp=$root_file.tmp.$$
+    {
+      cat >$tmp <<'P11K_EOF'
+[[ -t 0 && -t 1 && -t 2 && -o interactive && -o zle && -o no_xtrace ]] || return 0
+() {
+  # 防重复 source（主题兜底 source 时）
+  (( ${+__p11k_instant_prompt_sourced} || ${+__p11k_instant_prompt_active} )) && return
+  [[ $POWERLEVEL9K_INSTANT_PROMPT != off && $POWERLEVEL9K_DISABLE_INSTANT_PROMPT != true ]] || return
+  zmodload zsh/langinfo zsh/terminfo zsh/system 2>/dev/null || return
+  (( terminfo[colors] >= 8 )) || return
+  (( $+terminfo[sc] && $+terminfo[rc] && $+terminfo[ed] )) || return
+  local user=${(%):-%n}
+  local pwd=${(%):-%/}
+  [[ $pwd == /* ]] || return
+  local prompt_dir=${XDG_CACHE_HOME:-$HOME/.cache}/p11k/p11k-$user
+  local prompt_file=$prompt_dir/prompt-${#pwd}
+  local rs=$'' us=$''
+  local key=$pwd:${${SSH_CONNECTION:+1}:-0}:${(%):-%#}
+  local content
+  { content="$(<$prompt_file)" } 2>/dev/null || return
+  local tail=${content##*$rs$key$us}
+  (( ${#tail} == ${#content} )) && return
+  local -a t=("${(@ps:$us:)${tail%%$rs*}}")
+  (( $#t >= 2 )) || return
+  local cr=$'
+' lf=$'
+' esc=$'\e['
+  local -i height=${POWERLEVEL9K_INSTANT_PROMPT_COMMAND_LINES:-1}
+  local -i prompt_height=${#${t[1]//[^$lf]}}
+  (( height += prompt_height ))
+  local out=${(%):-%b%k%f%s%u}
+  out+="${(%):-$cr%E}"
+  (( height )) && out+="${(pl.$height..$lf.)}$esc${height}A"
+  out+="$terminfo[sc]"
+  out+=${(%):-"$t[1]$t[2]"}
+  print -rn -- "${out}${esc}?2004h" || return
+  if (( $+commands[stty] )); then
+    command stty -icanon 2>/dev/null
+  fi
+  local output=${TMPDIR:-/tmp}/p11k-instant-prompt-output-${(%):-%n}-$$
+  : > $output 2>/dev/null || return
+  local fd_null
+  sysopen -ru fd_null /dev/null || return
+  exec {__p11k_fd_0}<&0 {__p11k_fd_1}>&1 {__p11k_fd_2}>&2 0<&$fd_null 1>$output
+  exec 2>&1 {fd_null}>&-
+  typeset -g __p11k_instant_prompt_active=1
+  typeset -g __p11k_instant_prompt_output=$output
+  function _p11k_instant_prompt_cleanup() {
+    (( ZSH_SUBSHELL == 0 && ${+__p11k_instant_prompt_active} )) || return 0
+    unset __p11k_instant_prompt_active
+    exec 0<&$__p11k_fd_0 1>&$__p11k_fd_1 2>&$__p11k_fd_2 {__p11k_fd_0}>&- {__p11k_fd_1}>&- {__p11k_fd_2}>&-
+    unset __p11k_fd_0 __p11k_fd_1 __p11k_fd_2
+    print -rn -- $terminfo[rc]${(%):-%b%k%f%s%u}$terminfo[ed]
+    if [[ -s $__p11k_instant_prompt_output ]]; then
+      command cat $__p11k_instant_prompt_output 2>/dev/null
+    fi
+    zshexit_functions=(${zshexit_functions:#_p11k_instant_prompt_cleanup})
+    zmodload -F zsh/files b:zf_rm 2>/dev/null
+    zf_rm -f -- $__p11k_instant_prompt_output 2>/dev/null
+  }
+  function _p11k_instant_prompt_precmd_first() {
+    function _p11k_instant_prompt_sched_last() {
+      (( ${+__p11k_instant_prompt_active} )) || return 0
+      _p11k_instant_prompt_cleanup 1
+      setopt no_local_options prompt_cr prompt_sp
+    }
+    zmodload zsh/sched 2>/dev/null
+    sched +0 _p11k_instant_prompt_sched_last
+    precmd_functions=(${(@)precmd_functions:#_p11k_instant_prompt_precmd_first})
+  }
+  zshexit_functions=(_p11k_instant_prompt_cleanup $zshexit_functions)
+  precmd_functions=(_p11k_instant_prompt_precmd_first $precmd_functions)
+  DISABLE_UPDATE_PROMPT=true
+  typeset -gi __p11k_instant_prompt_sourced=1
+} && unsetopt prompt_cr prompt_sp || true
+P11K_EOF
+    } 2>/dev/null || return 1
+    zf_mv -f -- $tmp $root_file || return 1
+  fi
+  # 内容文件：同 key 记录已存在则清空重写（防无限膨胀）
+  local sig=$PWD:${${SSH_CONNECTION:+1}:-0}:${(%):-%#}
+  local tmp=$prompt_file.tmp.$$
+  zf_mv -f -- $prompt_file $tmp 2>/dev/null
+  if [[ "$(<$tmp)" == *$'\x1e'$sig$'\x1f'* ]] 2>/dev/null; then
+    echo -n >$tmp || return 1
+  fi
+  print -rn -- $'\x1e'$sig$'\x1f'$_p11k__instant_prompt >>$tmp || return 1
+  zf_mv -f -- $tmp $prompt_file || return 1
+}
+
+# precmd 里调用：会话内每 sig 只 dump 一次；instant 已激活时不 dump
+function _p11k_maybe_dump_instant_prompt() {
+  emulate -L zsh
+  [[ $POWERLEVEL9K_INSTANT_PROMPT != off && $POWERLEVEL9K_DISABLE_INSTANT_PROMPT != true ]] || return
+  (( ${+__p11k_instant_prompt_active} )) && return
+  local sig=$PWD:${${SSH_CONNECTION:+1}:-0}:${(%):-%#}
+  (( ${+_p11k_dumped_instant_prompt_sigs[$sig]} )) && return
+  _p11k_set_instant_prompt || return
+  _p11k_dump_instant_prompt || return
+  _p11k_dumped_instant_prompt_sigs[$sig]=1
+}
 
 # transient prompt（对齐 p10k：POWERLEVEL9K_TRANSIENT_PROMPT=always/same-dir/off）。
 # 命令执行后 prompt 缩为单行 prompt_char；same-dir 模式仅目录不变时触发。
@@ -920,6 +1128,16 @@ function _p11k_zle_keymap_select() {
   zle && zle .reset-prompt
 }
 add-zle-hook-widget keymap-select _p11k_zle_keymap_select 2>/dev/null
+
+# ────────────────────────── instant prompt 兜底加载 ──────────────────────────
+# 通常用户在 .zshrc 顶部自行 source 缓存模板（效果最好：prompt 在 oh-my-zsh
+# 加载前显示）。这里在主题加载时再尝试一次：模板内部有防重，已加载则跳过。
+if [[ -t 0 && -t 1 && -o interactive && -o no_xtrace &&
+      $POWERLEVEL9K_INSTANT_PROMPT != off && $POWERLEVEL9K_DISABLE_INSTANT_PROMPT != true &&
+      ! ${+__p11k_instant_prompt_active} && ! ${+__p11k_instant_prompt_sourced} ]]; then
+  local __p11k_instant_file=$__p11k_cache_dir/p11k-instant-prompt-${(%):-%n}.zsh
+  [[ -r $__p11k_instant_file ]] && source $__p11k_instant_file 2>/dev/null
+fi
 
 # ────────────────────────── gitstatus 初始化 ──────────────────────────
 
