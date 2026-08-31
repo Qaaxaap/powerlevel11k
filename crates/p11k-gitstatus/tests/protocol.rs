@@ -8,7 +8,7 @@ use p11k_gitstatus::protocol::{self, Request, Response, field};
 
 /// 喂入一条请求（不含 MSG_SEP），断言解析成功。
 fn parse(bytes: &[u8]) -> Request {
-    protocol::parse_request(bytes).expect("request")
+    protocol::parse_request(bytes)
 }
 
 /// 请求解析：三字段普通请求（id + dir + diff='1' → skip_index）。
@@ -53,10 +53,11 @@ fn parse_request_hello_handshake() {
     assert!(!r.dir_is_gitdir);
 }
 
-/// EOF：0 字节输入返回 None（daemon 层据此正常退出）。
+/// 空输入：畸形（EOF 由 daemon 层 read 0 字节检测，不会传入本函数）。
 #[test]
-fn parse_request_eof() {
-    assert!(protocol::parse_request(b"").is_none());
+#[should_panic(expected = "empty message")]
+fn parse_request_empty_input() {
+    protocol::parse_request(b"");
 }
 
 /// 畸形：缺少字段分隔符（原版 VERIFY → abort；p11k panic 对齐）。

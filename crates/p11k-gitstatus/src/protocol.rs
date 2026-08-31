@@ -58,12 +58,13 @@ pub struct Request {
 
 /// 从字节流解析一条请求（不含末尾 MSG_SEP）。
 ///
-/// 返回 `None` 表示读到 0 字节（EOF）——调用方应正常退出（exit 0）。
+/// 输入必须非空：EOF 由调用方检测（daemon 层 read 返回 0 字节），
+/// 空消息（两个连续 MSG_SEP）与原版一样属于畸形输入。
 /// 畸形请求（缺字段分隔符、diff 字段非单字节 `'0'`/`'1'`、超过 3 个字段）
 /// 直接 panic：对齐原版 `VERIFY` 失败即 abort（request.cc），daemon 进程终止。
-pub fn parse_request(bytes: &[u8]) -> Option<Request> {
+pub fn parse_request(bytes: &[u8]) -> Request {
     if bytes.is_empty() {
-        return None;
+        panic!("malformed request: empty message");
     }
     let mut parts = bytes.split(|&b| b == FIELD_SEP);
     let id = parts.next().expect("split yields at least one part");
@@ -79,12 +80,12 @@ pub fn parse_request(bytes: &[u8]) -> Option<Request> {
         Some(_) => panic!("malformed request: bad diff field"),
     };
     assert!(parts.next().is_none(), "malformed request: too many fields");
-    Some(Request {
+    Request {
         id: id.to_vec(),
         dir: dir.to_vec(),
         dir_is_gitdir,
         skip_index,
-    })
+    }
 }
 
 /// 响应数据字段的固定顺序索引（0-based）。
