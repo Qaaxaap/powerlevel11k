@@ -466,17 +466,21 @@ function _p11k_seg_vi_mode() {
 
 # context：user@host（与 DEFAULT_USER 相同时不显示，对齐 p10k）
 function _p11k_seg_context() {
-  local user=$USER host=${HOST%%.*}
+  # user/host 在段内展开为实际值（不依赖 prompt 的 %n/%m 转义，
+  # 否则会被 _p11k_prompt_segment 的 % 转义破坏成 %%n）
+  local user=${USER:-$(id -un)}
+  local host=${HOST%%.*}
   [[ $user == ${DEFAULT_USER:-} ]] && return
-  local icon=${POWERLEVEL9K_CONTEXT_DEFAULT_VISUAL_IDENTIFIER_EXPANSION:-''}
+  local icon=$(_p11k_p9k POWERLEVEL9K_CONTEXT_DEFAULT_VISUAL_IDENTIFIER_EXPANSION '')
   local text
   if [[ $user == root ]]; then
-    text=$POWERLEVEL9K_CONTEXT_ROOT_TEMPLATE
+    text=$(_p11k_p9k POWERLEVEL9K_CONTEXT_ROOT_TEMPLATE '%n@%m')
   else
-    text=$POWERLEVEL9K_CONTEXT_TEMPLATE
+    text=$(_p11k_p9k POWERLEVEL9K_CONTEXT_TEMPLATE '%n@%m')
   fi
-  text=${text//%n/$user}
-  text=${text//%m/$host}
+  # zsh 的 // 替换中 % 需转义（\%n 才匹配字面 %n）
+  text=${text//\%n/$user}
+  text=${text//\%m/$host}
   _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_CONTEXT_BACKGROUND 238)" \
     "$(_p11k_p9k POWERLEVEL9K_CONTEXT_FOREGROUND 255)" "$icon" "$text"
   :

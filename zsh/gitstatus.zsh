@@ -89,7 +89,16 @@ function _p11k_gitstatus_query() {
   # 单飞行：上一查询未完成时跳过（对齐 p10k 的异步语义）
   (( ${+__p11k_gitstatus_pending} )) && return 0
   __p11k_gitstatus_pending=1
-  if ! print -rn -- "$__p11k_gitstatus_req_id\x1f$PWD\x1e" >&$__p11k_gitstatus_fd 2>/dev/null; then
+  # GIT_DIR 模式：dir 字段用 :GIT_DIR 前缀（from_dotgit，对齐原版）
+  local qdir=$PWD
+  if [[ -n $GIT_DIR ]]; then
+    if [[ $GIT_DIR == /* ]]; then
+      qdir=":$GIT_DIR"
+    else
+      qdir=":$PWD/$GIT_DIR"
+    fi
+  fi
+  if ! print -rn -- "$__p11k_gitstatus_req_id\x1f$qdir\x1e" >&$__p11k_gitstatus_fd 2>/dev/null; then
     # daemon 已退出（EPIPE 等）：清理 fd 并重启，下个 precmd 恢复
     exec {__p11k_gitstatus_fd}>&- 2>/dev/null
     __p11k_gitstatus_fd=-1
