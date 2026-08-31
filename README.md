@@ -52,6 +52,26 @@ Three practical reasons:
 5. The long tail: remaining segments, configuration wizard, framework
    integrations (oh-my-zsh, prezto, zinit).
 
+## Status
+
+M1 (gitstatusd-compatible daemon) is done: `p11k-d` answers the same
+wire protocol as the original and is byte-identical across a 12-scenario
+differential matrix (modified/deleted/untracked, synthetic 5k-file repo
+and nixpkgs). It can replace gitstatusd via `GITSTATUS_DAEMON`.
+
+A first-party zsh theme (`p11k.zsh-theme`) is under development. It
+sources the same `~/.p10k.zsh` (with default fallbacks for sparse
+configs), renders the core segments, supports
+`POWERLEVEL9K_SHORTEN_STRATEGY`, transient prompt and vi mode, and
+queries git status through `p11k-d` asynchronously.
+
+```zsh
+# oh-my-zsh: ZSH_THEME 里不能用自定义路径，直接 source 替代
+source ~/Projects/powerlevel11k/p11k.zsh-theme
+# 或先 build daemon（主题依赖它）
+cd ~/Projects/powerlevel11k && cargo build --release
+```
+
 ## License
 
 GPLv3. See [LICENSE](LICENSE).
@@ -105,6 +125,24 @@ p11k 从这里接手。计划是：
    后台任务、virtualenv……）。
 4. instant prompt 与 transient prompt，由 zsh 适配层驱动时序。
 5. 长尾：其余分段、配置向导、框架集成（oh-my-zsh、prezto、zinit）。
+
+## 当前状态
+
+M1（gitstatusd 兼容 daemon）已完成：`p11k-d` 与原版走同一线上协议，
+在 12 场景差分矩阵（修改/删除/untracked，5k 合成仓库与 nixpkgs）中
+逐字节一致，可通过 `GITSTATUS_DAEMON` 直接替换 gitstatusd。
+
+第一方 zsh 主题（`p11k.zsh-theme`）开发中：source 同一份
+`~/.p10k.zsh`（精简配置有默认值兜底），渲染核心分段，支持
+`POWERLEVEL9K_SHORTEN_STRATEGY`、transient prompt 与 vi 模式，
+通过 `p11k-d` 异步获取 git 状态。
+
+```zsh
+# 先构建 daemon（主题依赖它）
+cd ~/Projects/powerlevel11k && cargo build --release
+# 在 .zshrc 里加载主题
+source ~/Projects/powerlevel11k/p11k.zsh-theme
+```
 
 ## 许可证
 
