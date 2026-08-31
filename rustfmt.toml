@@ -1,0 +1,6 @@
+# rustfmt 配置。CI 将运行 `cargo fmt --check`（见 CONTRIBUTING.md）。
+#
+# max_width = 100：
+#   与多数 Rust 项目一致，避免超长行；注释行同样受此约束，
+#   详细的实现规格注释请注意断行。
+max_width = 100

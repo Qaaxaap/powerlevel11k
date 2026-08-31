@@ -1,0 +1,31 @@
+# powerlevel11k — Rust workspace
+
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+# 所有 crate 共享的元数据。版本策略：p11k 整体发布（daemon 与 zsh shim 同版本号）。
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+rust-version = "1.85" # edition 2024 的最低支持版本
+
+# workspace 级依赖（各 crate 按需启用，见各 crate 的 Cargo.toml）。
+#
+# - libc：性能内核需要 openat/fstatat/fcntl/kill 等系统调用，
+#   对应原版 gitstatusd 里 index.cc/repo.cc/request.cc 的 POSIX 调用。
+# - git2：M2 阶段引入，用于 git 对象模型（HEAD/分支/远端/tag/stash/
+#   commit summary/revwalk），对应原版对 libgit2 的使用。
+#   M1（协议层）暂不需要，先声明在此。
+[workspace.dependencies]
+libc = "0.2"
+git2 = "0.20"
+
+# 发布构建对齐原版 gitstatusd 的编译配置：其 Makefile 使用 -O3 -std=c++14。
+# p11k 的性能契约（见 CONTRIBUTING.md）要求与 C++ 原版做基准对比，
+# 因此 release 配置从第一天起就按最高优化级别设定。
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
