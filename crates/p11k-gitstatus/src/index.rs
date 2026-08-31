@@ -216,6 +216,23 @@ impl Index {
         out
     }
 
+    /// 用新条目（路径集合与当前相同，调用方保证）仅更新 stat 字段。
+    /// 复用树结构（dirs/subdirs/files 下标）与 untracked 状态，
+    /// 用于 libgit2 racy 写回只改条目 stat 字段的场景——避免大仓库
+    /// 因 stat 变化触发全量重建。
+    pub fn update_stats(&mut self, new_entries: &[IndexEntry]) {
+        for (old, new) in self.entries.iter_mut().zip(new_entries) {
+            old.ino = new.ino;
+            old.fsize = new.fsize;
+            old.mtime_sec = new.mtime_sec;
+            old.mtime_nsec = new.mtime_nsec;
+            old.mode = new.mode;
+            old.stage = new.stage;
+            old.flags_extended = new.flags_extended;
+            old.assume_valid = new.assume_valid;
+        }
+    }
+
     /// 目录权重（对齐 index.cc Weight：1 + subdirs + files）。
     pub fn weight(dir: &IndexDir) -> usize {
         1 + dir.subdirs.len() + dir.files.len()

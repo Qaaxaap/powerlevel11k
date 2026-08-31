@@ -43,6 +43,29 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::Instant;
 
+/// 从 git2 Index 拷贝条目（路径加尾部 NUL，stat 字段取自 git2）。
+fn copy_entries(git_index: &GitIndex) -> Vec<IndexEntry> {
+    git_index
+        .iter()
+        .map(|e| {
+            let mut p = e.path.clone();
+            p.push(0);
+            IndexEntry {
+                path: p,
+                ino: e.ino,
+                fsize: e.file_size,
+                mtime_sec: e.mtime.seconds(),
+                mtime_nsec: e.mtime.nanoseconds(),
+                mode: e.mode,
+                // GIT_INDEX_ENTRY_STAGE_SHIFT = 12（git2 无 stage 访问器）
+                stage: (e.flags >> 12) & 0x3,
+                flags_extended: e.flags_extended,
+                assume_valid: e.flags & git2::IndexEntryFlag::VALID.bits() != 0,
+            }
+        })
+        .collect()
+}
+
 /// 远端信息（tracking 或 push 共用）。
 struct RemoteInfo {
     /// remote 名（如 "origin"）。
@@ -568,8 +591,14 @@ impl Repo {
         stats
     }
 
-    /// 取 index 树：`.git/index` 的 (mtime, size) 未变则复用缓存树
-    /// （保留 untracked cache 状态），否则从 git2 条目重建。
+    /// 取 index 树，三级缓存策略：
+    ///
+    /// 1. `.git/index` 的 (mtime, size) 未变 → 整树复用（含 entries 与
+    ///    untracked cache 状态）。
+    /// 2. stat 变了但**路径集合未变**（libgit2 的 racy 写回只改条目 stat
+    ///    字段）→ 复用树结构，仅更新 entries 的 stat 字段。避免 5 万级
+    ///    仓库因 racy 写回触发全量重建（实测 200ms+ 尖峰）。
+    /// 3. 路径集合真变了（git add/rm）→ 全量重建。
     fn index_tree_or_rebuild(&mut self, git_index: &GitIndex) -> Index {
         let mut index_path = self.git.path().to_path_buf();
         index_path.push("index");
@@ -583,31 +612,26 @@ impl Repo {
         };
         if let Some(tree) = self.index_tree.take() {
             if self.index_stat == cur_stat {
-                eprintln!("DBG 树复用");
-                return tree; // 复用
+                return tree; // 快速路径：整树复用
             }
-            eprintln!("DBG 树重建: {:?} vs {:?}", self.index_stat, cur_stat);
+            // stat 变了：拷贝新条目，比对路径集合
+            let new_entries = copy_entries(git_index);
+            let same_paths = tree.entries.len() == new_entries.len()
+                && tree
+                    .entries
+                    .iter()
+                    .zip(&new_entries)
+                    .all(|(a, b)| a.path == b.path);
+            if same_paths {
+                // 路径集合未变：复用结构，更新 stat 字段
+                let mut tree = tree;
+                tree.update_stats(&new_entries);
+                self.index_stat = cur_stat;
+                return tree;
+            }
+            // 路径变了：旧树丢弃，走重建
         }
-        // 重建：条目拷贝 + 建树 + 分片
-        let entries: Vec<IndexEntry> = git_index
-            .iter()
-            .map(|e| {
-                let mut p = e.path.clone();
-                p.push(0);
-                IndexEntry {
-                    path: p,
-                    ino: e.ino,
-                    fsize: e.file_size,
-                    mtime_sec: e.mtime.seconds(),
-                    mtime_nsec: e.mtime.nanoseconds(),
-                    mode: e.mode,
-                    // GIT_INDEX_ENTRY_STAGE_SHIFT = 12（git2 无 stage 访问器）
-                    stage: (e.flags >> 12) & 0x3,
-                    flags_extended: e.flags_extended,
-                    assume_valid: e.flags & git2::IndexEntryFlag::VALID.bits() != 0,
-                }
-            })
-            .collect();
+        let entries = copy_entries(git_index);
         let mut index = Index::from_entries(entries);
         index.init_splits(self.limits.num_threads);
         self.index_stat = cur_stat;
