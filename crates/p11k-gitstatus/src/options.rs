@@ -120,6 +120,7 @@ pub const EXIT_VERSION_MISMATCH: i32 = 11;
 /// - `-G` 在解析期立即校验版本（对齐原版 options.cc：不匹配 exit 11）。
 /// - 原版 getopt 的 GNU 特性（选项重排、`--` 分隔符）不做支持：zsh 侧
 ///   不会传位置参数，出现位置参数一律报错。
+#[derive(Debug)]
 pub enum ParseOutcome {
     /// 用户要求打印帮助（`-h`/`--help`），main 打印用法后退出 0。
     Help,
@@ -130,6 +131,7 @@ pub enum ParseOutcome {
 }
 
 /// 参数解析的错误，映射到不同的退出码。
+#[derive(Debug)]
 pub enum ParseError {
     /// 参数错误 → 退出码 [`EXIT_BAD_ARGS`]。
     BadArgs(String),
@@ -144,9 +146,6 @@ pub enum ParseError {
 /// [`ParseError::VersionMismatch`] 只能由 `-G` 分支触发。
 enum OptError {
     Bad(String),
-    /// 预留：-G 解析期校验（version_matches 实现后接入，见 `-G` 分支的
-    /// TODO 注释）。接入后此 allow 可删。
-    #[allow(dead_code)]
     VersionMismatch(String),
 }
 
@@ -268,11 +267,11 @@ fn parse_short_opt(options: &mut Options, name: &str, value: Option<&str>) -> Re
         "m" => options.dirty_max_index_size = parse_limit(value, &opt)?,
         "G" => {
             let pattern = take_value(value, &opt)?;
-            // TODO(version_matches): version_matches 实现后在此立即校验，
-            // 对齐原版"解析期校验"语义（options.cc case 'G'）：
-            //   if !version_matches(PROTOCOL_VERSION, pattern) {
-            //       return Err(OptError::VersionMismatch(pattern.to_string()));
-            //   }
+            // 对齐原版"解析期校验"（options.cc case 'G'）：立即 fnmatch，
+            // 不匹配走 exit 11 而非 10。
+            if !version_matches(PROTOCOL_VERSION, pattern) {
+                return Err(OptError::VersionMismatch(pattern.to_string()));
+            }
             options.version_glob = Some(pattern.to_string());
         }
         "e" => {
@@ -318,7 +317,10 @@ fn parse_long_opt(options: &mut Options, name: &str, value: Option<&str>) -> Res
         "dirty-max-index-size" => options.dirty_max_index_size = parse_limit(value, &opt)?,
         "version-glob" => {
             let pattern = take_value(value, &opt)?;
-            // 同 -G：校验在 version_matches 实现后接入。
+            // 同 -G：解析期校验。
+            if !version_matches(PROTOCOL_VERSION, pattern) {
+                return Err(OptError::VersionMismatch(pattern.to_string()));
+            }
             options.version_glob = Some(pattern.to_string());
         }
         "recurse-untracked-dirs" => {
@@ -414,10 +416,88 @@ pub const PROTOCOL_VERSION: &str = "v1.5.5";
 /// `-G` 的 fnmatch 校验：版本串与 glob 匹配即通过，否则返回 false
 /// （调用方以 [`EXIT_VERSION_MISMATCH`] 退出）。
 ///
-/// 实现要点：原版用 C 的 fnmatch；Rust 侧可用等价的手写通配匹配
-/// （只支持 `*` `?` 与字符类即可），或用 `glob` crate——注意行为要
-/// 与原版 fnmatch(FNM_PATHNAME 未设置) 一致。
+/// 实现要点：等价 glibc `fnmatch(pattern, version, 0)`（flags=0）——
+/// `*`/`?` 可匹配 `/`，`\` 转义生效，无前导 `.` 特殊规则。
+/// 版本串只有 `v1.5.5` 这类短串，回溯式递归的复杂度完全可接受。
 pub fn version_matches(version: &str, glob: &str) -> bool {
-    let _ = (version, glob);
-    todo!("实现：fnmatch 等价匹配（* ? [..]），不匹配返回 false")
+    fnmatch(glob.as_bytes(), version.as_bytes())
+}
+
+fn fnmatch(pat: &[u8], text: &[u8]) -> bool {
+    match pat.split_first() {
+        None => text.is_empty(),
+        Some((b'*', rest)) => {
+            // * 匹配任意长度（含 0 个字符）；flags=0 下也匹配 '/'
+            (0..=text.len()).any(|i| fnmatch(rest, &text[i..]))
+        }
+        Some((b'?', rest)) => !text.is_empty() && fnmatch(rest, &text[1..]),
+        Some((b'[', rest)) => match parse_class(rest) {
+            // 合法字符类：取文本首字符判定后继续
+            Some((class, consumed)) => {
+                let Some(&c) = text.first() else { return false };
+                class.matches(c) && fnmatch(&rest[consumed..], &text[1..])
+            }
+            // '[' 后不是合法字符类（缺右括号等）：按字面量 '[' 处理（glibc 行为）
+            None => text.first() == Some(&b'[') && fnmatch(rest, &text[1..]),
+        },
+        Some((b'\\', rest)) => match rest.split_first() {
+            // \x 匹配字面量 x；模式以 \ 结尾时 \ 按字面量处理（glibc 行为）
+            Some((c, rest2)) => text.first() == Some(c) && fnmatch(rest2, &text[1..]),
+            None => text == *b"\\",
+        },
+        Some((c, rest)) => text.first() == Some(c) && fnmatch(rest, &text[1..]),
+    }
+}
+
+/// 解析 '[' 之后的字符类内容（`pat` 是 '[' 之后的切片）。
+/// 返回（类定义、消费字节数：含闭合 ']'）；不合法返回 None。
+struct CharClass {
+    /// 成员 (lo, hi) 闭区间。
+    ranges: Vec<(u8, u8)>,
+    /// `[!...]` / `[^...]` 取反（`^` 是 GNU 扩展，glibc 支持）。
+    negate: bool,
+}
+
+impl CharClass {
+    fn matches(&self, c: u8) -> bool {
+        let hit = self.ranges.iter().any(|&(lo, hi)| c >= lo && c <= hi);
+        hit != self.negate
+    }
+}
+
+fn parse_class(pat: &[u8]) -> Option<(CharClass, usize)> {
+    let mut i = 0;
+    let negate = matches!(pat.first(), Some(b'!') | Some(b'^'));
+    if negate {
+        i += 1;
+    }
+    let mut ranges: Vec<(u8, u8)> = Vec::new();
+    let mut closed = false;
+    while i < pat.len() {
+        let c = pat[i];
+        if c == b']' && !ranges.is_empty() {
+            closed = true;
+            i += 1;
+            break;
+        }
+        if c == b']' {
+            // "[]..."：']' 紧跟 '['/'[!' 后是字面量成员而非终结符
+            ranges.push((b']', b']'));
+        } else if c == b'\\' && i + 1 < pat.len() {
+            // 类内转义
+            i += 1;
+            ranges.push((pat[i], pat[i]));
+        } else if i + 2 < pat.len() && pat[i + 1] == b'-' && pat[i + 2] != b']' {
+            // 范围 a-z；'-' 在开头/结尾按字面量
+            ranges.push((c, pat[i + 2]));
+            i += 2;
+        } else {
+            ranges.push((c, c));
+        }
+        i += 1;
+    }
+    if !closed {
+        return None;
+    }
+    Some((CharClass { ranges, negate }, i))
 }
