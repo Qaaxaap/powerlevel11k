@@ -1,74 +1,183 @@
-//! 进程生命周期与主循环（对齐 `gitstatus.plugin.zsh` 与 `gitstatus.cc`）。
-//!
-//! # 启动流程（zsh 侧负责，daemon 配合）
-//!
-//! 1. zsh 生成 `file_prefix = $TMPDIR/gitstatus.$name.$EUID.$pid.$EPOCHSECONDS.$n`。
-//! 2. zsh 用 `zsystem flock` 锁住 `<prefix>.lock`，防止并发实例。
-//! 3. zsh 在进程替换 `<( )` 内后台启动 daemon：`cd /`，
-//!    daemon 的 **stdin 接 FIFO 读端**，**stdout 重定向到与 zsh 的管道**。
-//! 4. daemon 启动后第一件事：向 stdout 写 **20 位左对齐的进程组号 pgid**；
-//!    zsh 读出后作为 `GITSTATUS_DAEMON_PID`。
-//! 5. 之后两条通道定型：zsh→FIFO→daemon stdin（请求），
-//!    daemon stdout→pipe→zsh（响应）。FIFO 打开后立即 unlink。
-//!
-//! # 退出检测（三层冗余）
-//!
-//! - **EOF**：zsh 退出时关闭 FIFO 写端 → daemon 从 stdin 读到 0 字节 →
-//!   正常退出（exit 0）。这是主路径。
-//! - **主动 kill**：zsh 的 `zshexit` hook 执行 `kill -- -$daemon_pid`
-//!   （杀整个进程组）。
-//! - **探活**：主循环 select 超时（1s）时，若设了 `-l` 则
-//!   `fcntl(F_GETLK)` 检查锁是否仍被持有；若设了 `-p` 则
-//!   `kill(pid, 0)` 检查父进程是否存活。任一失败即退出。
-//!
-//! # 主循环
-//!
-//! 循环：select 等 stdin 可读（或 1s 超时）→ 读一条请求 →
-//! 处理（见 [`crate::repo`]）→ 写响应。每个迭代顺带清理 TTL 到期的
-//! 闲置仓库。请求处理须注意：单请求耗时长会阻塞后续请求，原版靠
-//! 多线程分片 + 提前终止控制单次延迟；p11k 至少需要保证 EOF/探活
-//! 检查不被长计算饿死。
-
 use crate::options::Options;
+use crate::protocol::{self, Request, Response};
+use crate::repo::RepoCache;
+use std::process::exit;
 
 /// 常驻 daemon 的运行时状态。
 ///
-/// stdin 与 stdout 是裸 fd（原版语义：stdin=FIFO 读端、stdout=管道写端），
-/// 不要在此之上包装任何缓冲层——协议消息边界由 MSG_SEP 决定，
-/// 必须逐字节控制写入。
+/// stdin 与 stdout 是裸 fd（原版语义：stdin=FIFO 读端、stdout=管道写端）。
+/// 注意：pgid 握手由 zsh 侧在 exec 本进程**之前**完成（gitstatus.plugin.zsh:411），
+/// daemon 无需也**不得**向 stdout 写任何协议之外的内容。
 pub struct Daemon {
-    /// 启动时解析好的选项。
     pub options: Options,
-    /// stdin fd（FIFO 读端）。
     pub stdin_fd: i32,
-    /// stdout fd（管道写端）。
     pub stdout_fd: i32,
-    // TODO(实现者)：补充字段——
-    // - 仓库缓存（crate::repo::RepoCache）
-    // - 线程池（index 分片扫描用）
-    // - 探活所需的锁/父进程信息（从 options 取）
+    /// 仓库缓存。TODO(repo)：RepoCache 接入后使用；接入前标记 dead_code。
+    #[allow(dead_code)]
+    cache: RepoCache,
 }
 
 impl Daemon {
-    /// 启动握手第一步：向 stdout 写 20 位左对齐的进程组号。
-    ///
-    /// 格式：`getpgrp()` 的十进制值，左对齐，不足 20 位以空格补齐，
-    /// 总长**恰好 20 字节**，写完立即 flush。zsh 侧按固定 20 字节读取，
-    /// 多一字节少一字节都会破坏后续握手。
-    pub fn handshake_pgid(&self) {
-        todo!("实现：libc::getpgrp() → 格式化为 20 字节左对齐 → write 到 stdout_fd")
+    pub fn new(options: Options) -> Daemon {
+        Daemon {
+            cache: RepoCache {
+                ttl_seconds: options.repo_ttl_seconds,
+            },
+            options,
+            stdin_fd: 0,
+            stdout_fd: 1,
+        }
     }
 
     /// 主循环：读请求 → 处理 → 写响应，直到 EOF 或探活失败。
     ///
-    /// 实现要点：
-    /// - 用 `select`（或 poll）等 stdin_fd，超时 1s。
-    /// - 超时分支执行 `-l`/`-p` 探活与 TTL 清理。
-    /// - 读到 0 字节（EOF）→ 正常返回（main 以 exit 0 结束）。
-    /// - 读到的字节可能包含多条消息（zsh 会批量写入），按 MSG_SEP
-    ///   切分逐条处理；不完整的尾部消息留在缓冲区等下一轮。
-    /// - 握手请求（id=`}hello`、dir 为空）必须回 `}hello` + `0`。
+    /// 对齐 request.cc 的 RequestReader + gitstatus.cc 的主循环：
+    /// - 读缓冲按 MSG_SEP 切分；一次 read 可能带回多条消息。
+    /// - 缓冲无完整消息时 poll stdin，1s 超时：执行 `-l`/`-p` 探活与 TTL 清理。
+    /// - read 返回 0 = EOF（zsh 退出关 FIFO 写端）→ exit 0。
+    /// - 单请求处理失败不杀 daemon（对齐原版 try/catch + LOG(ERROR)）。
     pub fn run(&mut self) {
-        todo!("实现：select 主循环 + 读缓冲 + 消息切分 + 探活/TTL + 请求分发")
+        let mut buf: Vec<u8> = Vec::new();
+        loop {
+            // 1. 缓冲里已有完整消息 → 切出处理
+            if let Some(pos) = buf.iter().position(|&b| b == protocol::MSG_SEP) {
+                let msg: Vec<u8> = buf.drain(..=pos).collect();
+                let bytes = &msg[..msg.len() - 1]; // 去掉 MSG_SEP
+                let req = protocol::parse_request(bytes);
+                self.process_request(req);
+                continue;
+            }
+            // 2. poll stdin，1s 超时
+            let mut pfd = libc::pollfd {
+                fd: self.stdin_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: pollfd 布局由 libc crate 保证；1s 超时对齐原版 select 的 timeval{1}。
+            let n = unsafe { libc::poll(&mut pfd, 1, 1000) };
+            if n < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue; // EINTR：重试（原版会直接死，p11k 更稳；行为差异可接受）
+                }
+                eprintln!("gitstatusd: poll: {err}");
+                exit(0);
+            }
+            if n == 0 {
+                if !self.liveness_ok() {
+                    exit(0); // 对齐原版：探活失败 exit 0
+                }
+                // TODO(repo): self.cache.evict_expired()
+                continue;
+            }
+            // 3. 可读
+            let mut chunk = [0u8; 256];
+            // SAFETY: 写入栈上数组，nread 检查后取切片。
+            let nread =
+                unsafe { libc::read(self.stdin_fd, chunk.as_mut_ptr().cast(), chunk.len()) };
+            if nread < 0 {
+                let err = std::io::Error::last_os_error();
+                if err.kind() == std::io::ErrorKind::Interrupted {
+                    continue;
+                }
+                eprintln!("gitstatusd: read: {err}");
+                exit(0);
+            }
+            if nread == 0 {
+                // EOF：zsh 退出关闭了 FIFO 写端 → 正常退出
+                exit(0);
+            }
+            buf.extend_from_slice(&chunk[..nread as usize]);
+        }
+    }
+
+    /// 处理一条请求并写响应。
+    ///
+    /// 对齐原版 ProcessRequest + ResponseWriter：
+    /// - 单请求 panic 被捕获（catch_unwind），记错误日志后继续服务，
+    ///   对齐原版 `catch (const Exception&) { LOG(ERROR) }`。
+    /// - dir 为空的请求 → 非仓库响应（找不到仓库，对齐原版语义；
+    ///   握手请求 id=}hello、dir 为空也走这条路径）。
+    /// - 其余请求：TODO(repo)，RepoCache 接入前 todo!() 会 panic 并被上方
+    ///   捕获——daemon 存活但该请求暂无响应。
+    fn process_request(&mut self, req: Request) {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let is_repo = if req.dir.is_empty() {
+                false
+            } else {
+                // TODO(repo): self.cache.get_or_open(...) 接入后返回真实状态。
+                todo!("repo 层接入后计算真实仓库状态")
+            };
+            let resp = Response {
+                id: req.id.clone(),
+                is_repo,
+                fields: None,
+            };
+            self.write_response(&resp);
+        }));
+        if result.is_err() {
+            eprintln!("gitstatusd: error processing request");
+        }
+    }
+
+    /// 把序列化后的响应完整写入 stdout（循环写，处理短写与 EINTR）。
+    ///
+    /// EPIPE（zsh 已死）→ exit 0。原版靠 SIGPIPE 默认处置终止进程；
+    /// Rust 运行时默认忽略 SIGPIPE，故显式处理 EPIPE，语义等价。
+    fn write_response(&self, resp: &Response) {
+        let bytes = protocol::serialize_response(resp);
+        let mut off = 0;
+        while off < bytes.len() {
+            // SAFETY: 写入 bytes[off..]，长度受控。
+            let n = unsafe {
+                libc::write(
+                    self.stdout_fd,
+                    bytes[off..].as_ptr().cast(),
+                    bytes.len() - off,
+                )
+            };
+            if n < 0 {
+                let err = std::io::Error::last_os_error();
+                match err.kind() {
+                    std::io::ErrorKind::Interrupted => continue,
+                    std::io::ErrorKind::BrokenPipe => exit(0),
+                    _ => {
+                        eprintln!("gitstatusd: write: {err}");
+                        exit(0);
+                    }
+                }
+            }
+            off += n as usize;
+        }
+    }
+
+    /// 探活（对齐 request.cc IsLockedFd + parent_pid 检查）：
+    /// - `-l` 设了锁 fd：fcntl(F_GETLK) 检查锁仍被持有
+    /// - `-p` 设了父 pid：kill(pid, 0) 检查父进程存活
+    ///
+    /// 任一失败返回 false（调用方 exit 0）。
+    fn liveness_ok(&self) -> bool {
+        if self.options.lock_fd >= 0 {
+            let mut fl = libc::flock {
+                l_type: libc::F_RDLCK as _,
+                l_whence: libc::SEEK_SET as _,
+                l_start: 0,
+                l_len: 0,
+                l_pid: 0,
+            };
+            // SAFETY: fl 为合法 flock 结构，F_GETLK 填充之。
+            let locked = unsafe { libc::fcntl(self.options.lock_fd, libc::F_GETLK, &mut fl) } == 0
+                && fl.l_type != libc::F_UNLCK as _;
+            if !locked {
+                return false;
+            }
+        }
+        if self.options.parent_pid >= 0 {
+            // SAFETY: 信号 0 探活，标准用法。
+            if unsafe { libc::kill(self.options.parent_pid, 0) } != 0 {
+                return false;
+            }
+        }
+        true
     }
 }
