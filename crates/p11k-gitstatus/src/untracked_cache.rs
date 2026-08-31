@@ -62,15 +62,15 @@ fn probe_support(gitdir: &Path) -> bool {
 
     let a_dir = tmp.join("a");
     let b_dir = tmp.join("b");
-    // SAFETY: 路径来自本地构造，mkdir 语义标准。
-    if unsafe { libc::mkdir(a_dir.as_os_str().as_bytes().as_ptr().cast(), 0o755) } != 0 {
+    // SAFETY: 路径经 nul() 保证 NUL 结尾，mkdir 语义标准。
+    if unsafe { libc::mkdir(nul(&a_dir).as_ptr().cast(), 0o755) } != 0 {
         return false;
     }
     let Some(a_st) = lstat(&a_dir) else {
         return false;
     };
     // SAFETY: 同上。
-    if unsafe { libc::mkdir(b_dir.as_os_str().as_bytes().as_ptr().cast(), 0o755) } != 0 {
+    if unsafe { libc::mkdir(nul(&b_dir).as_ptr().cast(), 0o755) } != 0 {
         return false;
     }
     let Some(b_st) = lstat(&b_dir) else {
@@ -83,7 +83,7 @@ fn probe_support(gitdir: &Path) -> bool {
     // a/1 子目录：检查"子目录创建更新父目录 mtime"
     let a1 = a_dir.join("1");
     // SAFETY: 同上。
-    if unsafe { libc::mkdir(a1.as_os_str().as_bytes().as_ptr().cast(), 0o755) } != 0 {
+    if unsafe { libc::mkdir(nul(&a1).as_ptr().cast(), 0o755) } != 0 {
         return false;
     }
     if !stat_changed(&a_dir, &a_st) {
@@ -92,10 +92,10 @@ fn probe_support(gitdir: &Path) -> bool {
 
     // b/1 文件：检查"子文件创建更新父目录 mtime"（对齐 Touch = creat 0444）
     let b1 = b_dir.join("1");
-    // SAFETY: open 语义标准。
+    // SAFETY: 同上。
     let fd = unsafe {
         libc::open(
-            b1.as_os_str().as_bytes().as_ptr().cast(),
+            nul(&b1).as_ptr().cast(),
             libc::O_CREAT | libc::O_WRONLY | libc::O_CLOEXEC,
             0o444,
         )
@@ -106,6 +106,14 @@ fn probe_support(gitdir: &Path) -> bool {
     // SAFETY: close 语义标准。
     unsafe { libc::close(fd) };
     stat_changed(&b_dir, &b_st)
+}
+
+/// 路径字节 + NUL 结尾（C 字符串直传 helper，避免每次 lstat/mkdir 时
+/// 遗漏 NUL 导致读越界）。
+fn nul(path: &Path) -> Vec<u8> {
+    let mut b = path.as_os_str().as_bytes().to_vec();
+    b.push(0);
+    b
 }
 
 /// RAII 清理：Drop 时递归删除探针目录（rmdir 链：a/1、a、b/1、b、根）。
@@ -120,11 +128,11 @@ impl Drop for Cleanup {
         let b = root.join("b");
         for p in [&b1, &b, &a1, &a, root] {
             let is_dir = p != &b1;
-            // SAFETY: 路径本地构造。
+            // SAFETY: 路径经 nul() 保证 NUL 结尾。
             let r = if is_dir {
-                unsafe { libc::rmdir(p.as_os_str().as_bytes().as_ptr().cast()) }
+                unsafe { libc::rmdir(nul(p).as_ptr().cast()) }
             } else {
-                unsafe { libc::unlink(p.as_os_str().as_bytes().as_ptr().cast()) }
+                unsafe { libc::unlink(nul(p).as_ptr().cast()) }
             };
             let _ = r; // 清理失败不致命
         }
@@ -148,8 +156,8 @@ fn mkdtemp(template: PathBuf) -> Option<PathBuf> {
 /// lstat 取 (mtime_sec, mtime_nsec)。
 fn lstat(path: &Path) -> Option<(i64, i64)> {
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: 路径本地构造，st 合法缓冲。
-    if unsafe { libc::lstat(path.as_os_str().as_bytes().as_ptr().cast(), &mut st) } != 0 {
+    // SAFETY: 路径经 nul() 保证 NUL 结尾，st 合法缓冲。
+    if unsafe { libc::lstat(nul(path).as_ptr().cast(), &mut st) } != 0 {
         return None;
     }
     Some((st.st_mtime, st.st_mtime_nsec))
@@ -164,10 +172,10 @@ fn stat_changed(path: &Path, prev: &(i64, i64)) -> bool {
 /// 实现要点：readdir gitdir，名字前缀 `.gitstatus.` 且 mtime 早于 now-10s
 /// 的目录，按 a/1、a、b/1、b、根的逆序删除。
 fn remove_stale_dirs(gitdir: &Path) {
-    // SAFETY: 打开 gitdir 目录 fd。
+    // SAFETY: 路径经 nul() 保证 NUL 结尾。
     let dir_fd = unsafe {
         libc::open(
-            gitdir.as_os_str().as_bytes().as_ptr().cast(),
+            nul(gitdir).as_ptr().cast(),
             libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
         )
     };
@@ -215,20 +223,20 @@ fn remove_stale_dirs(gitdir: &Path) {
         if !ok || st.st_mtime + 10 > now {
             continue;
         }
-        // 逆序删除：a/1、a、b/1、b、根
+        // 逆序删除：a/1、a、b/1、b、根（路径经 nul() 保证 NUL 结尾）
         let mut sub = path.clone();
         sub.push("a/1");
-        unsafe { libc::rmdir(sub.as_os_str().as_bytes().as_ptr().cast()) };
+        unsafe { libc::rmdir(nul(&sub).as_ptr().cast()) };
         let mut sub = path.clone();
         sub.push("a");
-        unsafe { libc::rmdir(sub.as_os_str().as_bytes().as_ptr().cast()) };
+        unsafe { libc::rmdir(nul(&sub).as_ptr().cast()) };
         let mut sub = path.clone();
         sub.push("b/1");
-        unsafe { libc::unlink(sub.as_os_str().as_bytes().as_ptr().cast()) };
+        unsafe { libc::unlink(nul(&sub).as_ptr().cast()) };
         let mut sub = path.clone();
         sub.push("b");
-        unsafe { libc::rmdir(sub.as_os_str().as_bytes().as_ptr().cast()) };
-        unsafe { libc::rmdir(path.as_os_str().as_bytes().as_ptr().cast()) };
+        unsafe { libc::rmdir(nul(&sub).as_ptr().cast()) };
+        unsafe { libc::rmdir(nul(&path).as_ptr().cast()) };
     }
     // SAFETY: close 语义标准。
     unsafe { libc::close(dir_fd) };
