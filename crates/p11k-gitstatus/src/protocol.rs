@@ -1,13 +1,20 @@
 //! gitstatus 线上协议（IPC wire format）。
 //!
 //! 依据：romkatv/gitstatus v1.5.5 的 `serialization.h` / `request.cc` / `response.cc`。
-//! 本模块只定义"字节长什么样"；解析与序列化的生产逻辑留待实现。
 //!
 //! # 传输层
 //!
 //! 请求走 daemon 的 **stdin**，响应走 daemon 的 **stdout**，均为字节流。
 //! 每条消息以消息分隔符结尾，消息内字段以字段分隔符分隔。
 //! 没有长度前缀，没有转义层（字符串内容里不出现分隔符，见 [`safe_print`]）。
+//!
+//! # 与原版的已知差异
+//!
+//! 仅一处：`SafePrint` 对字节 >0x7F 的处理。原版表达式
+//! `c > 127 || std::isprint(c)` 中 `c` 是 `char`，x86 上有符号，`c > 127`
+//! 恒为 false，UTF-8 字节经 `isprint(负值)` 变成 `'?'`；ARM 上 char 无符号
+//! 则原样保留。p11k 固定采用**作者意图**（保留 >0x7F），不做平台分叉。
+//! 对拍测试（tests/compat.rs）需对该差异做豁免。
 
 /// 字段分隔符：ASCII 31 (US, Unit Separator)。
 pub const FIELD_SEP: u8 = 0x1f;
@@ -25,39 +32,58 @@ pub const HELLO_ID: &str = "}hello";
 /// <id>\x1f[:]<dir>\x1f<diff>\x1e
 /// ```
 ///
-/// 字段语义（request.cc:45-56）：
+/// 字段语义（对齐 request.cc 的 ParseRequest）：
 ///
-/// - **id**：任意非空串，响应首字段必须原样回显。zsh 侧形如
-///   `"1699999999.123 _p9k_vcs"`（`$EPOCHREALTIME` + 空格 + 回调函数名），
-///   用以把异步响应路由回发起请求的回调。
-/// - **dir**：目录绝对路径。若以 `:` 开头，表示其后是 **GIT_DIR 的直接
-///   路径**（from_dotgit：直接打开该 .git，不向上搜索父目录）；否则是
-///   普通工作目录路径，daemon 需要自己向上搜索 `.git`。
-/// - **diff**：可选字段。`'1'` = 跳过 index 比较（不统计
-///   staged/unstaged/untracked，只回元信息）；`'0'` 或缺省 = 全算。
+/// - **id**：任意字节串（zsh 侧形如 `"1699999999.123 _p9k_vcs"`），响应首字段
+///   必须**逐字节**回显。用 `Vec<u8>` 而非 `String`：原版 std::string 不要求
+///   UTF-8，回显必须字节忠实。
+/// - **dir**：目录绝对路径。首字节 `:` 表示其后是 **GIT_DIR 的直接路径**
+///   （from_dotgit：直接打开该 .git，不向上搜索）。`dir` 可为空（握手请求）——
+///   原版此处是 `*begin` 解引用的 UB，实际表现为空 dir 不触发 from_dotgit。
+///   同样用 `Vec<u8>`：Linux 路径无编码约定。
+/// - **diff**：可选第三字段，必须为单字节 `'0'` 或 `'1'`。`'1'` = 跳过 index
+///   比较（skip_index=true），`'0'` 或缺省 = 全算。注意原版内部 bool `diff`
+///   的语义与本字段**相反**（线上 '0' → 内部 true）。
 pub struct Request {
-    /// 请求 id，响应首字段原样回显。
-    pub id: String,
+    /// 请求 id，响应首字段逐字节回显。
+    pub id: Vec<u8>,
     /// 目录绝对路径；`dir_is_gitdir` 为 true 时不含前导 `:`。
-    pub dir: String,
+    pub dir: Vec<u8>,
     /// `dir` 是否以 `:` 前缀给出（= 直接把 `dir` 当 GIT_DIR 用）。
     pub dir_is_gitdir: bool,
-    /// diff 字段：None=缺省，Some(true)='1'（跳过 index），Some(false)='0'。
-    pub diff: Option<bool>,
+    /// 线上第三字段 `'1'` = 跳过 index 比较（不统计 staged/unstaged/untracked）。
+    pub skip_index: bool,
 }
 
 /// 从字节流解析一条请求（不含末尾 MSG_SEP）。
 ///
 /// 返回 `None` 表示读到 0 字节（EOF）——调用方应正常退出（exit 0）。
-///
-/// 实现要点：
-/// - 按 FIELD_SEP 切分，恰好 2 或 3 个字段；多余/缺少字段的行为要与
-///   原版一致（原版宽容处理：diff 缺失按 `'0'`）。
-/// - dir 首字节为 `:` 时剥掉前缀并置 `dir_is_gitdir = true`。
-/// - id 不允许为空（握手请求除外：id=`}hello`、dir 为空）。
+/// 畸形请求（缺字段分隔符、diff 字段非单字节 `'0'`/`'1'`、超过 3 个字段）
+/// 直接 panic：对齐原版 `VERIFY` 失败即 abort（request.cc），daemon 进程终止。
 pub fn parse_request(bytes: &[u8]) -> Option<Request> {
-    let _ = bytes;
-    todo!("实现：切分字段、处理 ':' 前缀与 diff 标志；EOF 返回 None")
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut parts = bytes.split(|&b| b == FIELD_SEP);
+    let id = parts.next().expect("split yields at least one part");
+    let dir_field = parts.next().expect("malformed request: missing dir field");
+    let (dir, dir_is_gitdir) = match dir_field.split_first() {
+        Some((b':', rest)) => (rest, true),
+        _ => (dir_field, false),
+    };
+    let skip_index = match parts.next() {
+        None => false,
+        Some(b"1") => true,
+        Some(b"0") => false,
+        Some(_) => panic!("malformed request: bad diff field"),
+    };
+    assert!(parts.next().is_none(), "malformed request: too many fields");
+    Some(Request {
+        id: id.to_vec(),
+        dir: dir.to_vec(),
+        dir_is_gitdir,
+        skip_index,
+    })
 }
 
 /// 响应数据字段的固定顺序索引（0-based）。
@@ -127,34 +153,50 @@ pub mod field {
 
 /// 一条完整响应（已按仓库/非仓库拆解）。
 pub struct Response {
-    /// 原样回显的请求 id。
-    pub id: String,
+    /// 原样回显的请求 id（字节忠实；写入前经 [`safe_print`]）。
+    pub id: Vec<u8>,
     /// true = 是仓库（fields 有效）；false = 非仓库（无后续字段）。
     pub is_repo: bool,
     /// 仅 `is_repo` 为 true 时有值，长度恒为 [`field::COUNT`]。
-    /// 数字字段存十进制字符串（zsh 侧 `typeset -gi` 自行转换）。
-    pub fields: Option<[String; field::COUNT]>,
+    /// 数字字段存十进制字节串（对齐原版 Print(ssize_t) 的直接十进制）。
+    /// 用 `Vec<u8>`：分支名/路径不保证 UTF-8（对齐原版 StringView）。
+    pub fields: Option<[Vec<u8>; field::COUNT]>,
 }
 
 /// 把 [`Response`] 序列化为线上字节（含末尾 MSG_SEP）。
 ///
-/// 实现要点：
-/// - `is_repo = false` 时只写 `id` 与 `0` 两个字段。
-/// - 所有字符串字段写入前必须过 [`safe_print`]。
-/// - 字段间 FIELD_SEP，末尾 MSG_SEP，无其他空白。
+/// 布局（对齐 response.cc 的 ResponseWriter）：
+///
+/// ```text
+/// safe_print(id) \x1f 1 [\x1f safe_print(f1) ... \x1f safe_print(f27)] \x1e
+/// ```
+///
+/// 非仓库响应只写 `safe_print(id) \x1f 0 \x1e`（对齐析构回退路径）。
 pub fn serialize_response(r: &Response) -> Vec<u8> {
-    let _ = r;
-    todo!("实现：按 FIELD_SEP 连接字段、MSG_SEP 结尾；字符串先 SafePrint")
+    let mut out = Vec::with_capacity(256);
+    out.extend(safe_print(&r.id));
+    out.push(FIELD_SEP);
+    out.push(if r.is_repo { b'1' } else { b'0' });
+    if r.is_repo {
+        for f in r.fields.as_ref().expect("is_repo implies fields") {
+            out.push(FIELD_SEP);
+            out.extend(safe_print(f));
+        }
+    }
+    out.push(MSG_SEP);
+    out
 }
 
-/// SafePrint 转义（response.cc:33-38），必须与原版**逐字节一致**：
+/// SafePrint 转义（对齐 response.cc:33-38 的**作者意图**）：
 ///
-/// - ASCII 控制字符与不可打印字符 → `'?'`
-/// - 字节 > 127 原样保留（UTF-8 内容不受影响）
+/// - 可打印 ASCII（0x20..=0x7E）原样保留
+/// - 字节 >0x7F 原样保留（UTF-8 内容不受影响）
+/// - 其余（控制字符 <0x20、DEL 0x7F）→ `'?'`
 ///
-/// 若不一致，含特殊字符的分支名 / commit summary 会打乱字段边界，
-/// 造成整个响应错位。注意按**字节**映射而非按 Unicode 字符处理。
-pub fn safe_print(s: &str) -> String {
-    let _ = s;
-    todo!("实现：逐字节映射；可打印 ASCII 保留，<32 与 127 换成 '?'，>=128 保留")
+/// 与原版 x86 字面行为的差异见模块文档「与原版的已知差异」：p11k 不做
+/// 平台分叉，固定保留 >0x7F。注意按**字节**映射而非按 Unicode 字符处理。
+pub fn safe_print(s: &[u8]) -> Vec<u8> {
+    s.iter()
+        .map(|&c| if c >= 0x20 && c != 0x7f { c } else { b'?' })
+        .collect()
 }
