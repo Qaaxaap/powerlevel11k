@@ -563,6 +563,7 @@ dependencies = [
 name = "p11k-d"
 version = "0.1.0"
 dependencies = [
+ "git2",
  "p11k-gitstatus",
  "tempfile",
 ]
