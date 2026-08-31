@@ -18,13 +18,10 @@ rust-version = "1.85" # edition 2024 的最低支持版本
 # - git2：M2 阶段引入，用于 git 对象模型（HEAD/分支/远端/tag/stash/
 #   commit summary/revwalk），对应原版对 libgit2 的使用。
 #   M1（协议层）暂不需要，先声明在此。
-# - libgit2-sys：raw FFI，用于 git2 未绑定的 diff 高级选项
 #   （notify_cb / range_start / range_end，对齐原版 StartDirtyScan）。
-#   版本跟随 git2 的依赖（git2 0.20.x 用 libgit2-sys 0.18.x）。
 [workspace.dependencies]
 libc = "0.2"
 git2 = "0.20"
-libgit2-sys = "0.18"
 
 # 发布构建对齐原版 gitstatusd 的编译配置：其 Makefile 使用 -O3 -std=c++14。
 # p11k 的性能契约（见 CONTRIBUTING.md）要求与 C++ 原版做基准对比，

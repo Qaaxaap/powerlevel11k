@@ -14,7 +14,6 @@ libc.workspace = true
 git2.workspace = true
 # raw FFI：dirty diff 的 notify_cb/range_start/range_end（git2 未绑定），
 # 对齐原版 StartDirtyScan 的区间优化。
-libgit2-sys.workspace = true
 
 [dev-dependencies]
 # 性能基准（benches/）。性能契约要求与 C++ 原版对拍，基准是硬性门槛。
