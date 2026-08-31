@@ -153,8 +153,9 @@ function _p11k_seg_nix_shell() {
 function _p11k_seg_ssh() {
   [[ -n $SSH_CONNECTION ]] || return
   local text=$(_p11k_p9k POWERLEVEL9K_SSH_TEMPLATE '%n@%m')
-  text=${text//%n/$USER}
-  text=${text//%m/${HOST%%.*}}
+  # pattern 里裸 % 是"末尾锚点"，需转义 \%n 才匹配字面 %n（同 context 段）
+  text=${text//\%n/$USER}
+  text=${text//\%m/${HOST%%.*}}
   _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_SSH_BACKGROUND 238)" \
     "$(_p11k_p9k POWERLEVEL9K_SSH_FOREGROUND 255)" \
     "$(_p11k_p9k POWERLEVEL9K_SSH_VISUAL_IDENTIFIER_EXPANSION '') " "$text"
