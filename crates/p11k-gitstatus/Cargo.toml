@@ -11,3 +11,7 @@ rust-version.workspace = true
 libc.workspace = true
 # git2 在 M2 阶段引入（git 对象模型：HEAD/分支/远端/tag/stash/summary）。
 # M1 协议层不需要，先不声明。
+
+[dev-dependencies]
+# 性能基准（benches/）。性能契约要求与 C++ 原版对拍，基准是硬性门槛。
+criterion = "0.5"
