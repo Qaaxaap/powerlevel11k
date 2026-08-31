@@ -4,7 +4,8 @@ A zsh prompt in the spirit of powerlevel10k, rebuilt with a Rust core.
 
 > **Status: early development.** Nothing here works yet. Do not source this in
 > your `.zshrc`. This repository exists so the work happens in the open.
-> Code and documentation are written with the help of AI agents.
+> Comments and scaffolding are written with the help of AI agents; production
+> code is written by humans.
 
 ## Why this exists
 
@@ -62,8 +63,8 @@ GPLv3. See [LICENSE](LICENSE).
 一个延续 powerlevel10k 路线的 zsh 提示符，内核用 Rust 重写。
 
 > **状态：早期开发。** 目前没有任何可用的功能，不要把它写进你的
-> `.zshrc`。建这个仓库是为了把开发过程公开进行。代码与文档均有 AI
-> 辅助生成。
+> `.zshrc`。建这个仓库是为了把开发过程公开进行。注释与框架由 AI
+> 辅助编写，生产代码由人编写。
 
 ## 为什么要做
 
