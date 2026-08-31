@@ -96,6 +96,11 @@ pub struct Repo {
     staged_stats: StagedStats,
     /// untracked cache 探针（后台线程）。
     untracked: UntrackedCache,
+    /// p11k index 树缓存：dirs 的 untracked 状态（st/unmatched）随树持久化，
+    /// index 未变时复用，readdir 靠 mtime 剪枝（对齐原版常驻 Index）。
+    index_tree: Option<Index>,
+    /// 上次建树时 `.git/index` 的 (mtime_sec, mtime_nsec, size)；变了重建。
+    index_stat: Option<(i64, i64, i64)>,
     /// TTL 依据：最后一次访问时刻。
     last_used: Instant,
 }
@@ -159,6 +164,9 @@ impl RepoCache {
 
 impl Repo {
     fn open(git: GitRepository, workdir: &Path, limits: Options) -> Repo {
+        // 对齐原版 main 的 libgit2 opts：关闭严格 hash 校验（git2 唯一有绑定的
+        // 一项；其余为 romkatv fork 专有 opts，官方 libgit2 无对应）
+        git2::opts::strict_hash_verification(false);
         // 空仓库：find_reference("HEAD") 成功（symbolic），resolve() 失败 → None
         let head_oid = git
             .find_reference("HEAD")
@@ -181,6 +189,8 @@ impl Repo {
             staged_head: None,
             staged_stats: StagedStats::default(),
             untracked,
+            index_tree: None,
+            index_stat: None,
             last_used: Instant::now(),
         }
     }
@@ -464,7 +474,9 @@ impl Repo {
             }
         }
 
-        // index：每次重建（TODO(perf)：index 未变时复用树与分片）
+        // git2 Index：每次新对象（缓存对象会导致 libgit2 复用 read 路径的
+        // racy 写回改写 .git/index mtime，进而使 index 树缓存失效——
+        // 实测比不缓存慢一倍，故不缓存）
         let mut git_index = match self.git.index() {
             Ok(i) => i,
             Err(_) => return IndexStats::default(),
@@ -472,27 +484,10 @@ impl Repo {
         // 对齐原版 git_index_read_ex 的增量刷新
         let _ = git_index.read(false);
         let index_size = git_index.len();
-        let entries: Vec<IndexEntry> = git_index
-            .iter()
-            .map(|e| {
-                let mut p = e.path.clone();
-                p.push(0);
-                IndexEntry {
-                    path: p,
-                    ino: e.ino,
-                    fsize: e.file_size,
-                    mtime_sec: e.mtime.seconds(),
-                    mtime_nsec: e.mtime.nanoseconds(),
-                    mode: e.mode,
-                    // GIT_INDEX_ENTRY_STAGE_SHIFT = 12（git2 无 stage 访问器）
-                    stage: (e.flags >> 12) & 0x3,
-                    flags_extended: e.flags_extended,
-                    assume_valid: e.flags & git2::IndexEntryFlag::VALID.bits() != 0,
-                }
-            })
-            .collect();
-        let mut index = Index::from_entries(entries);
-        index.init_splits(self.limits.num_threads);
+
+        // index 树缓存：.git/index 未变则复用（dirs 的 untracked 状态持久化，
+        // readdir 靠 mtime 剪枝；对齐原版常驻 Index 对象）
+        let mut index = self.index_tree_or_rebuild(&git_index);
 
         // caps（对齐 RepoCaps；config 缺失按默认 true）
         let caps = self.repo_caps(&git_index);
@@ -503,7 +498,8 @@ impl Repo {
         };
 
         // ── staged 路径（对齐 GetIndexStats 的 staged 分支）──
-        let want_staged = self.limits.max_num_staged > 0 || self.limits.max_num_conflicted > 0;
+        // 上限非零即启用（对齐原版 size_t 语义：-1 = SIZE_MAX = 无限）
+        let want_staged = self.limits.max_num_staged != 0 || self.limits.max_num_conflicted != 0;
         if !want_staged {
             self.staged_head = None;
             self.staged_stats = StagedStats::default();
@@ -548,12 +544,13 @@ impl Repo {
         // ── dirty 路径（对齐 GetIndexStats 的候选 + StartDirtyScan）──
         let dirty_allowed = self.limits.dirty_max_index_size < 0
             || index_size <= self.limits.dirty_max_index_size as usize;
-        if dirty_allowed && (self.limits.max_num_unstaged > 0 || self.limits.max_num_untracked > 0)
+        if dirty_allowed
+            && (self.limits.max_num_unstaged != 0 || self.limits.max_num_untracked != 0)
         {
             let root_fd = self.open_workdir_fd();
             if let Some(root_fd) = root_fd {
                 let opts = crate::scan::ScanOpts {
-                    include_untracked: self.limits.max_num_untracked > 0,
+                    include_untracked: self.limits.max_num_untracked != 0,
                     untracked_cache_enabled: self.untracked.enabled(),
                 };
                 let candidates = index.get_dirty_candidates(root_fd, &caps, &opts);
@@ -562,7 +559,55 @@ impl Repo {
             }
         }
 
+        // 扫描完成后把树放回缓存（untracked 状态随树持久化）
+        self.index_tree = Some(index);
         stats
+    }
+
+    /// 取 index 树：`.git/index` 的 (mtime, size) 未变则复用缓存树
+    /// （保留 untracked cache 状态），否则从 git2 条目重建。
+    fn index_tree_or_rebuild(&mut self, git_index: &GitIndex) -> Index {
+        let mut index_path = self.git.path().to_path_buf();
+        index_path.push("index");
+        let cur_stat = {
+            let mut st: libc::stat = unsafe { std::mem::zeroed() };
+            let mut bytes = index_path.as_os_str().as_bytes().to_vec();
+            bytes.push(0);
+            // SAFETY: 路径 NUL 结尾，st 合法缓冲。
+            let ok = unsafe { libc::stat(bytes.as_ptr().cast(), &mut st) } == 0;
+            ok.then_some((st.st_mtime, st.st_mtime_nsec, st.st_size))
+        };
+        if let Some(tree) = self.index_tree.take() {
+            if self.index_stat == cur_stat {
+                eprintln!("DBG 树复用");
+                return tree; // 复用
+            }
+            eprintln!("DBG 树重建: {:?} vs {:?}", self.index_stat, cur_stat);
+        }
+        // 重建：条目拷贝 + 建树 + 分片
+        let entries: Vec<IndexEntry> = git_index
+            .iter()
+            .map(|e| {
+                let mut p = e.path.clone();
+                p.push(0);
+                IndexEntry {
+                    path: p,
+                    ino: e.ino,
+                    fsize: e.file_size,
+                    mtime_sec: e.mtime.seconds(),
+                    mtime_nsec: e.mtime.nanoseconds(),
+                    mode: e.mode,
+                    // GIT_INDEX_ENTRY_STAGE_SHIFT = 12（git2 无 stage 访问器）
+                    stage: (e.flags >> 12) & 0x3,
+                    flags_extended: e.flags_extended,
+                    assume_valid: e.flags & git2::IndexEntryFlag::VALID.bits() != 0,
+                }
+            })
+            .collect();
+        let mut index = Index::from_entries(entries);
+        index.init_splits(self.limits.num_threads);
+        self.index_stat = cur_stat;
+        index
     }
 
     /// staged 差分（对齐 StartStagedScan）：HEAD tree vs index，
@@ -639,7 +684,7 @@ impl Repo {
         opts.include_typechange_trees(true)
             .skip_binary_check(true)
             .disable_pathspec_match(true);
-        if m_untracked > 0 {
+        if m_untracked != 0 {
             opts.include_untracked(true);
             if self.limits.recurse_untracked_dirs {
                 opts.recurse_untracked_dirs(true);
