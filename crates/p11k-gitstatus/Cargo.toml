@@ -9,8 +9,9 @@ rust-version.workspace = true
 [dependencies]
 # 性能内核（openat/fstatat/fcntl/kill/getpgrp）需要 libc。
 libc.workspace = true
-# git2 在 M2 阶段引入（git 对象模型：HEAD/分支/远端/tag/stash/summary）。
-# M1 协议层不需要，先不声明。
+# git 对象模型（HEAD/分支/远端/tag/stash/commit message/revwalk），
+# 对应原版对 libgit2 的使用；性能内核（index 解析与扫描）在其上手工实现。
+git2.workspace = true
 
 [dev-dependencies]
 # 性能基准（benches/）。性能契约要求与 C++ 原版对拍，基准是硬性门槛。
