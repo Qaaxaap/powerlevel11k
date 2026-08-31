@@ -425,6 +425,121 @@ function _p11k_seg_status() {
 }
 
 # prompt_char：❯/❮ 提示符（root 显示 POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,VIOWR}_FOREGROUND 的第一组）
+
+# direnv：$DIRENV_DIR（direnv 激活时设置，值含前导 /）
+function _p11k_seg_direnv() {
+  [[ -n $DIRENV_DIR ]] || return
+  local dir=${DIRENV_DIR#/}
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_DIRENV_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_DIRENV_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_DIRENV_VISUAL_IDENTIFIER_EXPANSION '\uf0c9') " "${dir:t}"
+}
+
+# asdf：$ASDF_DIR 或 .tool-versions 存在；显示首个工具名@版本
+function _p11k_seg_asdf() {
+  [[ -n $ASDF_DIR || -f .tool-versions ]] || return
+  local v=''
+  [[ -f .tool-versions ]] && v=$(awk 'NF && $1 !~ /^#/ {print $1"@"$2; exit}' .tool-versions)
+  [[ -z $v ]] && v=asdf
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_ASDF_BACKGROUND 7)" \
+    "$(_p11k_p9k POWERLEVEL9K_ASDF_FOREGROUND 237)" \
+    "$(_p11k_p9k POWERLEVEL9K_ASDF_VISUAL_IDENTIFIER_EXPANSION '\uf4c2') " "$v"
+}
+
+# rvm：$GEM_HOME（gemset 路径末段形如 ruby-3.2.2）
+function _p11k_seg_rvm() {
+  [[ -n $GEM_HOME ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_RVM_BACKGROUND 1)" \
+    "$(_p11k_p9k POWERLEVEL9K_RVM_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_RVM_VISUAL_IDENTIFIER_EXPANSION '\ue21e') " "${GEM_HOME:t}"
+}
+
+# fvm：.fvmrc 存在（flutter 版本，形如 flutter: 3.24.0）
+function _p11k_seg_fvm() {
+  [[ -f .fvmrc ]] || return
+  local v=$(awk '/flutter/ {print $2}' .fvmrc)
+  [[ -z $v ]] && v=fvm
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_FVM_BACKGROUND 7)" \
+    "$(_p11k_p9k POWERLEVEL9K_FVM_FOREGROUND 237)" \
+    "$(_p11k_p9k POWERLEVEL9K_FVM_VISUAL_IDENTIFIER_EXPANSION '\uf8b0') " "$v"
+}
+
+# perlbrew：$PERLBREW_PERL（形如 perl-5.36.0）
+function _p11k_seg_perlbrew() {
+  [[ -n $PERLBREW_PERL ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_PERLBREW_BACKGROUND 2)" \
+    "$(_p11k_p9k POWERLEVEL9K_PERLBREW_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_PERLBREW_VISUAL_IDENTIFIER_EXPANSION '\ue739') " "${PERLBREW_PERL#perl-}"
+}
+
+# haskell_stack：.stack.yaml 存在
+function _p11k_seg_haskell_stack() {
+  [[ -f .stack.yaml ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_HASKELL_STACK_BACKGROUND 3)" \
+    "$(_p11k_p9k POWERLEVEL9K_HASKELL_STACK_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_HASKELL_STACK_VISUAL_IDENTIFIER_EXPANSION '\u03bb') " 'stack'
+}
+
+# azure：az 登录态（~/.azure/azureProfile.json 的订阅名）
+function _p11k_seg_azure() {
+  local profile=${AZURE_CONFIG_DIR:-$HOME/.azure}/azureProfile.json
+  [[ -f $profile ]] || return
+  local name=$(grep -o '"name": *"[^"]*"' "$profile" 2>/dev/null | head -1 | sed 's/.*"name": *"//; s/"$//')
+  [[ -z $name ]] && name=azure
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_AZURE_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_AZURE_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_AZURE_VISUAL_IDENTIFIER_EXPANSION '\uf0c2') " "$name"
+}
+
+# nordvpn：nordvpnd 守护进程运行中（状态简化：Connected/Disconnected）
+function _p11k_seg_nordvpn() {
+  (( $+commands[nordvpn] )) || return
+  local state=Disconnected
+  pgrep -x nordvpnd >/dev/null && state=Connected
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_NORDVPN_BACKGROUND 6)" \
+    "$(_p11k_p9k POWERLEVEL9K_NORDVPN_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_NORDVPN_VISUAL_IDENTIFIER_EXPANSION '\uf023') " "$state"
+}
+
+# chezmoi_shell：$CHEZMOI（chezmoi activate 时设置）
+function _p11k_seg_chezmoi_shell() {
+  _p11k_env_seg chezmoi_shell CHEZMOI "$CHEZMOI" 4 236 '\uf015'
+}
+
+# todo：todo.txt 未完成条目数（~/.todo/todo.txt，'x ' 前缀视为完成）
+function _p11k_seg_todo() {
+  (( $+commands[todo.sh] )) || return
+  local n=0
+  [[ -f $HOME/.todo/todo.txt ]] && n=$(grep -cv '^x ' "$HOME/.todo/todo.txt" 2>/dev/null)
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_TODO_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_TODO_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_TODO_VISUAL_IDENTIFIER_EXPANSION '\u2713') " "$n"
+}
+
+# timewarrior：timew 已安装（不查状态，避免每次 prompt 起子进程）
+function _p11k_seg_timewarrior() {
+  (( $+commands[timew] )) || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_TIMEWARRIOR_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_TIMEWARRIOR_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_TIMEWARRIOR_VISUAL_IDENTIFIER_EXPANSION '\uf017') " 'timew'
+}
+
+# taskwarrior：task 已安装（不查计数，避免每次 prompt 起子进程）
+function _p11k_seg_taskwarrior() {
+  (( $+commands[task] )) || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_TASKWARRIOR_BACKGROUND 6)" \
+    "$(_p11k_p9k POWERLEVEL9K_TASKWARRIOR_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_TASKWARRIOR_VISUAL_IDENTIFIER_EXPANSION '\u2713') " 'task'
+}
+
+# per_directory_history：$PER_DIRECTORY_HISTORY_TOGGLED（local/global）
+function _p11k_seg_per_directory_history() {
+  [[ -n $PER_DIRECTORY_HISTORY_TOGGLED ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_PER_DIRECTORY_HISTORY_BACKGROUND 1)" \
+    "$(_p11k_p9k POWERLEVEL9K_PER_DIRECTORY_HISTORY_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_PER_DIRECTORY_HISTORY_VISUAL_IDENTIFIER_EXPANSION '\uf5d7') " "$PER_DIRECTORY_HISTORY_TOGGLED"
+}
+
 function _p11k_seg_prompt_char() {
   local fg bg char mode
   # vi 模式（zle-keymap-select 钩子维护；非 vi 用户恒为 0）
@@ -637,6 +752,19 @@ function _p11k_render_line() {
       php_version) _p11k_seg_php_version;;
       dotnet_version) _p11k_seg_dotnet_version;;
       terraform_version) _p11k_seg_terraform_version;;
+      direnv) _p11k_seg_direnv;;
+      asdf) _p11k_seg_asdf;;
+      rvm) _p11k_seg_rvm;;
+      fvm) _p11k_seg_fvm;;
+      perlbrew) _p11k_seg_perlbrew;;
+      haskell_stack) _p11k_seg_haskell_stack;;
+      azure) _p11k_seg_azure;;
+      nordvpn) _p11k_seg_nordvpn;;
+      chezmoi_shell) _p11k_seg_chezmoi_shell;;
+      todo) _p11k_seg_todo;;
+      timewarrior) _p11k_seg_timewarrior;;
+      taskwarrior) _p11k_seg_taskwarrior;;
+      per_directory_history) _p11k_seg_per_directory_history;;
       kubecontext) _p11k_seg_kubecontext;;
       load) _p11k_seg_load;;
       ram) _p11k_seg_ram;;
