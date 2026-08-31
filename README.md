@@ -61,9 +61,23 @@ and nixpkgs). It can replace gitstatusd via `GITSTATUS_DAEMON`.
 
 A first-party zsh theme (`p11k.zsh-theme`) is under development. It
 sources the same `~/.p10k.zsh` (with default fallbacks for sparse
-configs), renders the core segments, supports
-`POWERLEVEL9K_SHORTEN_STRATEGY`, transient prompt and vi mode, and
-queries git status through `p11k-d` asynchronously.
+configs), renders every segment enabled in the default p10k config
+(including the env/version-manager families), supports
+`POWERLEVEL9K_SHORTEN_STRATEGY`, transient prompt, vi mode and instant
+prompt, and queries git status through `p11k-d` asynchronously.
+
+Instant prompt follows p10k's mechanism: the theme dumps a static
+per-directory prompt (no vcs/dynamic segments) into
+`~/.cache/p11k/`; sourcing the generated
+`p11k-instant-prompt-$USER.zsh` from the top of `.zshrc` renders the
+prompt while the rest of `.zshrc` is still loading. To enable,
+replace the p10k block at the top of `.zshrc`:
+
+```zsh
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p11k/p11k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p11k/p11k-instant-prompt-${(%):-%n}.zsh"
+fi
+```
 
 ```zsh
 # oh-my-zsh: ZSH_THEME 里不能用自定义路径，直接 source 替代
