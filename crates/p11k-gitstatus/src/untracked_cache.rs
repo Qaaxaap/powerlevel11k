@@ -1,4 +1,4 @@
-//! untracked cache（对齐 `check_dir_mtime.cc:99-143` 与 `index.cc:231-243`）。
+//! untracked cache 探针（对齐 `check_dir_mtime.cc` 的 CheckDirMtime）。
 //!
 //! # 背景
 //!
@@ -6,45 +6,230 @@
 //! 父目录的 mtime**。并非所有文件系统都保证（部分网络/覆盖文件系统
 //! 不保证），错误启用会导致 untracked 文件漏报——正确性优先于性能。
 //!
-//! 原版的做法：仓库首次构造时**异步**跑一个 CheckDirMtime 探针——
-//! 创建临时目录、往其中写子文件，检查父目录 mtime 是否随之变化：
-//! - 行为支持 → 目录 mtime 未变即可复用上次"该目录下无 untracked"的
-//!   结论，跳过 readdir；
-//! - 行为不支持 → 禁用缓存，每次全量遍历。
+//! 探针做法（原版 CheckDirMtime）：在 gitdir 下 mkdtemp，创建 a、b 两个
+//! 子目录并记录 mtime，**sleep 1 秒**（保证 mtime 分辨率），随后在 a 下
+//! mkdir、b 下 touch 文件；两个父目录 mtime 均变化 → 支持，否则不支持。
 //!
-//! # 复刻要求
-//!
-//! 探针行为必须复刻（含异步执行、结论缓存），否则在特殊文件系统上
-//! 会出现 untracked 漏报。探针结果按"当前文件系统/挂载点"记忆，
-//! 换工作区（不同挂载）需重新探测。
+//! 探针在**后台线程**执行：不阻塞首次请求；结论未出时按"支持"处理
+//! （与 git 的默认乐观一致）。探针残留目录（前缀 `.gitstatus.`）由
+//! 清理逻辑移除，避免上次崩溃的残留干扰。
 
-/// 一个仓库工作区的 untracked cache 状态。
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 pub struct UntrackedCache {
-    /// 探针结论：当前文件系统是否支持"子目录变化更新父目录 mtime"。
-    pub supported: bool,
-    // TODO(实现者)：目录 mtime 记录表——
-    // HashMap<目录路径, (mtime_sec, mtime_nsec)>，只存"确认无 untracked"的目录。
+    /// 探针结论；未完成时按 true（git 默认乐观）。
+    supported: Arc<AtomicBool>,
 }
 
 impl UntrackedCache {
-    /// 启动探针：验证文件系统行为，构造出带结论的缓存。
-    ///
-    /// 实现要点：
-    /// - 在目标文件系统上创建临时目录（如 `$TMPDIR` 同挂载点），
-    ///   记录父目录 mtime → 写入子文件 → 再读父目录 mtime 比较。
-    /// - 异步执行：探针不阻塞首次请求；结论未出时先按"支持"处理
-    ///   （与 git 的默认一致），结论出来后再纠正。
-    /// - 探针失败（无法创建临时文件）时按"不支持"处理，安全降级。
-    pub fn probe_support() -> UntrackedCache {
-        todo!("实现：临时目录探针，异步或同步均可（注释说明选择）")
+    /// 启动后台探针并立即返回。gitdir = 仓库 .git 目录路径。
+    pub fn start_probe(gitdir: &Path) -> UntrackedCache {
+        let supported = Arc::new(AtomicBool::new(true));
+        let flag = supported.clone();
+        let gitdir = gitdir.to_path_buf();
+        std::thread::spawn(move || {
+            let ok = probe_support(&gitdir);
+            flag.store(ok, Ordering::Relaxed);
+        });
+        UntrackedCache { supported }
     }
 
-    /// 判断某目录"无 untracked"的结论是否仍有效。
-    ///
-    /// 实现要点：缓存命中且目录当前 mtime 与记录一致 → true；
-    /// 未命中 → false（调用方全量 readdir 后可用结果回填缓存）。
-    pub fn is_valid(&self, dir_path: &[u8], dir_mtime: (i64, i64)) -> bool {
-        let _ = (dir_path, dir_mtime);
-        todo!("实现：查表比较 mtime；未命中返回 false")
+    /// 当前探针结论（探针未完成时为 true）。
+    pub fn enabled(&self) -> bool {
+        self.supported.load(Ordering::Relaxed)
     }
+
+    /// 目录 mtime 与缓存记录相等即"未变"（对齐 scan 层的 StatEq 用法）。
+    pub fn is_fresh(&self, cached: Option<(i64, i64)>, cur: (i64, i64)) -> bool {
+        self.enabled() && cached == Some(cur)
+    }
+}
+
+/// 探针主体（对齐 CheckDirMtime）。失败一律返回 false（安全降级）。
+fn probe_support(gitdir: &Path) -> bool {
+    // 清理 10 秒以上的残留探针目录（对齐 RemoveStaleDirs）
+    remove_stale_dirs(gitdir);
+
+    // mkdtemp：gitdir/.gitstatus.XXXXXX
+    let Some(tmp) = mkdtemp(gitdir.join(".gitstatus.XXXXXX")) else {
+        return false;
+    };
+    // RAII 清理句柄：函数结束（无论成功/失败路径）时删除探针目录。
+    let _cleanup = Cleanup(tmp.clone());
+
+    let a_dir = tmp.join("a");
+    let b_dir = tmp.join("b");
+    // SAFETY: 路径来自本地构造，mkdir 语义标准。
+    if unsafe { libc::mkdir(a_dir.as_os_str().as_bytes().as_ptr().cast(), 0o755) } != 0 {
+        return false;
+    }
+    let Some(a_st) = lstat(&a_dir) else {
+        return false;
+    };
+    // SAFETY: 同上。
+    if unsafe { libc::mkdir(b_dir.as_os_str().as_bytes().as_ptr().cast(), 0o755) } != 0 {
+        return false;
+    }
+    let Some(b_st) = lstat(&b_dir) else {
+        return false;
+    };
+
+    // 保证 mtime 分辨率（对齐原版 while (sleep(1))）
+    std::thread::sleep(std::time::Duration::from_secs(1));
+
+    // a/1 子目录：检查"子目录创建更新父目录 mtime"
+    let a1 = a_dir.join("1");
+    // SAFETY: 同上。
+    if unsafe { libc::mkdir(a1.as_os_str().as_bytes().as_ptr().cast(), 0o755) } != 0 {
+        return false;
+    }
+    if !stat_changed(&a_dir, &a_st) {
+        return false;
+    }
+
+    // b/1 文件：检查"子文件创建更新父目录 mtime"（对齐 Touch = creat 0444）
+    let b1 = b_dir.join("1");
+    // SAFETY: open 语义标准。
+    let fd = unsafe {
+        libc::open(
+            b1.as_os_str().as_bytes().as_ptr().cast(),
+            libc::O_CREAT | libc::O_WRONLY | libc::O_CLOEXEC,
+            0o444,
+        )
+    };
+    if fd < 0 {
+        return false;
+    }
+    // SAFETY: close 语义标准。
+    unsafe { libc::close(fd) };
+    stat_changed(&b_dir, &b_st)
+}
+
+/// RAII 清理：Drop 时递归删除探针目录（rmdir 链：a/1、a、b/1、b、根）。
+struct Cleanup(PathBuf);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let root = &self.0;
+        let a1 = root.join("a/1");
+        let a = root.join("a");
+        let b1 = root.join("b/1");
+        let b = root.join("b");
+        for p in [&b1, &b, &a1, &a, root] {
+            let is_dir = p != &b1;
+            // SAFETY: 路径本地构造。
+            let r = if is_dir {
+                unsafe { libc::rmdir(p.as_os_str().as_bytes().as_ptr().cast()) }
+            } else {
+                unsafe { libc::unlink(p.as_os_str().as_bytes().as_ptr().cast()) }
+            };
+            let _ = r; // 清理失败不致命
+        }
+    }
+}
+
+/// mkdtemp 封装：模板末尾 XXXXXX 由 libc 填充。
+fn mkdtemp(template: PathBuf) -> Option<PathBuf> {
+    let mut bytes = template.as_os_str().as_bytes().to_vec();
+    bytes.push(0);
+    // SAFETY: bytes 为 NUL 结尾的可变缓冲，末 6 字节是 X。
+    let p = unsafe { libc::mkdtemp(bytes.as_mut_ptr().cast()) };
+    if p.is_null() {
+        return None;
+    }
+    // SAFETY: mkdtemp 成功时 p 指向填充后的 NUL 结尾路径。
+    let cstr = unsafe { std::ffi::CStr::from_ptr(p) };
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(cstr.to_bytes())))
+}
+
+/// lstat 取 (mtime_sec, mtime_nsec)。
+fn lstat(path: &Path) -> Option<(i64, i64)> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: 路径本地构造，st 合法缓冲。
+    if unsafe { libc::lstat(path.as_os_str().as_bytes().as_ptr().cast(), &mut st) } != 0 {
+        return None;
+    }
+    Some((st.st_mtime, st.st_mtime_nsec))
+}
+
+/// mtime 是否变化（对齐 StatChanged：StatEq 取反）。
+fn stat_changed(path: &Path, prev: &(i64, i64)) -> bool {
+    lstat(path).map(|cur| &cur != prev).unwrap_or(false)
+}
+
+/// 清理 10 秒以上的残留探针目录（对齐 RemoveStaleDirs）。
+/// 实现要点：readdir gitdir，名字前缀 `.gitstatus.` 且 mtime 早于 now-10s
+/// 的目录，按 a/1、a、b/1、b、根的逆序删除。
+fn remove_stale_dirs(gitdir: &Path) {
+    // SAFETY: 打开 gitdir 目录 fd。
+    let dir_fd = unsafe {
+        libc::open(
+            gitdir.as_os_str().as_bytes().as_ptr().cast(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if dir_fd < 0 {
+        return;
+    }
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let dup_fd = unsafe { libc::dup(dir_fd) };
+    if dup_fd >= 0 {
+        let dirp = unsafe { libc::fdopendir(dup_fd) };
+        if !dirp.is_null() {
+            loop {
+                let ent = unsafe { libc::readdir(dirp) };
+                if ent.is_null() {
+                    break;
+                }
+                let name = unsafe { std::ffi::CStr::from_ptr((*ent).d_name.as_ptr()) }.to_bytes();
+                if name.starts_with(b".gitstatus.") {
+                    names.push(name.to_vec());
+                }
+            }
+            unsafe { libc::closedir(dirp) };
+        } else {
+            unsafe { libc::close(dup_fd) };
+        }
+    }
+    for name in names {
+        let mut path = gitdir.to_path_buf();
+        path.push(std::ffi::OsStr::from_bytes(&name));
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: fstatat 语义标准。
+        let ok = unsafe {
+            libc::fstatat(
+                dir_fd,
+                std::ffi::CString::new(name.clone())
+                    .unwrap()
+                    .as_bytes_with_nul()
+                    .as_ptr()
+                    .cast(),
+                &mut st,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0;
+        if !ok || st.st_mtime + 10 > now {
+            continue;
+        }
+        // 逆序删除：a/1、a、b/1、b、根
+        let mut sub = path.clone();
+        sub.push("a/1");
+        unsafe { libc::rmdir(sub.as_os_str().as_bytes().as_ptr().cast()) };
+        let mut sub = path.clone();
+        sub.push("a");
+        unsafe { libc::rmdir(sub.as_os_str().as_bytes().as_ptr().cast()) };
+        let mut sub = path.clone();
+        sub.push("b/1");
+        unsafe { libc::unlink(sub.as_os_str().as_bytes().as_ptr().cast()) };
+        let mut sub = path.clone();
+        sub.push("b");
+        unsafe { libc::rmdir(sub.as_os_str().as_bytes().as_ptr().cast()) };
+        unsafe { libc::rmdir(path.as_os_str().as_bytes().as_ptr().cast()) };
+    }
+    // SAFETY: close 语义标准。
+    unsafe { libc::close(dir_fd) };
 }
