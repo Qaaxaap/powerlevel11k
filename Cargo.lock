@@ -564,6 +564,7 @@ name = "p11k-d"
 version = "0.1.0"
 dependencies = [
  "p11k-gitstatus",
+ "tempfile",
 ]
 
 [[package]]

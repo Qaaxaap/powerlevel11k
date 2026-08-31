@@ -103,11 +103,49 @@ fn bad_args_exits_ten() {
     assert_eq!(status.code(), Some(10));
 }
 
-/// 普通仓库请求：TODO(repo)，RepoCache 接入后实现——
-/// 指向真实 git 仓库，断言返回 27 字段仓库响应。
+/// 真实仓库端到端：建临时 git 仓库（1 提交 + 1 untracked 文件），
+/// 发请求断言 29 字段响应、workdir/commit/分支名/untracked 计数。
 #[test]
-#[ignore = "repo 层（RepoCache）尚未接入"]
 fn real_repo_request_returns_status() {
-    let _ = spawn;
-    todo!("实现：建临时 git 仓库 → 发请求 → 断言 is_repo=1 且 27 字段")
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    let run = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .unwrap()
+    };
+    run(&["init", "-q", "-b", "main"]);
+    run(&["config", "user.email", "t@t"]);
+    run(&["config", "user.name", "t"]);
+    std::fs::write(repo.join("f"), b"x").unwrap();
+    run(&["add", "f"]);
+    run(&["commit", "-qm", "init"]);
+    std::fs::write(repo.join("u"), b"y").unwrap(); // untracked
+
+    let (mut child, mut stdin, mut stdout) = spawn(&[]);
+    let req = format!("id\x1f{}\x1e", repo.to_str().unwrap());
+    stdin.write_all(req.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    // 响应长度不定：逐字节读到 MSG_SEP
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    while buf.last() != Some(&0x1e) {
+        stdout.read_exact(&mut byte).unwrap();
+        buf.push(byte[0]);
+    }
+    let fields: Vec<&[u8]> = buf.split(|&b| b == 0x1f).collect();
+    // id + 1 + 27 数据字段
+    assert_eq!(fields.len(), 29, "fields: {fields:?}");
+    assert_eq!(fields[0], b"id");
+    assert_eq!(fields[1], b"1");
+    assert_eq!(fields[2], repo.to_str().unwrap().as_bytes()); // workdir
+    assert_eq!(fields[3].len(), 40); // commit sha
+    assert_eq!(fields[4], b"main"); // local branch
+    // 数据字段索引 = 协议 field 常量 + 2（id、1 两个前缀字段）
+    assert_eq!(fields[13], b"1"); // num_untracked（u）
+    assert_eq!(fields[11], b"0"); // num_unstaged（干净）
+    drop(stdin);
+    child.wait().unwrap();
 }
