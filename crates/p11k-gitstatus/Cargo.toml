@@ -1,0 +1,13 @@
+[package]
+name = "p11k-gitstatus"
+description = "Byte-compatible Rust reimplementation of the gitstatusd protocol and engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# 性能内核（openat/fstatat/fcntl/kill/getpgrp）需要 libc。
+libc.workspace = true
+# git2 在 M2 阶段引入（git 对象模型：HEAD/分支/远端/tag/stash/summary）。
+# M1 协议层不需要，先不声明。
