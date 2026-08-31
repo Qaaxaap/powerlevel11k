@@ -575,6 +575,7 @@ dependencies = [
  "criterion",
  "git2",
  "libc",
+ "libgit2-sys",
  "tempfile",
 ]
 

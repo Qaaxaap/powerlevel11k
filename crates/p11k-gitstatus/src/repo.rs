@@ -696,62 +696,77 @@ impl Repo {
         stats
     }
 
-    /// dirty 精确计数（对齐 StartDirtyScan）：候选 pathspec 的
-    /// index_to_workdir diff，foreach 计数 untracked/unstaged/unstaged_deleted。
+    /// dirty 精确计数（对齐 StartDirtyScan 的完整语义）。
     ///
-    /// 与原版差异：① 无 notify_cb（git2 0.20 未暴露），foreach 后置计数；
-    /// ② 无 ignore_submodules（同上）——脏 submodule 计数可能偏多，
-    /// TODO(submodule)；③ 无 GIT_DIFF_EXEMPLARS（builder 无对应开关）。
+    /// 用 libgit2-sys raw FFI 复刻原版 diff 选项：notify_cb 在 diff 构造中
+    /// 计数并提前终止（GIT_EUSER）、range_start/range_end 限制遍历区间、
+    /// GIT_DIFF_DISABLE_PATHSPEC_MATCH 的 pathspec 前缀匹配、
+    /// ignore_submodules=DIRTY。git2 0.20 未绑定这些，raw 是唯一对齐路径；
+    /// unsafe 范围受控（见各 SAFETY 注释）。
     fn compute_dirty(&self, git_index: &GitIndex, candidates: &[Vec<u8>], stats: &mut IndexStats) {
         if candidates.is_empty() {
             return;
         }
         let m_unstaged = self.limits.max_num_unstaged;
         let m_untracked = self.limits.max_num_untracked;
-        let mut opts = DiffOptions::new();
-        opts.include_typechange_trees(true)
+
+        // pathspec：候选路径（C 字符串 + 指针数组，对齐原版 pathspec 数组）
+        let cstrings: Vec<std::ffi::CString> = candidates
+            .iter()
+            .filter_map(|c| std::ffi::CString::new(c.clone()).ok())
+            .collect();
+        let ptrs: Vec<*const libc::c_char> = cstrings.iter().map(|c| c.as_ptr()).collect();
+
+        // 回调上下文（对齐原版 opt.payload = this）
+        let mut ctx = DirtyNotifyCtx {
+            stats,
+            m_unstaged,
+            m_untracked,
+            // 候选已排序，最后一个即最大
+            max_candidate: candidates.last().map(Vec::as_slice).unwrap_or(&[]),
+        };
+
+        // git2 builder 负责可绑定选项与 opts 结构初始化（含 version）；
+        // raw 指针补 git2 未绑定的字段（notify_cb/payload/range/pathspec）。
+        // EXEMPLARS 在 libgit2 1.7+ 已废弃（typchange 默认含 exemplar 行为）。
+        let mut builder = DiffOptions::new();
+        builder
+            .include_typechange_trees(true)
             .skip_binary_check(true)
-            .disable_pathspec_match(true);
+            .disable_pathspec_match(true)
+            .ignore_submodules(true);
         if m_untracked != 0 {
-            opts.include_untracked(true);
+            builder.include_untracked(true);
             if self.limits.recurse_untracked_dirs {
-                opts.recurse_untracked_dirs(true);
+                builder.recurse_untracked_dirs(true);
             }
         } else {
-            opts.enable_fast_untracked_dirs(true);
+            builder.enable_fast_untracked_dirs(true);
         }
-        // pathspec：候选路径（累积式，对齐原版 pathspec 数组）
-        for c in candidates {
-            if let Ok(cs) = std::ffi::CString::new(c.clone()) {
-                opts.pathspec(cs);
+        // SAFETY: builder 内部 raw 结构完整（version 已设）；补齐字段后
+        // 由 git2 的 diff_index_to_workdir 使用同一 opts 对象调用 libgit2
+        // （git2 0.20 的 Repository/Index 无公开 raw 访问，此法复用其内部
+        // 调用路径）。ctx 生命周期覆盖 diff 调用。
+        unsafe {
+            let raw = builder.raw() as *mut libgit2_sys::git_diff_options;
+            (*raw).pathspec.count = ptrs.len();
+            (*raw).pathspec.strings = ptrs.as_ptr() as *mut *mut libc::c_char;
+            // libgit2 1.9 无 range 字段：区间语义由 progress_cb 提前停止
+            // 等价（越过最大候选路径即 GIT_EUSER 停止遍历）
+            (*raw).payload = &mut ctx as *mut DirtyNotifyCtx<'_> as *mut libc::c_void;
+            (*raw).notify_cb = Some(dirty_notify_cb);
+            (*raw).progress_cb = Some(dirty_progress_cb);
+        }
+        // GIT_EUSER（notify/progress 提前终止）会被 git2 转为 Err，
+        // 属预期路径；其他错误打印诊断。
+        let diff_result = self
+            .git
+            .diff_index_to_workdir(Some(git_index), Some(&mut builder));
+        if let Err(e) = diff_result {
+            if e.code() != git2::ErrorCode::User {
+                eprintln!("gitstatusd: git_diff_index_to_workdir: {e}");
             }
         }
-        let Ok(diff) = self
-            .git
-            .diff_index_to_workdir(Some(git_index), Some(&mut opts))
-        else {
-            return;
-        };
-        let s = &mut *stats;
-        let _ = diff.foreach(
-            &mut |delta, _| {
-                if delta.status() == git2::Delta::Conflicted {
-                    true // 冲突在 workdir diff 中不计数（对齐原版 DO_NOT_INSERT）
-                } else if delta.status() == git2::Delta::Untracked {
-                    s.num_untracked += 1;
-                    should_continue(s.num_untracked, m_untracked, s.num_unstaged, m_unstaged)
-                } else {
-                    if delta.status() == git2::Delta::Deleted {
-                        s.num_unstaged_deleted += 1;
-                    }
-                    s.num_unstaged += 1;
-                    should_continue(s.num_unstaged, m_unstaged, s.num_untracked, m_untracked)
-                }
-            },
-            None,
-            None,
-            None,
-        );
         stats.num_unstaged = cap(stats.num_unstaged, m_unstaged);
         stats.num_untracked = cap(stats.num_untracked, m_untracked);
         stats.num_unstaged_deleted = cap(stats.num_unstaged_deleted, stats.num_unstaged as i64);
@@ -798,4 +813,94 @@ fn should_continue(c1: usize, m1: i64, c2: usize, m2: i64) -> bool {
     let reached1 = m1 >= 0 && c1 >= m1 as usize;
     let reached2 = m2 >= 0 && c2 >= m2 as usize;
     !(reached1 && reached2)
+}
+
+/// dirty diff 的 notify 回调上下文（对齐原版 opt.payload = this）。
+struct DirtyNotifyCtx<'a> {
+    stats: &'a mut IndexStats,
+    m_unstaged: i64,
+    m_untracked: i64,
+    /// 最大候选路径（diff 按路径序遍历，progress_cb 越过它即提前停止，
+    /// 等价原版 range_end 的区间语义；libgit2 1.9 已移除 range 字段）。
+    max_candidate: &'a [u8],
+}
+
+/// libgit2 notify 回调（对齐 StartDirtyScan 的 notify_cb + OnDelta）：
+/// - Conflicted → 不插入不计数（DO_NOT_INSERT）
+/// - Untracked → untracked 计数；Deleted → unstaged + unstaged_deleted；
+///   其余 → unstaged 计数
+/// - c1 达上限且 c2 达上限 → GIT_EUSER 提前终止整个 diff
+/// - c1 达上限（c2 未达）→ 不插入 + 跳过同类（DO_NOT_INSERT | SKIP_TYPE）
+/// - 未达上限 → 不插入（DO_NOT_INSERT，仅计数）
+extern "C" fn dirty_notify_cb(
+    _diff: *const libgit2_sys::git_diff,
+    delta: *const libgit2_sys::git_diff_delta,
+    _matched_pathspec: *const libc::c_char,
+    payload: *mut libc::c_void,
+) -> libc::c_int {
+    // SAFETY: delta 由 libgit2 传入，payload 是 DirtyNotifyCtx 指针
+    // （生命周期覆盖整个 diff 调用，见 compute_dirty 的 SAFETY 注释）。
+    unsafe {
+        let ctx = &mut *(payload as *mut DirtyNotifyCtx<'_>);
+        let status = (*delta).status;
+        if status == libgit2_sys::GIT_DELTA_CONFLICTED {
+            // 跳过该 delta（1.9 语义：1 = 不插入）
+            return 1;
+        }
+        let (c1, m1, c2, m2) = if status == libgit2_sys::GIT_DELTA_UNTRACKED {
+            ctx.stats.num_untracked += 1;
+            (
+                ctx.stats.num_untracked,
+                ctx.m_untracked,
+                ctx.stats.num_unstaged,
+                ctx.m_unstaged,
+            )
+        } else {
+            if status == libgit2_sys::GIT_DELTA_DELETED {
+                ctx.stats.num_unstaged_deleted += 1;
+            }
+            ctx.stats.num_unstaged += 1;
+            (
+                ctx.stats.num_unstaged,
+                ctx.m_unstaged,
+                ctx.stats.num_untracked,
+                ctx.m_untracked,
+            )
+        };
+        // libgit2 1.9 的 notify 返回语义：0 = 插入 delta，1 = 跳过，
+        // 负错误码 = 停止（旧版 GIT_DIFF_DELTA_DO_NOT_INSERT 已废弃）。
+        // 对齐原版：未达上限跳过插入；都达上限 GIT_EUSER 提前终止。
+        // （新版无 SKIP_TYPE 等价物，"跳过同类"优化丢失，正确性不变）
+        let reached1 = m1 >= 0 && c1 >= m1 as usize;
+        let reached2 = m2 >= 0 && c2 >= m2 as usize;
+        if reached1 && reached2 {
+            libgit2_sys::GIT_EUSER as libc::c_int
+        } else {
+            1
+        }
+    }
+}
+
+/// libgit2 1.9 progress 回调（每个文件比较前触发）：diff 按路径序遍历，
+/// 一旦越过最大候选路径即返回 GIT_EUSER 停止——等价原版 range_end 的
+/// 区间提前终止（1.9 已移除 range 字段）。返回 0 = 继续。
+extern "C" fn dirty_progress_cb(
+    _diff: *const libgit2_sys::git_diff,
+    _old_path: *const libc::c_char,
+    new_path: *const libc::c_char,
+    payload: *mut libc::c_void,
+) -> libc::c_int {
+    // SAFETY: payload 为 DirtyNotifyCtx 指针（生命周期见 compute_dirty）。
+    unsafe {
+        let ctx = &*(payload as *mut DirtyNotifyCtx<'_>);
+        if ctx.max_candidate.is_empty() || new_path.is_null() {
+            return 0;
+        }
+        let path = std::ffi::CStr::from_ptr(new_path).to_bytes();
+        if path > ctx.max_candidate {
+            libgit2_sys::GIT_EUSER as libc::c_int
+        } else {
+            0
+        }
+    }
 }
