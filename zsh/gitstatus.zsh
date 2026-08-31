@@ -24,9 +24,13 @@ typeset -g __p11k_gitstatus_file_prefix=''
 # 响应解析产物（供 _p11k_seg_vcs 使用）
 typeset -g __p11k_vcs_ready=''
 typeset -g __p11k_vcs_branch=''
+typeset -g __p11k_vcs_tag=''
 typeset -gi __p11k_vcs_dirty=0
 typeset -gi __p11k_vcs_unstaged=0
 typeset -gi __p11k_vcs_untracked=0
+typeset -gi __p11k_vcs_ahead=0
+typeset -gi __p11k_vcs_behind=0
+typeset -gi __p11k_vcs_stashes=0
 
 function _p11k_gitstatus_start() {
   emulate -L zsh -o no_aliases -o extended_glob
@@ -78,13 +82,20 @@ function _p11k_gitstatus_start() {
 }
 
 # 发送查询（precmd 调用）。diff 字段缺省（全量统计）。
+# daemon 未启动或已崩溃时自动（重）启动。
 function _p11k_gitstatus_query() {
-  (( __p11k_gitstatus_fd > 0 )) || return 1
+  (( __p11k_gitstatus_fd > 0 )) || _p11k_gitstatus_start || return 1
   __p11k_gitstatus_req_id=$EPOCHREALTIME
   # 单飞行：上一查询未完成时跳过（对齐 p10k 的异步语义）
   (( ${+__p11k_gitstatus_pending} )) && return 0
   __p11k_gitstatus_pending=1
-  print -rn -- "$__p11k_gitstatus_req_id\x1f$PWD\x1e" >&$__p11k_gitstatus_fd
+  if ! print -rn -- "$__p11k_gitstatus_req_id\x1f$PWD\x1e" >&$__p11k_gitstatus_fd 2>/dev/null; then
+    # daemon 已退出（EPIPE 等）：清理 fd 并重启，下个 precmd 恢复
+    exec {__p11k_gitstatus_fd}>&- 2>/dev/null
+    __p11k_gitstatus_fd=-1
+    unset __p11k_gitstatus_pending
+    _p11k_gitstatus_start
+  fi
 }
 
 # zle -F 回调：读响应（可能多条），按 id 路由
@@ -123,11 +134,16 @@ function _p11k_gitstatus_process() {
   fi
   ((${#f} < 30)) && return
   # 字段映射（协议索引 +2）：
-  # 2+2=4 local_branch, 2+9=11 num_unstaged, 2+11=13 num_untracked
+  # 4 branch, 11 unstaged, 13 untracked, 14 ahead, 15 behind,
+  # 16 stashes, 17 tag
   __p11k_vcs_ready=1
   __p11k_vcs_branch=$f[4]
   __p11k_vcs_unstaged=$f[11]
   __p11k_vcs_untracked=$f[13]
+  __p11k_vcs_ahead=$f[14]
+  __p11k_vcs_behind=$f[15]
+  __p11k_vcs_stashes=$f[16]
+  __p11k_vcs_tag=$f[17]
   (( __p11k_vcs_dirty = __p11k_vcs_unstaged + __p11k_vcs_untracked > 0 ))
   # 状态变化时重绘（对齐 p10k 的异步回填行为）
   if [[ $__p11k_vcs_last_display != "$__p11k_vcs_branch:$__p11k_vcs_dirty" ]]; then

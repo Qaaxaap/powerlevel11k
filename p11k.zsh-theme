@@ -505,9 +505,18 @@ function _p11k_seg_virtualenv() {
 
 # command_execution_time：超过 POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD 才显示
 function _p11k_seg_command_execution_time() {
-  local thresh=${POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD:-3}
+  local thresh=$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD 3)
   (( __p11k_last_exec_time >= thresh )) || return
-  local text="${__p11k_last_exec_time}s"
+  # 格式化（对齐 p10k：>=1h 显示 h/m/s，>=1m 显示 m/s，否则秒）
+  local s=${__p11k_last_exec_time%.*}
+  local text
+  if (( s >= 3600 )); then
+    text="$(( s / 3600 ))h $(( (s % 3600) / 60 ))m $(( s % 60 ))s"
+  elif (( s >= 60 )); then
+    text="$(( s / 60 ))m $(( s % 60 ))s"
+  else
+    text="${__p11k_last_exec_time}s"
+  fi
   _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_BACKGROUND yellow)" \
     "$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND 236)" \
     "$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_VISUAL_IDENTIFIER_EXPANSION '') " "$text"
@@ -528,14 +537,31 @@ function _p11k_seg_background_jobs() {
 function _p11k_seg_vcs() {
   # __p11k_vcs_* 由 gitstatus 异步回调填充；尚未就绪时跳过
   (( ${+__p11k_vcs_ready} )) || return
-  [[ -n $__p11k_vcs_branch ]] || return
   local text=$__p11k_vcs_branch
-  if (( __p11k_vcs_dirty )); then
-    text+=" ${POWERLEVEL9K_VCS_UNSTAGED_ICON:-!}$__p11k_vcs_unstaged"
-    text+=" ${POWERLEVEL9K_VCS_UNTRACKED_ICON:-?}$__p11k_vcs_untracked"
+  # detached/tag：无分支时用 tag 名
+  [[ -n $text ]] || text=$__p11k_vcs_tag
+  [[ -n $text ]] || return
+  # ahead/behind（对齐 p10k 的 ↑n↓n）
+  if (( __p11k_vcs_ahead > 0 || __p11k_vcs_behind > 0 )); then
+    (( __p11k_vcs_ahead > 0 )) && text+=" ↑$__p11k_vcs_ahead"
+    (( __p11k_vcs_behind > 0 )) && text+=" ↓$__p11k_vcs_behind"
   fi
-  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_VCS_CLEAN_BACKGROUND green)" \
-    "$(_p11k_p9k POWERLEVEL9K_VCS_CLEAN_FOREGROUND 236)" \
+  # stash
+  (( __p11k_vcs_stashes > 0 )) && text+=" $(_p11k_p9k POWERLEVEL9K_VCS_STASH_ICON '⬤')$__p11k_vcs_stashes"
+  # dirty 细分：unstaged/untracked（对齐 p10k 的 !n ?n）
+  local bg fg
+  if (( __p11k_vcs_dirty )); then
+    bg=$(_p11k_p9k POWERLEVEL9K_VCS_MODIFIED_BACKGROUND yellow)
+    fg=$(_p11k_p9k POWERLEVEL9K_VCS_MODIFIED_FOREGROUND 236)
+    (( __p11k_vcs_unstaged > 0 )) &&
+      text+=" $(_p11k_p9k POWERLEVEL9K_VCS_UNSTAGED_ICON '!')$__p11k_vcs_unstaged"
+    (( __p11k_vcs_untracked > 0 )) &&
+      text+=" $(_p11k_p9k POWERLEVEL9K_VCS_UNTRACKED_ICON '?')$__p11k_vcs_untracked"
+  else
+    bg=$(_p11k_p9k POWERLEVEL9K_VCS_CLEAN_BACKGROUND green)
+    fg=$(_p11k_p9k POWERLEVEL9K_VCS_CLEAN_FOREGROUND 236)
+  fi
+  _p11k_prompt_segment "$bg" "$fg" \
     "$(_p11k_p9k POWERLEVEL9K_VCS_GIT_ICON '') " "$text"
   :
 }
