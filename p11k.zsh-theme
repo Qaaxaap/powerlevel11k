@@ -96,7 +96,8 @@ function _p11k_prompt_segment() {
   if [[ -n $icon && -n $text ]]; then
     __p11k_out+="$(_p11k_p9k POWERLEVEL9K_LEFT_PROMPT_SEGMENT_END_SYMBOL ' ')"
   fi
-  __p11k_out+="$text"
+  # prompt 解析里 % 是转义符：文本中的 % 必须转义（对齐 p10k 的转义处理）
+  __p11k_out+="${text//\%/%%}"
   __p11k_out+="%f%k"
   __p11k_last_bg=$bg
   (( __p11k_seg_count++ ))
@@ -273,6 +274,108 @@ function _p11k_seg_phpenv() { _p11k_cmd_seg phpenv 'phpenv version-name' 4 236 '
 function _p11k_seg_scalaenv() { _p11k_cmd_seg scalaenv 'scalaenv version-name' 4 236 '🗬'; }
 function _p11k_seg_luaenv() { _p11k_cmd_seg luaenv 'luaenv version-name' 4 236 '🌙'; }
 
+# 通用"慢命令 + 60s 缓存"段：版本类段用（node --version 等每次
+# precmd 调用太慢，p10k 同样有段级缓存）。
+function _p11k_cmd_seg_cached() {
+  local name=$1 cmd=$2 bg_def=$3 fg_def=$4 icon_def=$5
+  local cache_var=__p11k_cache_${name:u}
+  local -a cache
+  cache=("${(@P)cache_var}")
+  if (( ${+cache[1]} == 0 || EPOCHSECONDS - cache[1] > 60 )); then
+    local out
+    out=$($cmd 2>/dev/null)
+    typeset -g $cache_var="$EPOCHSECONDS $out"
+    cache=("${(@P)cache_var}")
+  fi
+  [[ -n ${cache[2]} ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_${name:u}_BACKGROUND $bg_def)" \
+    "$(_p11k_p9k POWERLEVEL9K_${name:u}_FOREGROUND $fg_def)" \
+    "$(_p11k_p9k POWERLEVEL9K_${name:u}_VISUAL_IDENTIFIER_EXPANSION $icon_def) " "${cache[2]}"
+}
+
+# 版本段（命令输出修剪后显示）
+function _p11k_seg_node_version() { _p11k_cmd_seg_cached node_version 'node --version' 2 236 '⬢'; }
+function _p11k_seg_go_version() { _p11k_cmd_seg_cached go_version 'go version | sed "s/go version //"' 4 236 '🐹'; }
+function _p11k_seg_rust_version() { _p11k_cmd_seg_cached rust_version 'rustc --version | cut -d" " -f2' 208 236 '🦀'; }
+function _p11k_seg_java_version() { _p11k_cmd_seg_cached java_version 'java -version 2>&1 | head -1 | cut -d"\"" -f2' 208 236 '☕'; }
+function _p11k_seg_php_version() { _p11k_cmd_seg_cached php_version 'php --version | head -1 | cut -d" " -f2' 5 236 '🐘'; }
+function _p11k_seg_dotnet_version() { _p11k_cmd_seg_cached dotnet_version 'dotnet --version' 5 236 '🥅'; }
+function _p11k_seg_terraform_version() { _p11k_cmd_seg_cached terraform_version 'terraform version | head -1 | cut -d" " -f2' 4 236 '🛠'; }
+
+# kubecontext：kubectl 当前上下文（60s 缓存）
+function _p11k_seg_kubecontext() {
+  _p11k_cmd_seg_cached kubecontext 'kubectl config current-context' 4 236 '⎈'
+}
+
+# 系统段（读 /proc，快，无缓存）：
+# load：/proc/loadavg 第一字段
+function _p11k_seg_load() {
+  local -a la
+  la=("${(@f)$(</proc/loadavg 2>/dev/null)}")
+  [[ -n $la[1] ]] || return
+  local text=${la[1]%% *}
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_LOAD_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_LOAD_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_LOAD_VISUAL_IDENTIFIER_EXPANSION '') " "$text"
+}
+
+# ram：MemAvailable/MemTotal 百分比
+function _p11k_seg_ram() {
+  local total avail
+  total=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null)
+  avail=$(awk '/MemAvailable/ {print $2}' /proc/meminfo 2>/dev/null)
+  [[ -n $total && -n $avail ]] || return
+  local pct=$(( (total - avail) * 100 / total ))
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_RAM_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_RAM_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_RAM_VISUAL_IDENTIFIER_EXPANSION '') " "${pct}%"
+}
+
+# swap：SwapUsed/SwapTotal 百分比
+function _p11k_seg_swap() {
+  local used total
+  used=$(awk '/SwapUsed/ {print $2}' /proc/meminfo 2>/dev/null)
+  total=$(awk '/SwapTotal/ {print $2}' /proc/meminfo 2>/dev/null)
+  [[ -n $used && -n $total && $total -gt 0 ]] || return
+  local pct=$(( used * 100 / total ))
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_SWAP_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_SWAP_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_SWAP_VISUAL_IDENTIFIER_EXPANSION '易') " "${pct}%"
+}
+
+# disk_usage：当前分区使用率
+function _p11k_seg_disk_usage() {
+  local pct
+  pct=$(df -h . 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}')
+  [[ -n $pct ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_DISK_USAGE_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_DISK_USAGE_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_DISK_USAGE_VISUAL_IDENTIFIER_EXPANSION '') " "${pct}%"
+}
+
+# battery：/sys/class/power_supply（笔记本；无电池时跳过）
+function _p11k_seg_battery() {
+  local cap
+  cap=$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -1)
+  [[ -n $cap ]] || return
+  local icon=''
+  (( cap < 20 )) && icon=''
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_BATTERY_LOW_BACKGROUND 208)" \
+    "$(_p11k_p9k POWERLEVEL9K_BATTERY_LOW_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_BATTERY_LOW_VISUAL_IDENTIFIER_EXPANSION $icon) " "${cap}%"
+}
+
+# package：package.json 的 version
+function _p11k_seg_package() {
+  [[ -f package.json ]] || return
+  local v
+  v=$(awk -F'"' '/"version"/ {print $4; exit}' package.json 2>/dev/null)
+  [[ -n $v ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_PACKAGE_BACKGROUND 208)" \
+    "$(_p11k_p9k POWERLEVEL9K_PACKAGE_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_PACKAGE_VISUAL_IDENTIFIER_EXPANSION '📦') " "$v"
+}
+
 # os_icon：OS 图标（POWERLEVEL9K_OS_ICON，默认 Linux 图标）
 function _p11k_seg_os_icon() {
   _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_OS_ICON_BACKGROUND 236)" \
@@ -322,18 +425,43 @@ function _p11k_seg_status() {
 
 # prompt_char：❯/❮ 提示符（root 显示 POWERLEVEL9K_PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,VIOWR}_FOREGROUND 的第一组）
 function _p11k_seg_prompt_char() {
-  local fg bg char
+  local fg bg char mode
+  # vi 模式（zle-keymap-select 钩子维护；非 vi 用户恒为 0）
+  mode=${__p11k_vi_mode:-0}
   if (( __p11k_last_status == 0 )); then
-    fg=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_OK_VIINS_FOREGROUND green)
-    char=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_OK_VIINS_CONTENT_EXPANSION '❯')
+    if (( mode )); then
+      fg=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_OK_VICMD_FOREGROUND green)
+      char=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_OK_VICMD_CONTENT_EXPANSION '❮')
+    else
+      fg=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_OK_VIINS_FOREGROUND green)
+      char=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_OK_VIINS_CONTENT_EXPANSION '❯')
+    fi
   else
-    fg=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_ERROR_VIINS_FOREGROUND red)
-    char=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_ERROR_VIINS_CONTENT_EXPANSION '❯')
+    if (( mode )); then
+      fg=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_ERROR_VICMD_FOREGROUND red)
+      char=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_ERROR_VICMD_CONTENT_EXPANSION '❮')
+    else
+      fg=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_ERROR_VIINS_FOREGROUND red)
+      char=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_ERROR_VIINS_CONTENT_EXPANSION '❯')
+    fi
   fi
   bg=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_BACKGROUND default)
   _p11k_prompt_segment "$bg" "$fg" '' "$char"
   __p11k_prompt_char_fg=$fg
-  :  # vi_mode 支持 TODO（KEYMAP 切换时重绘）
+}
+
+# 独立的 vi_mode 段（用户配置含 vi_mode 元素时显示）
+function _p11k_seg_vi_mode() {
+  local mode=${__p11k_vi_mode:-0}
+  if (( mode )); then
+    _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_VI_MODE_NORMAL_BACKGROUND 236)" \
+      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_NORMAL_FOREGROUND 255)" \
+      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_NORMAL_VISUAL_IDENTIFIER_EXPANSION 'N')" 'NORMAL'
+  else
+    _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_VI_MODE_INSERT_BACKGROUND 238)" \
+      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_INSERT_FOREGROUND 255)" \
+      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_INSERT_VISUAL_IDENTIFIER_EXPANSION 'I')" 'INSERT'
+  fi
 }
 
 # context：user@host（与 DEFAULT_USER 相同时不显示，对齐 p10k）
@@ -456,8 +584,23 @@ function _p11k_render_line() {
       phpenv) _p11k_seg_phpenv;;
       scalaenv) _p11k_seg_scalaenv;;
       luaenv) _p11k_seg_luaenv;;
+      node_version) _p11k_seg_node_version;;
+      go_version) _p11k_seg_go_version;;
+      rust_version) _p11k_seg_rust_version;;
+      java_version) _p11k_seg_java_version;;
+      php_version) _p11k_seg_php_version;;
+      dotnet_version) _p11k_seg_dotnet_version;;
+      terraform_version) _p11k_seg_terraform_version;;
+      kubecontext) _p11k_seg_kubecontext;;
+      load) _p11k_seg_load;;
+      ram) _p11k_seg_ram;;
+      swap) _p11k_seg_swap;;
+      disk_usage) _p11k_seg_disk_usage;;
+      battery) _p11k_seg_battery;;
+      package) _p11k_seg_package;;
       status) _p11k_seg_status;;
       prompt_char) _p11k_seg_prompt_char;;
+      vi_mode) _p11k_seg_vi_mode;;
       context) _p11k_seg_context;;
       time) _p11k_seg_time;;
       virtualenv) _p11k_seg_virtualenv;;
@@ -560,6 +703,15 @@ function _p11k_zle_line_finish() {
   zle && zle .reset-prompt
 }
 add-zle-hook-widget line-finish _p11k_zle_line_finish 2>/dev/null
+
+# vi 模式：keymap 切换时更新 prompt_char/vi_mode 并重绘
+function _p11k_zle_keymap_select() {
+  emulate -L zsh
+  [[ $KEYMAP == vicmd ]] && __p11k_vi_mode=1 || __p11k_vi_mode=0
+  _p11k_prompt
+  zle && zle .reset-prompt
+}
+add-zle-hook-widget keymap-select _p11k_zle_keymap_select 2>/dev/null
 
 # ────────────────────────── gitstatus 初始化 ──────────────────────────
 
