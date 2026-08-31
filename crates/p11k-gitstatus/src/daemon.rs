@@ -12,17 +12,13 @@ pub struct Daemon {
     pub options: Options,
     pub stdin_fd: i32,
     pub stdout_fd: i32,
-    /// 仓库缓存。TODO(repo)：RepoCache 接入后使用；接入前标记 dead_code。
-    #[allow(dead_code)]
     cache: RepoCache,
 }
 
 impl Daemon {
     pub fn new(options: Options) -> Daemon {
         Daemon {
-            cache: RepoCache {
-                ttl_seconds: options.repo_ttl_seconds,
-            },
+            cache: RepoCache::new(&options),
             options,
             stdin_fd: 0,
             stdout_fd: 1,
@@ -67,7 +63,7 @@ impl Daemon {
                 if !self.liveness_ok() {
                     exit(0); // 对齐原版：探活失败 exit 0
                 }
-                // TODO(repo): self.cache.evict_expired()
+                self.cache.evict_expired();
                 continue;
             }
             // 3. 可读
@@ -98,20 +94,21 @@ impl Daemon {
     ///   对齐原版 `catch (const Exception&) { LOG(ERROR) }`。
     /// - dir 为空的请求 → 非仓库响应（找不到仓库，对齐原版语义；
     ///   握手请求 id=}hello、dir 为空也走这条路径）。
-    /// - 其余请求：TODO(repo)，RepoCache 接入前 todo!() 会 panic 并被上方
-    ///   捕获——daemon 存活但该请求暂无响应。
+    /// - 其余请求：打开仓库成功 → 仓库响应（build_fields 内的 dirty 字段
+    ///   TODO(index) 会 panic 并被捕获，该请求暂无响应）；打不开 → 非仓库。
     fn process_request(&mut self, req: Request) {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let is_repo = if req.dir.is_empty() {
-                false
-            } else {
-                // TODO(repo): self.cache.get_or_open(...) 接入后返回真实状态。
-                todo!("repo 层接入后计算真实仓库状态")
-            };
-            let resp = Response {
-                id: req.id.clone(),
-                is_repo,
-                fields: None,
+            let resp = match self.cache.get_or_open(&req.dir, req.dir_is_gitdir) {
+                Some(repo) => Response {
+                    id: req.id.clone(),
+                    is_repo: true,
+                    fields: Some(repo.build_fields()),
+                },
+                None => Response {
+                    id: req.id.clone(),
+                    is_repo: false,
+                    fields: None,
+                },
             };
             self.write_response(&resp);
         }));
