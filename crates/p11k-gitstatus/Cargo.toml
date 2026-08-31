@@ -16,3 +16,5 @@ git2.workspace = true
 [dev-dependencies]
 # 性能基准（benches/）。性能契约要求与 C++ 原版对拍，基准是硬性门槛。
 criterion = "0.5"
+# 测试用临时目录。
+tempfile = "3"
