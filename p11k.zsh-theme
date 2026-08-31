@@ -293,12 +293,13 @@ function _p11k_cmd_seg_cached() {
   local name=$1 cmd=$2 bg_def=$3 fg_def=$4 icon_def=$5
   local cache_var=__p11k_cache_${name:u}
   local -a cache
-  cache=("${(@P)cache_var}")
+  # (=P)：间接展开并强制分词（(@P) 在引号内不分词，cache[1] 会变成整串）
+  cache=("${(P)=cache_var}")
   if (( ${+cache[1]} == 0 || EPOCHSECONDS - cache[1] > 60 )); then
     local out
     out=$($cmd 2>/dev/null)
     typeset -g $cache_var="$EPOCHSECONDS $out"
-    cache=("${(@P)cache_var}")
+    cache=("${(P)=cache_var}")
   fi
   [[ -n ${cache[2]} ]] || return
   _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_${name:u}_BACKGROUND $bg_def)" \
@@ -315,9 +316,50 @@ function _p11k_seg_php_version() { _p11k_cmd_seg_cached php_version 'php --versi
 function _p11k_seg_dotnet_version() { _p11k_cmd_seg_cached dotnet_version 'dotnet --version' 5 236 '🥅'; }
 function _p11k_seg_terraform_version() { _p11k_cmd_seg_cached terraform_version 'terraform version | head -1 | cut -d" " -f2' 4 236 '🛠'; }
 
-# kubecontext：kubectl 当前上下文（60s 缓存）
+# kubecontext：kubectl 当前上下文（60s 缓存；支持 p10k 的
+# POWERLEVEL9K_KUBECONTEXT_DEFAULT_CONTENT_EXPANSION，模板内可用
+# P9K_CONTENT / P9K_KUBECONTEXT_NAME / P9K_KUBECONTEXT_CLOUD_CLUSTER /
+# P9K_KUBECONTEXT_NAMESPACE）。
 function _p11k_seg_kubecontext() {
-  _p11k_cmd_seg_cached kubecontext 'kubectl config current-context' 4 236 '⎈'
+  local cache_var=__p11k_cache_kubecontext
+  local -a cache
+  cache=("${(P)=cache_var}")
+  if (( ${+cache[1]} == 0 || EPOCHSECONDS - cache[1] > 60 )); then
+    local ctx='' cluster='' ns=''
+    ctx=$(kubectl config current-context 2>/dev/null)
+    if [[ -n $ctx ]]; then
+      # 从 kubeconfig 的 contexts 段解析 cluster/namespace（简化版；
+      # 只读 ${KUBECONFIG:-~/.kube/config} 第一个文件）
+      local kc=${KUBECONFIG%%:*}
+      [[ -n $kc ]] || kc=$HOME/.kube/config
+      if [[ -f $kc ]]; then
+        local pair
+        pair=$(awk -v want="$ctx" '
+          function flush() { if (name == want) { print cluster; print ns; name = "" } }
+          /^- context:/ { flush(); in_block=1; cluster=""; ns=""; name=""; next }
+          in_block && $1 == "name:" { name=$2; next }
+          in_block && $1 == "cluster:" { cluster=$2; next }
+          in_block && $1 == "namespace:" { ns=$2; next }
+          in_block && $0 !~ /^[[:space:]-]/ { in_block=0 }
+          END { flush() }' "$kc" 2>/dev/null)
+        cluster=${pair%%$'\n'*}
+        ns=${pair#*$'\n'}
+        [[ $ns == $pair ]] && ns=''
+      fi
+    fi
+    typeset -g $cache_var="$EPOCHSECONDS $ctx $cluster $ns"
+    cache=("${(P)=cache_var}")
+  fi
+  [[ -n ${cache[2]} ]] || return
+  local P9K_CONTENT=${cache[2]}
+  local P9K_KUBECONTEXT_NAME=${cache[2]}
+  local P9K_KUBECONTEXT_CLOUD_CLUSTER=${cache[3]}
+  local P9K_KUBECONTEXT_NAMESPACE=${cache[4]}
+  local text=$(_p11k_p9k POWERLEVEL9K_KUBECONTEXT_DEFAULT_CONTENT_EXPANSION '${P9K_CONTENT}')
+  text=${(e)text}
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_KUBECONTEXT_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_KUBECONTEXT_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_KUBECONTEXT_VISUAL_IDENTIFIER_EXPANSION '⎈') " "$text"
 }
 
 # 系统段（读 /proc，快，无缓存）：
