@@ -67,7 +67,12 @@ typeset -gi __p11k_seg_count=0
 # 用户 .p10k.zsh 顶部会 unset 全部 POWERLEVEL9K_* 并只重设部分）。
 function _p11k_p9k() {
   local v=${(P)1}
-  [[ -n $v ]] && print -r -- "$v" || print -r -- "$2"
+  if [[ -n $v ]]; then
+    # g:: 递归转义：配置里的 \uXXXX（如 \uE0B0 分隔符）转成实际字符
+    print -r -- "${(g::)v}"
+  else
+    print -r -- "${(g::)2}"
+  fi
 }
 
 function _p11k_prompt_segment() {
@@ -79,7 +84,7 @@ function _p11k_prompt_segment() {
     local sep_bg=$__p11k_last_bg
     local sep_fg=$bg
     [[ -n $sep_fg ]] || sep_fg='default'
-    __p11k_out+="%K{$sep_bg}%F{$sep_fg}$POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR%f%k"
+    __p11k_out+="%K{$sep_bg}%F{$sep_fg}$(_p11k_p9k POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR '\uE0B0')%f%k"
   fi
   if [[ -n $bg ]]; then
     __p11k_out+="%K{$bg}"
@@ -88,8 +93,8 @@ function _p11k_prompt_segment() {
     __p11k_out+="%F{$fg}"
   fi
   __p11k_out+="$icon"
-  if [[ -n $icon && -n $text && -n $POWERLEVEL9K_LEFT_PROMPT_SEGMENT_END_SYMBOL ]]; then
-    __p11k_out+="$POWERLEVEL9K_LEFT_PROMPT_SEGMENT_END_SYMBOL"
+  if [[ -n $icon && -n $text ]]; then
+    __p11k_out+="$(_p11k_p9k POWERLEVEL9K_LEFT_PROMPT_SEGMENT_END_SYMBOL ' ')"
   fi
   __p11k_out+="$text"
   __p11k_out+="%f%k"
@@ -98,6 +103,175 @@ function _p11k_prompt_segment() {
 }
 
 # ────────────────────────── 分段实现 ──────────────────────────
+
+# 通用"读环境变量即显示"段。
+# 参数：<元素名> <环境变量名> <文本> <背景默认> <前景默认> <图标默认>
+function _p11k_env_seg() {
+  local name=$1 env_var=$2 text=$3 bg_def=$4 fg_def=$5 icon_def=$6
+  [[ -n ${(P)env_var} ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_${name:u}_BACKGROUND $bg_def)" \
+    "$(_p11k_p9k POWERLEVEL9K_${name:u}_FOREGROUND $fg_def)" \
+    "$(_p11k_p9k POWERLEVEL9K_${name:u}_VISUAL_IDENTIFIER_EXPANSION $icon_def) " "$text"
+}
+
+# 通用"命令输出即显示"段（每次 precmd 执行一次，失败静默）。
+# 参数：<元素名> <命令> <背景默认> <前景默认> <图标默认>
+function _p11k_cmd_seg() {
+  local name=$1 cmd=$2 bg_def=$3 fg_def=$4 icon_def=$5 text
+  text=$($cmd 2>/dev/null) || return
+  [[ -n $text ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_${name:u}_BACKGROUND $bg_def)" \
+    "$(_p11k_p9k POWERLEVEL9K_${name:u}_FOREGROUND $fg_def)" \
+    "$(_p11k_p9k POWERLEVEL9K_${name:u}_VISUAL_IDENTIFIER_EXPANSION $icon_def) " "$text"
+}
+
+# anaconda：$CONDA_DEFAULT_ENV
+function _p11k_seg_anaconda() {
+  _p11k_env_seg anaconda CONDA_DEFAULT_ENV "$CONDA_DEFAULT_ENV" blue 236 '🅔'
+}
+
+# nix_shell：$IN_NIX_SHELL
+function _p11k_seg_nix_shell() {
+  _p11k_env_seg nix_shell IN_NIX_SHELL nix-shell blue 236 '❄️'
+}
+
+# ssh：$SSH_CONNECTION 存在时显示（对齐 p10k：显示 user@host 简写）
+function _p11k_seg_ssh() {
+  [[ -n $SSH_CONNECTION ]] || return
+  local text=$(_p11k_p9k POWERLEVEL9K_SSH_TEMPLATE '%n@%m')
+  text=${text//%n/$USER}
+  text=${text//%m/${HOST%%.*}}
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_SSH_BACKGROUND 238)" \
+    "$(_p11k_p9k POWERLEVEL9K_SSH_FOREGROUND 255)" \
+    "$(_p11k_p9k POWERLEVEL9K_SSH_VISUAL_IDENTIFIER_EXPANSION '') " "$text"
+}
+
+# root_indicator：root 用户
+function _p11k_seg_root_indicator() {
+  (( EUID == 0 )) || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_ROOT_INDICATOR_BACKGROUND 1)" \
+    "$(_p11k_p9k POWERLEVEL9K_ROOT_INDICATOR_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_ROOT_INDICATOR_VISUAL_IDENTIFIER_EXPANSION '❖') " ''
+}
+
+# dir_writable：目录不可写时显示
+function _p11k_seg_dir_writable() {
+  [[ -w $PWD ]] && return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_DIR_WRITABLE_BACKGROUND 1)" \
+    "$(_p11k_p9k POWERLEVEL9K_DIR_WRITABLE_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_DIR_WRITABLE_VISUAL_IDENTIFIER_EXPANSION '✗') " ''
+}
+
+# ranger/nnn/yazi/lf/xplr：文件管理器嵌套级别
+function _p11k_seg_ranger() { _p11k_env_seg ranger RANGER_LEVEL "$RANGER_LEVEL" 238 255 '🗘'; }
+function _p11k_seg_nnn() { _p11k_env_seg nnn NNNLVL "$NNNLVL" 238 255 '🗘'; }
+function _p11k_seg_yazi() { _p11k_env_seg yazi YAZI_LEVEL "$YAZI_LEVEL" 238 255 '🗘'; }
+function _p11k_seg_lf() { _p11k_env_seg lf LF_LEVEL "$LF_LEVEL" 238 255 '🗘'; }
+function _p11k_seg_xplr() { _p11k_env_seg xplr XPLR_LEVEL "$XPLR_LEVEL" 238 255 '🗘'; }
+
+# vim_shell：$VIMRUNTIME
+function _p11k_seg_vim_shell() {
+  _p11k_env_seg vim_shell VIMRUNTIME vim-shell 238 255 ''
+}
+
+# midnight_commander：$MC_SID
+function _p11k_seg_midnight_commander() {
+  _p11k_env_seg midnight_commander MC_SID midnight-commander 238 255 '▶'
+}
+
+# proxy：HTTP(S)/ALL_PROXY
+function _p11k_seg_proxy() {
+  local p=${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-${ALL_PROXY:-${all_proxy:-}}}}}}
+  [[ -n $p ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_PROXY_BACKGROUND 238)" \
+    "$(_p11k_p9k POWERLEVEL9K_PROXY_FOREGROUND 255)" \
+    "$(_p11k_p9k POWERLEVEL9K_PROXY_VISUAL_IDENTIFIER_EXPANSION '🌐') " ''
+}
+
+# aws：$AWS_PROFILE
+function _p11k_seg_aws() {
+  _p11k_env_seg aws AWS_PROFILE "$AWS_PROFILE" 208 236 ''
+}
+
+# aws_eb_env：$AWS_EB_ENV
+function _p11k_seg_aws_eb_env() {
+  _p11k_env_seg aws_eb_env AWS_EB_ENV "$AWS_EB_ENV" 2 236 'EB'
+}
+
+# google_app_cred：$GOOGLE_APPLICATION_CREDENTIALS
+function _p11k_seg_google_app_cred() {
+  local cred=$GOOGLE_APPLICATION_CREDENTIALS
+  [[ -n $cred ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_GOOGLE_APP_CRED_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_GOOGLE_APP_CRED_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_GOOGLE_APP_CRED_VISUAL_IDENTIFIER_EXPANSION '') " "GOOGLE"
+}
+
+# toolbox：$CONTAINER_ID（podman/docker toolbox）
+function _p11k_seg_toolbox() {
+  _p11k_env_seg toolbox CONTAINER_ID "$CONTAINER_ID" 4 236 '⛵'
+}
+
+# nodeenv：$NODE_VIRTUAL_ENV
+function _p11k_seg_nodeenv() {
+  _p11k_env_seg nodeenv NODE_VIRTUAL_ENV "$NODE_VIRTUAL_ENV:t" 2 236 '⬢'
+}
+
+# nvm：$NVM_BIN 存在时显示版本（简化：读 $NVM_DIR 的 alias 不查，直接 nvm 目录名）
+function _p11k_seg_nvm() {
+  [[ -n $NVM_BIN ]] || return
+  local v=''
+  [[ -f .nvmrc ]] && v=$(<.nvmrc)
+  [[ -z $v ]] && v=node
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_NVM_BACKGROUND 238)" \
+    "$(_p11k_p9k POWERLEVEL9K_NVM_FOREGROUND 255)" \
+    "$(_p11k_p9k POWERLEVEL9K_NVM_VISUAL_IDENTIFIER_EXPANSION '⬢') " "$v"
+}
+
+# rbenv：$RBENV_VERSION
+function _p11k_seg_rbenv() {
+  _p11k_env_seg rbenv RBENV_VERSION "$RBENV_VERSION" 1 236 '�delay�'
+}
+
+# cpu_arch：uname -m
+function _p11k_seg_cpu_arch() {
+  _p11k_cmd_seg cpu_arch 'uname -m' 4 236 ''
+}
+
+# detect_virt：systemd-detect-virt
+function _p11k_seg_detect_virt() {
+  _p11k_cmd_seg detect_virt 'systemd-detect-virt' 238 255 '🖥️'
+}
+
+# docker_machine：$DOCKER_MACHINE_NAME
+function _p11k_seg_docker_machine() {
+  _p11k_env_seg docker_machine DOCKER_MACHINE_NAME "$DOCKER_MACHINE_NAME" 4 236 '🐳'
+}
+
+# gcloud：$CLOUDSDK_ACTIVE_CONFIG_NAME（快路径；完整 gcloud 查询后续）
+function _p11k_seg_gcloud() {
+  _p11k_env_seg gcloud CLOUDSDK_ACTIVE_CONFIG_NAME "$CLOUDSDK_ACTIVE_CONFIG_NAME" 4 236 '☁️'
+}
+
+# terraform：.terraform/environment 文件内容
+function _p11k_seg_terraform() {
+  local env_file=.terraform/environment
+  [[ -f $env_file ]] || return
+  local ws=$(<$env_file)
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_TERRAFORM_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_TERRAFORM_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_TERRAFORM_VISUAL_IDENTIFIER_EXPANSION '🛠') " "$ws"
+}
+
+# pyenv/goenv/nodenv/jenv/plenv/phpenv/scalaenv/luaenv：version-file
+function _p11k_seg_pyenv() { _p11k_cmd_seg pyenv 'pyenv version-name' 4 236 '🐍'; }
+function _p11k_seg_goenv() { _p11k_cmd_seg goenv 'goenv version-name' 4 236 '🐹'; }
+function _p11k_seg_nodenv() { _p11k_cmd_seg nodenv 'nodenv version-name' 4 236 '⬢'; }
+function _p11k_seg_jenv() { _p11k_cmd_seg jenv 'jenv version-name' 4 236 '☕'; }
+function _p11k_seg_plenv() { _p11k_cmd_seg plenv 'plenv version-name' 4 236 '🐧'; }
+function _p11k_seg_phpenv() { _p11k_cmd_seg phpenv 'phpenv version-name' 4 236 '🐘'; }
+function _p11k_seg_scalaenv() { _p11k_cmd_seg scalaenv 'scalaenv version-name' 4 236 '🗬'; }
+function _p11k_seg_luaenv() { _p11k_cmd_seg luaenv 'luaenv version-name' 4 236 '🌙'; }
 
 # os_icon：OS 图标（POWERLEVEL9K_OS_ICON，默认 Linux 图标）
 function _p11k_seg_os_icon() {
@@ -112,9 +286,27 @@ function _p11k_seg_os_icon() {
 function _p11k_seg_dir() {
   local dir=$PWD
   [[ $dir == $HOME* ]] && dir="~${dir#$HOME}"
+  # 目录截断（对齐 p10k 的 SHORTEN_STRATEGY）
+  local strategy=$(_p11k_p9k POWERLEVEL9K_SHORTEN_STRATEGY truncate_to_last)
+  local delim=$(_p11k_p9k POWERLEVEL9K_SHORTEN_DELIMITER '..')
+  local -a parts
+  case $strategy in
+    truncate_to_last)
+      dir=${dir:t};;  # 只显示最后一段
+    truncate_from_right)
+      parts=("${(@s:/:)dir}")
+      if (( ${#parts} > ${POWERLEVEL9K_SHORTEN_DIR_LENGTH:-3} + 1 )); then
+        dir="$delim/${parts[-1]}"
+      fi;;
+    truncate_middle)
+      parts=("${(@s:/:)dir}")
+      if (( ${#parts} > ${POWERLEVEL9K_SHORTEN_DIR_LENGTH:-1} + 1 )); then
+        dir="${(j:/:)parts[1,${POWERLEVEL9K_SHORTEN_DIR_LENGTH:-1}]}/$delim/${parts[-1]}"
+      fi;;
+  esac
   local icon=$(_p11k_p9k POWERLEVEL9K_DIR_ICON '')
   _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_DIR_BACKGROUND blue)" \
-    "$(_p11k_p9k POWERLEVEL9K_DIR_FOREGROUND 236)" "$icon " "$dir"
+    "$(_p11k_p9k POWERLEVEL9K_DIR_FOREGROUND 236)" "$icon" "$dir"
   :
 }
 
@@ -158,7 +350,7 @@ function _p11k_seg_context() {
   text=${text//%n/$user}
   text=${text//%m/$host}
   _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_CONTEXT_BACKGROUND 238)" \
-    "$(_p11k_p9k POWERLEVEL9K_CONTEXT_FOREGROUND 255)" "$icon " "$text"
+    "$(_p11k_p9k POWERLEVEL9K_CONTEXT_FOREGROUND 255)" "$icon" "$text"
   :
 }
 
@@ -231,6 +423,39 @@ function _p11k_render_line() {
       newline) continue;;
       os_icon) _p11k_seg_os_icon;;
       dir) _p11k_seg_dir;;
+      anaconda) _p11k_seg_anaconda;;
+      nix_shell) _p11k_seg_nix_shell;;
+      ssh) _p11k_seg_ssh;;
+      root_indicator) _p11k_seg_root_indicator;;
+      dir_writable) _p11k_seg_dir_writable;;
+      ranger) _p11k_seg_ranger;;
+      nnn) _p11k_seg_nnn;;
+      yazi) _p11k_seg_yazi;;
+      lf) _p11k_seg_lf;;
+      xplr) _p11k_seg_xplr;;
+      vim_shell) _p11k_seg_vim_shell;;
+      midnight_commander) _p11k_seg_midnight_commander;;
+      proxy) _p11k_seg_proxy;;
+      aws) _p11k_seg_aws;;
+      aws_eb_env) _p11k_seg_aws_eb_env;;
+      google_app_cred) _p11k_seg_google_app_cred;;
+      toolbox) _p11k_seg_toolbox;;
+      nodeenv) _p11k_seg_nodeenv;;
+      nvm) _p11k_seg_nvm;;
+      rbenv) _p11k_seg_rbenv;;
+      cpu_arch) _p11k_seg_cpu_arch;;
+      detect_virt) _p11k_seg_detect_virt;;
+      docker_machine) _p11k_seg_docker_machine;;
+      gcloud) _p11k_seg_gcloud;;
+      terraform) _p11k_seg_terraform;;
+      pyenv) _p11k_seg_pyenv;;
+      goenv) _p11k_seg_goenv;;
+      nodenv) _p11k_seg_nodenv;;
+      jenv) _p11k_seg_jenv;;
+      plenv) _p11k_seg_plenv;;
+      phpenv) _p11k_seg_phpenv;;
+      scalaenv) _p11k_seg_scalaenv;;
+      luaenv) _p11k_seg_luaenv;;
       status) _p11k_seg_status;;
       prompt_char) _p11k_seg_prompt_char;;
       context) _p11k_seg_context;;
@@ -303,6 +528,7 @@ function _p11k_precmd() {
     __p11k_last_exec_time=$(( now - __p11k_last_cmd_time ))
   fi
   __p11k_last_cmd_time=$now
+  __p11k_last_pwd=$PWD
   # gitstatus：异步查询当前目录（失败不传播，避免钩子返回非零）
   (( ${+functions[_p11k_gitstatus_query]} )) && _p11k_gitstatus_query || true
   _p11k_prompt
@@ -317,6 +543,23 @@ function _p11k_preexec() {
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd _p11k_precmd
 add-zsh-hook preexec _p11k_preexec
+
+# transient prompt（对齐 p10k：POWERLEVEL9K_TRANSIENT_PROMPT=always/same-dir/off）。
+# 命令执行后 prompt 缩为单行 prompt_char；same-dir 模式仅目录不变时触发。
+function _p11k_zle_line_finish() {
+  emulate -L zsh
+  local mode=$(_p11k_p9k POWERLEVEL9K_TRANSIENT_PROMPT off)
+  [[ $mode == (always|same-dir) ]] || return
+  if [[ $mode == same-dir && $PWD != $__p11k_last_pwd ]]; then
+    return
+  fi
+  local char=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_OK_VIINS_CONTENT_EXPANSION '❯')
+  local fg=$(_p11k_p9k POWERLEVEL9K_PROMPT_CHAR_OK_VIINS_FOREGROUND green)
+  # 保留 RPROMPT 不清（对齐 p10k：transient 时右提示保留）
+  PROMPT="%F{$fg}$char%f "
+  zle && zle .reset-prompt
+}
+add-zle-hook-widget line-finish _p11k_zle_line_finish 2>/dev/null
 
 # ────────────────────────── gitstatus 初始化 ──────────────────────────
 
