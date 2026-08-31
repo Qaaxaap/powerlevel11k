@@ -130,10 +130,14 @@ impl RepoCache {
         let dir = Path::new(OsStr::from_bytes(dir));
         let git = if dir_is_gitdir {
             // 对齐原版 from_dotgit：直接把 dir 当 GIT_DIR 打开，不向上搜索
-            GitRepository::open(dir).ok()?
+            GitRepository::open(dir)
         } else {
             // 对齐原版：向上搜索 .git（含 linked worktree 的 .git 文件）
-            GitRepository::discover(dir).ok()?
+            GitRepository::discover(dir)
+        };
+        let git = match git {
+            Ok(g) => g,
+            Err(_) => return None,
         };
         // bare 仓库无 workdir → 非仓库（对齐原版 workdir.len == 0 → return）。
         // workdir 转 owned 以解除对 git 的借用，便于 git 随后 move 进 Repo。
