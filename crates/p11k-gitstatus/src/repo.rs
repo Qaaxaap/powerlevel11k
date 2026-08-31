@@ -5,10 +5,21 @@
 //! **常驻**（以 gitdir 为 key 的 map + TTL，见 [`RepoCache::evict_expired`]）：
 //! - git 对象模型句柄：HEAD、分支、远端、tag 数据库、stash 列表、commit message
 //! - HEAD oid 缓存（staged 差分与 tag 查询的依据，对齐原版 head_target）
+//! - staged/conflicted 差分结果（**按 head_oid 缓存**：HEAD 未变则复用，
+//!   变了才用 `Diff::tree_to_index` 重算；skip-worktree/assume-unchanged
+//!   计数同批缓存）
 //!
 //! **现算**（每次请求重新计算）：
 //! - 本模块的字段组装（分支/远端/action/ahead-behind 等，libgit2 自身有缓存）
-//! - TODO(index)：unstaged/untracked 的工作区遍历（下轮接入）
+//! - unstaged/untracked 的工作区遍历（index 树每次重建，候选经
+//!   `Diff::index_to_workdir` 精确确认；TODO(perf)：index 未变时复用树）
+//!
+//! # 与原版的已知简化
+//!
+//! - 原版 staged 扫描与 dirty 扫描、tag 查询并行（RunAsync + Wait）；
+//!   p11k 当前顺序执行。TODO(perf)：benchmark 后再引入并行。
+//! - 原版按路径区间分片跑 `git_diff_tree_to_index`；p11k 单次全量 diff。
+//!   TODO(perf)：同上。
 //!
 //! # TTL 语义
 //!
@@ -20,11 +31,14 @@
 //! 仓库路径用 `Vec<u8>` 承载：Linux 路径无编码约定，原版 std::string 同样
 //! 字节忠实。本 crate 仅支持 unix 系（对齐 p10k 的支持矩阵：Linux/macOS/WSL）。
 
+use crate::index::{Index, IndexEntry, RepoCaps};
 use crate::options::Options;
 use crate::protocol::field;
-use git2::{Oid, Repository as GitRepository, RepositoryState};
+use crate::untracked_cache::UntrackedCache;
+use git2::{DiffOptions, Index as GitIndex, Oid, Repository as GitRepository, RepositoryState};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::os::fd::RawFd;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::Instant;
@@ -41,6 +55,32 @@ struct RemoteInfo {
     ref_name: String,
 }
 
+/// staged 差分缓存（按 head_oid 复用，对齐原版 staged_/conflicted_ 等原子量）。
+#[derive(Default, Clone, Copy)]
+struct StagedStats {
+    staged: usize,
+    conflicted: usize,
+    staged_new: usize,
+    staged_deleted: usize,
+    skip_worktree: usize,
+    assume_unchanged: usize,
+}
+
+/// index 与 dirty 统计（对齐原版 IndexStats）。
+#[derive(Default)]
+struct IndexStats {
+    index_size: usize,
+    num_staged: usize,
+    num_unstaged: usize,
+    num_conflicted: usize,
+    num_untracked: usize,
+    num_unstaged_deleted: usize,
+    num_staged_new: usize,
+    num_staged_deleted: usize,
+    num_skip_worktree: usize,
+    num_assume_unchanged: usize,
+}
+
 /// 单个仓库的常驻状态。
 pub struct Repo {
     /// 工作目录绝对路径（无尾部 /；字节忠实）。
@@ -50,6 +90,12 @@ pub struct Repo {
     head_oid: Option<Oid>,
     /// 计数上限与开关（原版 Repo 构造时保存 Limits，此处保存整个 Options）。
     limits: Options,
+    /// staged 缓存对应的 HEAD（对齐原版 head_：变了才重算）。
+    staged_head: Option<Oid>,
+    /// staged 差分缓存。
+    staged_stats: StagedStats,
+    /// untracked cache 探针（后台线程）。
+    untracked: UntrackedCache,
     /// TTL 依据：最后一次访问时刻。
     last_used: Instant,
 }
@@ -119,21 +165,27 @@ impl Repo {
             .ok()
             .and_then(|r| r.resolve().ok())
             .and_then(|r| r.target());
+        // untracked cache 探针在 gitdir 上跑（对齐原版 Index 构造时的 CheckDirMtime）
+        let untracked = UntrackedCache::start_probe(git.path());
+        // 对齐原版：workdir 去尾部 '/'（git2/libgit2 的 workdir 带尾斜杠，
+        // 原版 gitstatus.cc 显式 --workdir.len）
+        let mut workdir_bytes = workdir.as_os_str().as_bytes().to_vec();
+        if workdir_bytes.len() > 1 && workdir_bytes.last() == Some(&b'/') {
+            workdir_bytes.pop();
+        }
         Repo {
-            workdir: workdir.as_os_str().as_bytes().to_vec(),
+            workdir: workdir_bytes,
             git,
             head_oid,
             limits,
+            staged_head: None,
+            staged_stats: StagedStats::default(),
+            untracked,
             last_used: Instant::now(),
         }
     }
 
     /// 组装 27 个数据字段（对齐 gitstatus.cc ProcessRequest 的 Print 顺序）。
-    ///
-    /// 8 个 dirty 统计字段 TODO(index)：index 扫描接入前 todo!() panic，
-    /// 被 daemon 层 catch_unwind 捕获（该请求暂无响应）。
-    /// allow(unreachable_code)：TODO(index) 接入后删除。
-    #[allow(unreachable_code)]
     pub fn build_fields(&mut self) -> [Vec<u8>; field::COUNT] {
         let mut f: [Vec<u8>; field::COUNT] = std::array::from_fn(|_| Vec::new());
         f[field::WORKDIR] = self.workdir.clone();
@@ -150,10 +202,17 @@ impl Repo {
         }
         f[field::ACTION] = self.repo_state().into_bytes();
 
-        // TODO(index)：index 扫描接入后填充 index_size 与 9 个 dirty 计数。
-        todo!(
-            "index 扫描接入后填充 index_size/num_staged/num_unstaged/num_conflicted/num_untracked/num_unstaged_deleted/num_staged_new/num_staged_deleted/num_skip_worktree/num_assume_unchanged"
-        );
+        let stats = self.get_index_stats();
+        f[field::INDEX_SIZE] = stats.index_size.to_string().into_bytes();
+        f[field::NUM_STAGED] = stats.num_staged.to_string().into_bytes();
+        f[field::NUM_UNSTAGED] = stats.num_unstaged.to_string().into_bytes();
+        f[field::NUM_CONFLICTED] = stats.num_conflicted.to_string().into_bytes();
+        f[field::NUM_UNTRACKED] = stats.num_untracked.to_string().into_bytes();
+        f[field::NUM_UNSTAGED_DELETED] = stats.num_unstaged_deleted.to_string().into_bytes();
+        f[field::NUM_STAGED_NEW] = stats.num_staged_new.to_string().into_bytes();
+        f[field::NUM_STAGED_DELETED] = stats.num_staged_deleted.to_string().into_bytes();
+        f[field::NUM_SKIP_WORKTREE] = stats.num_skip_worktree.to_string().into_bytes();
+        f[field::NUM_ASSUME_UNCHANGED] = stats.num_assume_unchanged.to_string().into_bytes();
 
         if let Some(r) = &remote {
             f[field::COMMITS_AHEAD] = self.count_range(&format!("{}..HEAD", r.ref_name));
@@ -363,4 +422,292 @@ impl Repo {
             .unwrap_or(0);
         count.to_string().into_bytes()
     }
+
+    // ────────────────────────── index 与 dirty 统计 ──────────────────────────
+
+    /// index 与 dirty 统计（对齐 repo.cc GetIndexStats）。
+    ///
+    /// 流程：config 开关（showUntrackedFiles / showDirtyState）→ staged
+    /// 差分（head_oid 缓存，变了才 `Diff::tree_to_index`）→ dirty 候选
+    /// （`Index::get_dirty_candidates`）→ `Diff::index_to_workdir` 精确计数
+    /// （notify 回调 + 上限截断）→ min(cap) 汇总。
+    fn get_index_stats(&mut self) -> IndexStats {
+        // config 开关（对齐 Off lambda：config 显式 false 时清零对应计数；
+        // -U/-W/-D 参数可覆盖忽略）
+        if let Ok(cfg) = self.git.config() {
+            let off = |name: &str| cfg.get_bool(name).map(|v| !v).unwrap_or(false);
+            if !self.limits.ignore_status_show_untracked_files && off("status.showUntrackedFiles") {
+                self.limits.max_num_untracked = 0;
+            }
+            if !self.limits.ignore_bash_show_untracked_files && off("bash.showUntrackedFiles") {
+                self.limits.max_num_untracked = 0;
+            }
+            if !self.limits.ignore_bash_show_dirty_state && off("bash.showDirtyState") {
+                self.limits.max_num_staged = 0;
+                self.limits.max_num_unstaged = 0;
+                self.limits.max_num_conflicted = 0;
+            }
+        }
+
+        // index：每次重建（TODO(perf)：index 未变时复用树与分片）
+        let mut git_index = match self.git.index() {
+            Ok(i) => i,
+            Err(_) => return IndexStats::default(),
+        };
+        // 对齐原版 git_index_read_ex 的增量刷新
+        let _ = git_index.read(false);
+        let index_size = git_index.len();
+        let entries: Vec<IndexEntry> = git_index
+            .iter()
+            .map(|e| {
+                let mut p = e.path.clone();
+                p.push(0);
+                IndexEntry {
+                    path: p,
+                    ino: e.ino,
+                    fsize: e.file_size,
+                    mtime_sec: e.mtime.seconds(),
+                    mtime_nsec: e.mtime.nanoseconds(),
+                    mode: e.mode,
+                    // GIT_INDEX_ENTRY_STAGE_SHIFT = 12（git2 无 stage 访问器）
+                    stage: (e.flags >> 12) & 0x3,
+                    flags_extended: e.flags_extended,
+                    assume_valid: e.flags & git2::IndexEntryFlag::VALID.bits() != 0,
+                }
+            })
+            .collect();
+        let mut index = Index::from_entries(entries);
+        index.init_splits(self.limits.num_threads);
+
+        // caps（对齐 RepoCaps；config 缺失按默认 true）
+        let caps = self.repo_caps(&git_index);
+
+        let mut stats = IndexStats {
+            index_size,
+            ..Default::default()
+        };
+
+        // ── staged 路径（对齐 GetIndexStats 的 staged 分支）──
+        let want_staged = self.limits.max_num_staged > 0 || self.limits.max_num_conflicted > 0;
+        if !want_staged {
+            self.staged_head = None;
+            self.staged_stats = StagedStats::default();
+        } else if let Some(head) = self.head_oid {
+            if self.staged_head != Some(head) {
+                self.staged_head = Some(head);
+                self.staged_stats = self.compute_staged(&git_index, head);
+            }
+        } else {
+            // 空仓库/初始提交：无 HEAD 树，staged = 全部非 intent-to-add 条目
+            self.staged_head = None;
+            let mut staged = 0usize;
+            let mut skip = 0usize;
+            let mut assume = 0usize;
+            for e in git_index.iter() {
+                if e.flags_extended & git2::IndexEntryExtendedFlag::INTENT_TO_ADD.bits() == 0 {
+                    staged += 1;
+                }
+                if e.flags_extended & git2::IndexEntryExtendedFlag::SKIP_WORKTREE.bits() != 0 {
+                    skip += 1;
+                }
+                if e.flags & git2::IndexEntryFlag::VALID.bits() != 0 {
+                    assume += 1;
+                }
+            }
+            self.staged_stats = StagedStats {
+                staged,
+                conflicted: 0,
+                staged_new: staged,
+                staged_deleted: 0,
+                skip_worktree: skip,
+                assume_unchanged: assume,
+            };
+        }
+        stats.num_staged = cap(self.staged_stats.staged, self.limits.max_num_staged);
+        stats.num_conflicted = cap(self.staged_stats.conflicted, self.limits.max_num_conflicted);
+        stats.num_staged_new = cap(self.staged_stats.staged_new, stats.num_staged as i64);
+        stats.num_staged_deleted = cap(self.staged_stats.staged_deleted, stats.num_staged as i64);
+        stats.num_skip_worktree = self.staged_stats.skip_worktree;
+        stats.num_assume_unchanged = self.staged_stats.assume_unchanged;
+
+        // ── dirty 路径（对齐 GetIndexStats 的候选 + StartDirtyScan）──
+        let dirty_allowed = self.limits.dirty_max_index_size < 0
+            || index_size <= self.limits.dirty_max_index_size as usize;
+        if dirty_allowed && (self.limits.max_num_unstaged > 0 || self.limits.max_num_untracked > 0)
+        {
+            let root_fd = self.open_workdir_fd();
+            if let Some(root_fd) = root_fd {
+                let opts = crate::scan::ScanOpts {
+                    include_untracked: self.limits.max_num_untracked > 0,
+                    untracked_cache_enabled: self.untracked.enabled(),
+                };
+                let candidates = index.get_dirty_candidates(root_fd, &caps, &opts);
+                unsafe { libc::close(root_fd) };
+                self.compute_dirty(&git_index, &candidates, &mut stats);
+            }
+        }
+
+        stats
+    }
+
+    /// staged 差分（对齐 StartStagedScan）：HEAD tree vs index，
+    /// foreach 计数 staged/conflicted/staged_new/staged_deleted，
+    /// 达到上限后提前停止遍历（对齐 OnDelta 的 GIT_EUSER 语义）。
+    ///
+    /// 与原版差异：原版靠 notify_cb 在 diff 构造中提前终止；git2 0.20
+    /// 未暴露 notify 回调（diff.rs 中 TODO），改为构造后 foreach 提前停止。
+    /// TODO(perf)：benchmark 后再评估。
+    fn compute_staged(&self, git_index: &GitIndex, head: Oid) -> StagedStats {
+        let mut stats = StagedStats::default();
+        // skip-worktree/assume-unchanged 遍历 index 统计（对齐原版分片内统计）
+        for e in git_index.iter() {
+            if e.flags_extended & git2::IndexEntryExtendedFlag::SKIP_WORKTREE.bits() != 0 {
+                stats.skip_worktree += 1;
+            }
+            if e.flags & git2::IndexEntryFlag::VALID.bits() != 0 {
+                stats.assume_unchanged += 1;
+            }
+        }
+        let Ok(commit) = self.git.find_commit(head) else {
+            return stats;
+        };
+        let Ok(tree) = commit.tree() else {
+            return stats;
+        };
+        let mut opts = DiffOptions::new();
+        opts.include_typechange_trees(true);
+        let Ok(diff) = self
+            .git
+            .diff_tree_to_index(Some(&tree), Some(git_index), Some(&mut opts))
+        else {
+            return stats;
+        };
+        let m_staged = self.limits.max_num_staged;
+        let m_conflicted = self.limits.max_num_conflicted;
+        let s = &mut stats;
+        let _ = diff.foreach(
+            &mut |delta, _| {
+                if delta.status() == git2::Delta::Conflicted {
+                    s.conflicted += 1;
+                    should_continue(s.conflicted, m_conflicted, s.staged, m_staged)
+                } else {
+                    if delta.status() == git2::Delta::Added {
+                        s.staged_new += 1;
+                    }
+                    if delta.status() == git2::Delta::Deleted {
+                        s.staged_deleted += 1;
+                    }
+                    s.staged += 1;
+                    should_continue(s.staged, m_staged, s.conflicted, m_conflicted)
+                }
+            },
+            None,
+            None,
+            None,
+        );
+        stats
+    }
+
+    /// dirty 精确计数（对齐 StartDirtyScan）：候选 pathspec 的
+    /// index_to_workdir diff，foreach 计数 untracked/unstaged/unstaged_deleted。
+    ///
+    /// 与原版差异：① 无 notify_cb（git2 0.20 未暴露），foreach 后置计数；
+    /// ② 无 ignore_submodules（同上）——脏 submodule 计数可能偏多，
+    /// TODO(submodule)；③ 无 GIT_DIFF_EXEMPLARS（builder 无对应开关）。
+    fn compute_dirty(&self, git_index: &GitIndex, candidates: &[Vec<u8>], stats: &mut IndexStats) {
+        if candidates.is_empty() {
+            return;
+        }
+        let m_unstaged = self.limits.max_num_unstaged;
+        let m_untracked = self.limits.max_num_untracked;
+        let mut opts = DiffOptions::new();
+        opts.include_typechange_trees(true)
+            .skip_binary_check(true)
+            .disable_pathspec_match(true);
+        if m_untracked > 0 {
+            opts.include_untracked(true);
+            if self.limits.recurse_untracked_dirs {
+                opts.recurse_untracked_dirs(true);
+            }
+        } else {
+            opts.enable_fast_untracked_dirs(true);
+        }
+        // pathspec：候选路径（累积式，对齐原版 pathspec 数组）
+        for c in candidates {
+            if let Ok(cs) = std::ffi::CString::new(c.clone()) {
+                opts.pathspec(cs);
+            }
+        }
+        let Ok(diff) = self
+            .git
+            .diff_index_to_workdir(Some(git_index), Some(&mut opts))
+        else {
+            return;
+        };
+        let s = &mut *stats;
+        let _ = diff.foreach(
+            &mut |delta, _| {
+                if delta.status() == git2::Delta::Conflicted {
+                    true // 冲突在 workdir diff 中不计数（对齐原版 DO_NOT_INSERT）
+                } else if delta.status() == git2::Delta::Untracked {
+                    s.num_untracked += 1;
+                    should_continue(s.num_untracked, m_untracked, s.num_unstaged, m_unstaged)
+                } else {
+                    if delta.status() == git2::Delta::Deleted {
+                        s.num_unstaged_deleted += 1;
+                    }
+                    s.num_unstaged += 1;
+                    should_continue(s.num_unstaged, m_unstaged, s.num_untracked, m_untracked)
+                }
+            },
+            None,
+            None,
+            None,
+        );
+        stats.num_unstaged = cap(stats.num_unstaged, m_unstaged);
+        stats.num_untracked = cap(stats.num_untracked, m_untracked);
+        stats.num_unstaged_deleted = cap(stats.num_unstaged_deleted, stats.num_unstaged as i64);
+    }
+
+    /// 仓库能力位（对齐 RepoCaps；config 缺失按默认值）。
+    fn repo_caps(&self, _index: &GitIndex) -> RepoCaps {
+        let get_bool = |name: &str, default: bool| {
+            self.git
+                .config()
+                .ok()
+                .and_then(|c| c.get_bool(name).ok())
+                .unwrap_or(default)
+        };
+        RepoCaps {
+            trust_filemode: get_bool("core.filemode", true),
+            has_symlinks: get_bool("core.symlinks", true),
+            case_sensitive: !get_bool("core.ignorecase", false),
+        }
+    }
+
+    /// 打开工作目录 fd（dirty 扫描的 root_fd）；失败 None（跳过扫描）。
+    fn open_workdir_fd(&self) -> Option<RawFd> {
+        let mut p = self.workdir.clone();
+        p.push(0);
+        // SAFETY: workdir 已 NUL 结尾。
+        let fd = unsafe { libc::open(p.as_ptr().cast(), libc::O_RDONLY | libc::O_DIRECTORY) };
+        (fd >= 0).then_some(fd)
+    }
+}
+
+/// 计数上限截断（对齐原版 size_t 上限语义：负值 = 无限）。
+fn cap(count: usize, max: i64) -> usize {
+    if max < 0 {
+        count
+    } else {
+        count.min(max as usize)
+    }
+}
+
+/// 对齐 OnDelta 的停止条件：c1 达到 m1 且 c2 达到 m2 → 停止 diff（返回 false）。
+/// 负值上限 = 无限（永不到达）。
+fn should_continue(c1: usize, m1: i64, c2: usize, m2: i64) -> bool {
+    let reached1 = m1 >= 0 && c1 >= m1 as usize;
+    let reached2 = m2 >= 0 && c2 >= m2 as usize;
+    !(reached1 && reached2)
 }
