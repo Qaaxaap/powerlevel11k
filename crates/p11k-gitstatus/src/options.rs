@@ -53,6 +53,29 @@ pub struct Options {
     /// zsh 侧传 `build.info` 里的 `gitstatus_version`（如 `v1.5.5`）。
     pub version_glob: Option<String>,
 }
+impl Default for Options {
+    /// 全部默认值，与原版 `options.cc:58-79` 保持一致。
+    fn default() -> Self {
+        Self {
+            lock_fd: -1,
+            parent_pid: -1,
+            num_threads: 1,
+            log_level: LogLevel::Info,
+            repo_ttl_seconds: 3600,
+            max_commit_summary_length: 256,
+            max_num_staged: 1,
+            max_num_unstaged: 1,
+            max_num_conflicted: 1,
+            max_num_untracked: 1,
+            dirty_max_index_size: -1,
+            recurse_untracked_dirs: false,
+            ignore_status_show_untracked_files: false,
+            ignore_bash_show_untracked_files: false,
+            ignore_bash_show_dirty_state: false,
+            version_glob: None,
+        }
+    }
+}
 
 /// 日志级别（`-v` 的取值，大小写不敏感）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +85,18 @@ pub enum LogLevel {
     Warn,
     Error,
     Fatal,
+}
+impl LogLevel {
+    /// 与 libgit2 的 `git_trace_level_t` 对应。
+    pub fn as_git_trace_level(self) -> i32 {
+        match self {
+            Self::Debug => 5,
+            Self::Info => 4,
+            Self::Warn => 3,
+            Self::Error => 2,
+            Self::Fatal => 1,
+        }
+    }
 }
 
 /// 成功或 EOF 正常退出。
@@ -73,17 +108,303 @@ pub const EXIT_VERSION_MISMATCH: i32 = 11;
 
 /// 解析命令行参数（不含 argv[0]）。
 ///
-/// 错误时返回 `Err(错误描述)`，调用方打印用法后以 [`EXIT_BAD_ARGS`] 退出。
+/// `Err(BadArgs)` 时调用方打印错误与用法后以 [`EXIT_BAD_ARGS`] 退出；
+/// `Err(VersionMismatch)` 时以 [`EXIT_VERSION_MISMATCH`] 退出。
 ///
 /// 实现要点：
-/// - 支持 `-x` / `--long` / `-xVALUE` / `-x VALUE` / `--long=VALUE` 全部形式。
-/// - `-h` 打印帮助（到 stdout）并返回特殊标记，`-V/--version` 打印版本——
-///   与原版一样，这两个选项让 main 直接走快速路径退出 0。
-/// - 布尔开关（`-e/-U/-W/-D`）不接受参数。
+/// - 支持 `-x` / `--long` / `-xVALUE` / `-x VALUE` / `--long=VALUE` 全部形式；
+///   与原版 getopt 一样，取值短选项的值可作为下一个参数（`-t 4`）。
+/// - `-h`/`-V` 走 [`ParseOutcome::Help`]/[`ParseOutcome::Version`] 快速路径。
+/// - 布尔开关（`-e/-U/-W/-D` 及其 long 形式）不接受参数。
 /// - 数字参数解析失败按参数错误处理（exit 10），不要 panic。
-pub fn parse_args(args: &[String]) -> Result<Options, String> {
-    let _ = args;
-    todo!("实现：按上表解析全部参数与默认值；未知参数/坏数字报 Err")
+/// - `-G` 在解析期立即校验版本（对齐原版 options.cc：不匹配 exit 11）。
+/// - 原版 getopt 的 GNU 特性（选项重排、`--` 分隔符）不做支持：zsh 侧
+///   不会传位置参数，出现位置参数一律报错。
+pub enum ParseOutcome {
+    /// 用户要求打印帮助（`-h`/`--help`），main 打印用法后退出 0。
+    Help,
+    /// 用户要求打印版本（`-V`/`--version`），main 打印版本后退出 0。
+    Version,
+    /// 解析完成，进入 daemon 主流程。
+    Run(Options),
+}
+
+/// 参数解析的错误，映射到不同的退出码。
+pub enum ParseError {
+    /// 参数错误 → 退出码 [`EXIT_BAD_ARGS`]。
+    BadArgs(String),
+    /// `-G` 版本 glob 不匹配 → 退出码 [`EXIT_VERSION_MISMATCH`]。
+    VersionMismatch {
+        /// 用户传入的 glob 模式。
+        pattern: String,
+    },
+}
+
+/// parse_short_opt / parse_long_opt 共用的内部错误；
+/// [`ParseError::VersionMismatch`] 只能由 `-G` 分支触发。
+enum OptError {
+    Bad(String),
+    /// 预留：-G 解析期校验（version_matches 实现后接入，见 `-G` 分支的
+    /// TODO 注释）。接入后此 allow 可删。
+    #[allow(dead_code)]
+    VersionMismatch(String),
+}
+
+impl From<OptError> for ParseError {
+    fn from(e: OptError) -> Self {
+        match e {
+            OptError::Bad(s) => ParseError::BadArgs(s),
+            OptError::VersionMismatch(p) => ParseError::VersionMismatch { pattern: p },
+        }
+    }
+}
+
+pub fn parse_args(args: &[String]) -> Result<ParseOutcome, ParseError> {
+    let mut options = Options::default();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-h" || arg == "--help" {
+            return Ok(ParseOutcome::Help);
+        }
+        if arg == "-V" || arg == "--version" {
+            return Ok(ParseOutcome::Version);
+        }
+        if let Some(long) = arg.strip_prefix("--") {
+            // 注意：布尔型 long 选项（--recurse-untracked-dirs 等）不带值。
+            if let Some(eq) = long.find('=') {
+                let name = &long[..eq];
+                let value = &long[eq + 1..];
+                if long_opt_takes_value(name) {
+                    parse_long_opt(&mut options, name, Some(value))?;
+                } else {
+                    return Err(ParseError::BadArgs(format!(
+                        "option --{name} does not take an argument"
+                    )));
+                }
+            } else if long_opt_takes_value(long) {
+                return Err(ParseError::BadArgs(format!(
+                    "option --{long} requires an argument"
+                )));
+            } else {
+                parse_long_opt(&mut options, long, None)?;
+            }
+        } else if arg.starts_with('-') && arg.len() > 1 {
+            let name = &arg[1..2];
+            if arg.len() > 2 {
+                // -xVALUE 形式（-t4、-Gv1.5.5）；布尔选项带值会在解析层被拒绝。
+                parse_short_opt(&mut options, name, Some(&arg[2..]))?;
+            } else if short_opt_takes_value(name) {
+                // -x VALUE 形式：值在下一个参数。
+                i += 1;
+                if i >= args.len() {
+                    return Err(ParseError::BadArgs(format!(
+                        "option -{name} requires an argument"
+                    )));
+                }
+                parse_short_opt(&mut options, name, Some(&args[i]))?;
+            } else {
+                // 布尔短选项（-e/-U/-W/-D）。
+                parse_short_opt(&mut options, name, None)?;
+            }
+        } else {
+            // 对齐原版措辞（options.cc 的 "unexpected positional argument"）。
+            return Err(ParseError::BadArgs(format!(
+                "unexpected positional argument: {arg}"
+            )));
+        }
+        i += 1;
+    }
+    Ok(ParseOutcome::Run(options))
+}
+
+/// 该短选项是否要求值。带值：l p t v r z s u c d m G；布尔：e U W D。
+fn short_opt_takes_value(name: &str) -> bool {
+    matches!(
+        name,
+        "l" | "p" | "t" | "v" | "r" | "z" | "s" | "u" | "c" | "d" | "m" | "G"
+    )
+}
+
+/// 该 long 选项是否要求值。布尔型 long（对应 -e/-U/-W/-D）返回 false。
+fn long_opt_takes_value(name: &str) -> bool {
+    matches!(
+        name,
+        "version-glob"
+            | "lock-fd"
+            | "parent-pid"
+            | "num-threads"
+            | "log-level"
+            | "repo-ttl-seconds"
+            | "max-commit-summary-length"
+            | "max-num-staged"
+            | "max-num-unstaged"
+            | "max-num-conflicted"
+            | "max-num-untracked"
+            | "dirty-max-index-size"
+    )
+}
+
+fn parse_short_opt(options: &mut Options, name: &str, value: Option<&str>) -> Result<(), OptError> {
+    let opt = format!("-{name}");
+    match name {
+        "l" => options.lock_fd = parse_int(value, &opt)?,
+        "p" => options.parent_pid = parse_int(value, &opt)?,
+        "t" => {
+            let n: usize = parse_int(value, &opt)?;
+            if n == 0 {
+                // 对齐原版 options.cc：num_threads 必须 > 0。
+                return Err(OptError::Bad("invalid number of threads: 0".to_string()));
+            }
+            options.num_threads = n;
+        }
+        "v" => options.log_level = parse_log_level(value, &opt)?,
+        "r" => options.repo_ttl_seconds = parse_int(value, &opt)?,
+        "z" => options.max_commit_summary_length = parse_size(value, &opt)?,
+        "s" => options.max_num_staged = parse_limit(value, &opt)?,
+        "u" => options.max_num_unstaged = parse_limit(value, &opt)?,
+        "c" => options.max_num_conflicted = parse_limit(value, &opt)?,
+        "d" => options.max_num_untracked = parse_limit(value, &opt)?,
+        "m" => options.dirty_max_index_size = parse_limit(value, &opt)?,
+        "G" => {
+            let pattern = take_value(value, &opt)?;
+            // TODO(version_matches): version_matches 实现后在此立即校验，
+            // 对齐原版"解析期校验"语义（options.cc case 'G'）：
+            //   if !version_matches(PROTOCOL_VERSION, pattern) {
+            //       return Err(OptError::VersionMismatch(pattern.to_string()));
+            //   }
+            options.version_glob = Some(pattern.to_string());
+        }
+        "e" => {
+            reject_value(value, &opt)?;
+            options.recurse_untracked_dirs = true;
+        }
+        "U" => {
+            reject_value(value, &opt)?;
+            options.ignore_status_show_untracked_files = true;
+        }
+        "W" => {
+            reject_value(value, &opt)?;
+            options.ignore_bash_show_untracked_files = true;
+        }
+        "D" => {
+            reject_value(value, &opt)?;
+            options.ignore_bash_show_dirty_state = true;
+        }
+        _ => return Err(OptError::Bad(format!("unrecognized option: -{name}"))),
+    }
+    Ok(())
+}
+
+fn parse_long_opt(options: &mut Options, name: &str, value: Option<&str>) -> Result<(), OptError> {
+    let opt = format!("--{name}");
+    match name {
+        "lock-fd" => options.lock_fd = parse_int(value, &opt)?,
+        "parent-pid" => options.parent_pid = parse_int(value, &opt)?,
+        "num-threads" => {
+            let n: usize = parse_int(value, &opt)?;
+            if n == 0 {
+                return Err(OptError::Bad("invalid number of threads: 0".to_string()));
+            }
+            options.num_threads = n;
+        }
+        "log-level" => options.log_level = parse_log_level(value, &opt)?,
+        "repo-ttl-seconds" => options.repo_ttl_seconds = parse_int(value, &opt)?,
+        "max-commit-summary-length" => options.max_commit_summary_length = parse_size(value, &opt)?,
+        "max-num-staged" => options.max_num_staged = parse_limit(value, &opt)?,
+        "max-num-unstaged" => options.max_num_unstaged = parse_limit(value, &opt)?,
+        "max-num-conflicted" => options.max_num_conflicted = parse_limit(value, &opt)?,
+        "max-num-untracked" => options.max_num_untracked = parse_limit(value, &opt)?,
+        "dirty-max-index-size" => options.dirty_max_index_size = parse_limit(value, &opt)?,
+        "version-glob" => {
+            let pattern = take_value(value, &opt)?;
+            // 同 -G：校验在 version_matches 实现后接入。
+            options.version_glob = Some(pattern.to_string());
+        }
+        "recurse-untracked-dirs" => {
+            no_value_ok(value, &opt)?;
+            options.recurse_untracked_dirs = true;
+        }
+        "ignore-status-show-untracked-files" => {
+            no_value_ok(value, &opt)?;
+            options.ignore_status_show_untracked_files = true;
+        }
+        "ignore-bash-show-untracked-files" => {
+            no_value_ok(value, &opt)?;
+            options.ignore_bash_show_untracked_files = true;
+        }
+        "ignore-bash-show-dirty-state" => {
+            no_value_ok(value, &opt)?;
+            options.ignore_bash_show_dirty_state = true;
+        }
+        _ => return Err(OptError::Bad(format!("unrecognized option: --{name}"))),
+    }
+    Ok(())
+}
+
+/// 带值选项取值：None 报缺参，Some 解析失败报"非整数"。
+///
+/// 对齐原版 `strtol`（ParseLong）：允许前导空白（`" 4"`），拒绝尾随垃圾
+/// （`"4x"`）。Rust 的 `parse` 不接受前导空白，故先 trim。
+fn parse_int<T: std::str::FromStr>(value: Option<&str>, opt: &str) -> Result<T, OptError> {
+    let v = value.ok_or_else(|| OptError::Bad(format!("option {opt} requires an argument")))?;
+    v.trim()
+        .parse()
+        .map_err(|_| OptError::Bad(format!("not an integer: {v}")))
+}
+
+/// 对齐原版 ParseSizeT（options.cc:56-59）：解析为 i64，
+/// 负数统一映射为 -1（原版存 size_t，-1 = SIZE_MAX）。
+fn parse_limit(value: Option<&str>, opt: &str) -> Result<i64, OptError> {
+    let n: i64 = parse_int(value, opt)?;
+    Ok(if n < 0 { -1 } else { n })
+}
+
+/// 对齐原版 ParseSizeT 的 size_t 语义：负数映射为 usize::MAX
+/// （`-z` 的 summary 长度上限，负值 = 不截断）。
+fn parse_size(value: Option<&str>, opt: &str) -> Result<usize, OptError> {
+    let n: i64 = parse_int(value, opt)?;
+    Ok(if n < 0 { usize::MAX } else { n as usize })
+}
+
+/// 布尔短选项拒绝带值（`-efoo` 应报错，不静默忽略）。
+fn reject_value(value: Option<&str>, opt: &str) -> Result<(), OptError> {
+    match value {
+        Some(_) => Err(OptError::Bad(format!(
+            "option {opt} does not take an argument"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// 布尔 long 选项兜底：正常情况下主循环已拦截 `--flag=value`，
+/// 这里防御性再查一次。
+fn no_value_ok(value: Option<&str>, opt: &str) -> Result<(), OptError> {
+    match value {
+        Some(_) => Err(OptError::Bad(format!(
+            "option {opt} does not take an argument"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// 字符串取值（`-G` 专用）。
+fn take_value<'a>(value: Option<&'a str>, opt: &str) -> Result<&'a str, OptError> {
+    value.ok_or_else(|| OptError::Bad(format!("option {opt} requires an argument")))
+}
+
+/// `-v` 取值：大小写不敏感，debug/info/warn/error/fatal。
+/// 对齐原版错误措辞 "invalid log level: X"。
+fn parse_log_level(value: Option<&str>, opt: &str) -> Result<LogLevel, OptError> {
+    let v = value.ok_or_else(|| OptError::Bad(format!("option {opt} requires an argument")))?;
+    match v.to_ascii_lowercase().as_str() {
+        "debug" => Ok(LogLevel::Debug),
+        "info" => Ok(LogLevel::Info),
+        "warn" => Ok(LogLevel::Warn),
+        "error" => Ok(LogLevel::Error),
+        "fatal" => Ok(LogLevel::Fatal),
+        _ => Err(OptError::Bad(format!("invalid log level: {v}"))),
+    }
 }
 
 /// 当前实现的协议版本串（原版为 `v1.5.5`，p11k 复刻后使用相同值，
