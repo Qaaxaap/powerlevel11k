@@ -158,7 +158,7 @@ pub fn scan_dirs(
             }
             // 与子目录合并（cmp < 0 继续推进，对齐原版循环）
             while si < subdirs.len() {
-                let cmp = cmp_name(&dirs[subdirs[si]].basename, name, caps.case_sensitive);
+                let cmp = cmp_name(&subdirs[si], name, caps.case_sensitive);
                 if cmp == std::cmp::Ordering::Greater {
                     break;
                 }
@@ -170,8 +170,10 @@ pub fn scan_dirs(
                 si += 1;
             }
             if !matched {
-                // untracked：目录名加 '/' 后缀（对齐原版 AddUnmached）
-                let mut p = name.to_vec();
+                // untracked：拼目录前缀 + 名字；目录名加 '/' 后缀
+                // （对齐原版 AddUnmached 的 StrCat(dir.path, basename)）
+                let mut p = dirs[idx].path[..dirs[idx].path.len() - 1].to_vec();
+                p.extend_from_slice(name);
                 if de.is_dir {
                     p.push(b'/');
                 }
@@ -189,10 +191,47 @@ pub fn scan_dirs(
     candidates
 }
 
-/// 打开 dirs[idx] 的目录 fd：父 fd 取栈中 depth-1 层，栈截断到 depth 后
-/// push 新 fd；根目录 dup(root_fd)（对齐原版 OpenTail 的栈复用语义）。
+/// 打开 dirs[idx] 的目录 fd，维护 fds 栈（fds[d-1] = 深度 d 的目录 fd）。
+///
+/// 两种路径：
+/// - 父 fd 已在栈（前序累积）→ 栈截断到 depth 后 openat 打开，push 新 fd。
+/// - 父 fd 不在栈（**分片内起点**：祖先目录落在相邻片）→ 清栈，从根 dup
+///   沿 `dirs[idx].path` 逐段 openat 重建完整祖先链（对齐原版每片开头
+///   OpenTail 的行为）。
 fn open_dir(fds: &mut Vec<RawFd>, root_fd: RawFd, dirs: &[IndexDir], idx: usize) -> Option<RawFd> {
     let depth = dirs[idx].depth;
+    if depth != 0 && fds.get(depth - 1).is_none() {
+        // 片内起点：重建祖先链
+        fds.clear();
+        // SAFETY: dup 语义标准。
+        let mut fd = unsafe { libc::dup(root_fd) };
+        if fd < 0 {
+            return None;
+        }
+        fds.push(fd);
+        let path = &dirs[idx].path[..dirs[idx].path.len() - 1]; // 如 "a/b/"
+        for seg in path.split(|&b| b == b'/') {
+            if seg.is_empty() {
+                continue;
+            }
+            let mut name = seg.to_vec();
+            name.push(0); // NUL
+            let parent = *fds.last().expect("chain non-empty");
+            // SAFETY: name NUL 结尾。
+            fd = unsafe {
+                libc::openat(
+                    parent,
+                    name.as_ptr().cast(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return None;
+            }
+            fds.push(fd);
+        }
+        return fds.last().copied();
+    }
     let parent_fd = if depth == 0 {
         root_fd
     } else {

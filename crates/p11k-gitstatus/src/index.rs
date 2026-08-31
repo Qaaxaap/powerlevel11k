@@ -55,14 +55,15 @@ pub struct IndexEntry {
 pub struct IndexDir {
     /// 完整相对路径，以 '/' 结尾（根为 ""），含尾部 NUL。
     pub path: Vec<u8>,
-    /// 目录名（不含父路径、不含 '/'）。
+    /// 目录名（不含父路径、不含 '/'），含尾部 NUL（openat 直传；根为空 Vec）。
     pub basename: Vec<u8>,
     /// 深度（根为 0）。
     pub depth: usize,
     /// 本目录下条目在 [`Index::entries`] 中的下标。
     pub files: Vec<usize>,
-    /// 子目录在 [`Index::dirs`] 中的下标。
-    pub subdirs: Vec<usize>,
+    /// 子目录 basename（副本，非下标）：分片扫描时子目录可能落在相邻片，
+    /// merge join 只需名字比较，存副本让分片切片自包含。
+    pub subdirs: Vec<Vec<u8>>,
     /// untracked cache：上次 readdir 时的目录 mtime。
     pub st: Option<(i64, i64)>,
     /// untracked cache：上次 readdir 发现的 untracked 名。
@@ -119,10 +120,16 @@ impl Index {
                 let slash = p + rel;
                 let parent = stack[stack.len() - 1];
                 let parent_len = dirs[parent].path.len() - 1;
-                let basename = path[parent_len..slash].to_vec();
+                // basename 含尾部 NUL（openat 零分配直传）；subdirs 副本保持无 NUL
+                let mut basename = path[parent_len..slash].to_vec();
+                basename.push(0);
                 let mut dir_path = path[..=slash].to_vec(); // 含 '/'
                 dir_path.push(0); // NUL
                 let idx = dirs.len();
+                // 先记父目录的子目录名（副本，去 NUL），再 push 新目录（basename move 进）
+                dirs[parent]
+                    .subdirs
+                    .push(basename[..basename.len() - 1].to_vec());
                 dirs.push(IndexDir {
                     path: dir_path,
                     basename,
@@ -132,7 +139,6 @@ impl Index {
                     st: None,
                     unmatched: Vec::new(),
                 });
-                dirs[parent].subdirs.push(idx);
                 stack.push(idx);
                 p = slash + 1;
             }

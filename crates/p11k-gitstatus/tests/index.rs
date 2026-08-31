@@ -93,8 +93,8 @@ fn from_entries_builds_tree() {
     assert_eq!(index.dirs[0].files, vec![0]); // a
     assert_eq!(index.dirs[1].files, vec![1]); // dir/b
     assert_eq!(index.dirs[2].files, vec![2]); // dir/sub/c
-    assert_eq!(index.dirs[0].subdirs, vec![1]);
-    assert_eq!(index.dirs[1].subdirs, vec![2]);
+    assert_eq!(index.dirs[0].subdirs, vec![b"dir".to_vec()]);
+    assert_eq!(index.dirs[1].subdirs, vec![b"sub".to_vec()]);
     assert_eq!(index.dirs[0].depth, 0);
     assert_eq!(index.dirs[1].depth, 1);
     assert_eq!(index.dirs[2].depth, 2);
@@ -254,4 +254,42 @@ fn untracked_cache_probe_passes_on_local_fs() {
     }
     // 本地文件系统应当支持
     assert!(cache.enabled());
+}
+
+/// 多目录 + 多分片回归：600 文件分 10 个目录，1 线程触发 16 片，
+/// 片边界会切断目录树——每个目录的脏文件都必须被检出。
+/// （回归背景：分片内起点目录的父链断裂导致整片漏扫。）
+#[test]
+fn scan_multi_dir_shards_find_all_dirty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let mut entries = Vec::new();
+    for d in 0..10 {
+        let dir = root.join(format!("dir{d:02}"));
+        std::fs::create_dir(&dir).unwrap();
+        for i in 0..60 {
+            let name = format!("file{i}");
+            let f = dir.join(&name);
+            std::fs::write(&f, b"clean").unwrap();
+            let st = lstat(&f);
+            let mut e = entry(&format!("dir{d:02}/{name}"), &st);
+            if d == 9 && i == 0 {
+                // 最后一个目录里的修改（保证落在靠后的分片）
+                e.fsize = 0;
+            }
+            entries.push(e);
+        }
+    }
+    // untracked 文件放在中间目录
+    std::fs::write(root.join("dir05/u"), b"x").unwrap();
+
+    // git index 保证字节序（"file10" < "file2"），测试数据需同样排序
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    let mut index = Index::from_entries(entries);
+    index.init_splits(1); // 16 片
+    assert!(index.splits.len() > 2, "应产生多分片: {:?}", index.splits);
+    let root_fd = open_root(root);
+    let mut out = index.get_dirty_candidates(root_fd, &caps(), &opts());
+    out.sort();
+    assert_eq!(out, vec![b"dir05/u".to_vec(), b"dir09/file0".to_vec()]);
 }
