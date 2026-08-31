@@ -99,11 +99,14 @@ impl Daemon {
     fn process_request(&mut self, req: Request) {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let resp = match self.cache.get_or_open(&req.dir, req.dir_is_gitdir) {
-                Some(repo) => Response {
-                    id: req.id.clone(),
-                    is_repo: true,
-                    fields: Some(repo.build_fields()),
-                },
+                Some(repo) => {
+                    let fields = repo.build_fields(req.skip_index);
+                    Response {
+                        id: req.id.clone(),
+                        is_repo: true,
+                        fields: Some(fields),
+                    }
+                }
                 None => Response {
                     id: req.id.clone(),
                     is_repo: false,

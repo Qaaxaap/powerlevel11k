@@ -186,7 +186,11 @@ impl Repo {
     }
 
     /// 组装 27 个数据字段（对齐 gitstatus.cc ProcessRequest 的 Print 顺序）。
-    pub fn build_fields(&mut self) -> [Vec<u8>; field::COUNT] {
+    ///
+    /// skip_index（线上 diff='1'）时跳过 index 统计：对齐原版
+    /// `if (req.diff) stats = repo->GetIndexStats(...)`——跳过后
+    /// stats 为默认全 0。
+    pub fn build_fields(&mut self, skip_index: bool) -> [Vec<u8>; field::COUNT] {
         let mut f: [Vec<u8>; field::COUNT] = std::array::from_fn(|_| Vec::new());
         f[field::WORKDIR] = self.workdir.clone();
         f[field::COMMIT] = self
@@ -202,7 +206,11 @@ impl Repo {
         }
         f[field::ACTION] = self.repo_state().into_bytes();
 
-        let stats = self.get_index_stats();
+        let stats = if skip_index {
+            IndexStats::default()
+        } else {
+            self.get_index_stats()
+        };
         f[field::INDEX_SIZE] = stats.index_size.to_string().into_bytes();
         f[field::NUM_STAGED] = stats.num_staged.to_string().into_bytes();
         f[field::NUM_UNSTAGED] = stats.num_unstaged.to_string().into_bytes();
@@ -246,20 +254,27 @@ impl Repo {
         f
     }
 
-    /// 本地分支名；detached 或空仓库为空串（对齐 git.cc LocalBranchName）。
+    /// 本地分支名（对齐 git.cc LocalBranchName）：
+    /// - HEAD resolve 成功（direct）→ 是分支则 shorthand，否则（detached）空串
+    /// - resolve 失败（空仓库，symbolic unborn HEAD）→ target 以
+    ///   `refs/heads/` 开头则返回其后缀，否则空串
     fn local_branch(&self) -> String {
-        self.git
-            .find_reference("HEAD")
-            .ok()
-            .and_then(|r| r.resolve().ok())
-            .map(|r| {
-                if r.is_branch() {
-                    r.shorthand().unwrap_or("").to_string()
+        let Some(head) = self.git.find_reference("HEAD").ok() else {
+            return String::new();
+        };
+        match head.resolve() {
+            Ok(direct) => {
+                if direct.is_branch() {
+                    direct.shorthand().unwrap_or("").to_string()
                 } else {
                     String::new()
                 }
-            })
-            .unwrap_or_default()
+            }
+            Err(_) => match head.symbolic_target() {
+                Some(t) if t.starts_with("refs/heads/") => t["refs/heads/".len()..].to_string(),
+                _ => String::new(),
+            },
+        }
     }
 
     /// tracking remote（对齐 git.cc GetRemote）：
