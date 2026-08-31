@@ -23,9 +23,10 @@ if (( $+functions[p11k] )); then
   'builtin' 'unfunction' p11k 2>/dev/null || true
 fi
 
-# 主题根目录（与 p10k 相同的 ${(%):-%x} 技巧）
-typeset -gr __p11k_root_dir=${${(%):-%x}:A:h}
-typeset -gr __p11k_zdir=$__p11k_root_dir/zsh
+# 主题根目录（与 p10k 相同的 ${(%):-%x} 技巧）。
+# 重复 source 保护：typeset -gr 二次定义会报 read-only 错误。
+(( $+__p11k_root_dir )) || typeset -gr __p11k_root_dir=${${(%):-%x}:A:h}
+(( $+__p11k_zdir )) || typeset -gr __p11k_zdir=$__p11k_root_dir/zsh
 
 # ────────────────────────── 配置加载 ──────────────────────────
 
@@ -537,6 +538,21 @@ function _p11k_seg_background_jobs() {
   :
 }
 
+# custom 段（对齐 p10k：元素 custom_<name>，配置 POWERLEVEL9K_CUSTOM_<name>
+# 是命令，输出即段文本。颜色走 POWERLEVEL9K_CUSTOM_<name>_{BACKGROUND,FOREGROUND}）
+function _p11k_seg_custom() {
+  local name=${1#custom_}
+  local upper=${name:u}
+  local cmd=$(_p11k_p9k POWERLEVEL9K_CUSTOM_${upper} '')
+  [[ -n $cmd ]] || return
+  local text
+  text=$(eval "$cmd" 2>/dev/null) || return
+  [[ -n $text ]] || return
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_CUSTOM_${upper}_BACKGROUND 4)" \
+    "$(_p11k_p9k POWERLEVEL9K_CUSTOM_${upper}_FOREGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_CUSTOM_${upper}_VISUAL_IDENTIFIER_EXPANSION '') " "$text"
+}
+
 # vcs：git 状态（数据来自 p11k-d，见 zsh/gitstatus.zsh）
 function _p11k_seg_vcs() {
   # __p11k_vcs_* 由 gitstatus 异步回调填充；尚未就绪时跳过
@@ -628,6 +644,7 @@ function _p11k_render_line() {
       disk_usage) _p11k_seg_disk_usage;;
       battery) _p11k_seg_battery;;
       package) _p11k_seg_package;;
+      custom_*) _p11k_seg_custom "$name";;
       status) _p11k_seg_status;;
       prompt_char) _p11k_seg_prompt_char;;
       vi_mode) _p11k_seg_vi_mode;;
@@ -675,7 +692,9 @@ function _p11k_prompt() {
   __p11k_last_bg='default'
   _p11k_render_line "${right[@]}"
   local right_prompt=$__p11k_out
-  # 两行布局：第一行 left+right（RPROMPT 右对齐），第二行 left2
+  # 两行布局：第一行 left+right（RPROMPT 右对齐），第二行 left2。
+  # 注意：right 元素里 newline 之后的元素 MVP 阶段合并进 RPROMPT
+  # （终端 RPROMPT 只右对齐最后一行，第二行右对齐需空格填充，TODO）。
   PROMPT="$left_prompt$POWERLEVEL9K_PROMPT_ADD_NEWLINE_PREFIX"
   RPROMPT="$right_prompt"
   if (( ${#line2} > 0 )); then
