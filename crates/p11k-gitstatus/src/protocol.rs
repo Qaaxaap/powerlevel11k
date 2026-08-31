@@ -10,11 +10,12 @@
 //!
 //! # 与原版的已知差异
 //!
-//! 仅一处：`SafePrint` 对字节 >0x7F 的处理。原版表达式
-//! `c > 127 || std::isprint(c)` 中 `c` 是 `char`，x86 上有符号，`c > 127`
-//! 恒为 false，UTF-8 字节经 `isprint(负值)` 变成 `'?'`；ARM 上 char 无符号
-//! 则原样保留。p11k 固定采用**作者意图**（保留 >0x7F），不做平台分叉。
-//! 对拍测试（tests/compat.rs）需对该差异做豁免。
+//! 无。SafePrint 行为以官方预编译二进制的**实测**为准（v1.5.4
+//! linux-x86_64，Alpine musl + GCC 9.3.0 static-pie）：控制字符 → `'?'`，
+//! 字节 >0x7F 原样保留（实测 commit_summary 中 UTF-8 不变、`\x01` 变
+//! `'?'`）。p11k 固定采用作者意图（保留 >0x7F），与官方二进制一致。
+//! 原版源码 `c > 127 || std::isprint(c)` 中 `std::isprint(负数)` 是 UB，
+//! 本地 glibc 自编译行为可能不同；对拍测试须使用官方预编译二进制。
 
 /// 字段分隔符：ASCII 31 (US, Unit Separator)。
 pub const FIELD_SEP: u8 = 0x1f;

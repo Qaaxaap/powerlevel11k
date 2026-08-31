@@ -409,9 +409,10 @@ fn parse_log_level(value: Option<&str>, opt: &str) -> Result<LogLevel, OptError>
     }
 }
 
-/// 当前实现的协议版本串（原版为 `v1.5.5`，p11k 复刻后使用相同值，
-/// 以便 `-G v1.5.5` 校验通过；也用于 `-V` 输出）。
-pub const PROTOCOL_VERSION: &str = "v1.5.5";
+/// 当前实现的协议版本串。对齐 p10k v1.20.0 内嵌 gitstatus 的版本
+/// （实测官方二进制为 v1.5.4）：zsh 侧以 build.info 的版本串做 `-G`
+/// 校验，p11k 必须声称同版本才能通过，否则直接 exit 11。
+pub const PROTOCOL_VERSION: &str = "v1.5.4";
 
 /// `-G` 的 fnmatch 校验：版本串与 glob 匹配即通过，否则返回 false
 /// （调用方以 [`EXIT_VERSION_MISMATCH`] 退出）。
