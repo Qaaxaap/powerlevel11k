@@ -639,8 +639,10 @@ function _p11k_seg_prompt_char() {
   __p11k_prompt_char_fg=$fg
 }
 
-# 独立的 vi_mode 段（对齐 p10k：无图标，INSERT 蓝字/NORMAL 白字，背景 236）
+# 独立的 vi_mode 段（对齐 p10k：只在 vi 模式显示，无图标，INSERT 蓝字/NORMAL 白字）
 function _p11k_seg_vi_mode() {
+  # 非 vi 模式（keymap-select 未触发过）不显示；对齐 p10k 的 vi 模式检测
+  [[ $__p11k_keymap == (vicmd|viins|vivis|vivli) ]] || return
   local mode=${__p11k_vi_mode:-0}
   if (( mode )); then
     _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_VI_MODE_NORMAL_BACKGROUND 236)" \
@@ -1207,6 +1209,7 @@ add-zle-hook-widget line-finish _p11k_zle_line_finish 2>/dev/null
 # vi 模式：keymap 切换时更新 prompt_char/vi_mode 并重绘
 function _p11k_zle_keymap_select() {
   emulate -L zsh
+  __p11k_keymap=$KEYMAP
   [[ $KEYMAP == vicmd ]] && __p11k_vi_mode=1 || __p11k_vi_mode=0
   _p11k_prompt
   zle && zle .reset-prompt
