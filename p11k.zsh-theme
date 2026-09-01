@@ -1,20 +1,22 @@
 #!/bin/zsh
-# p11k.zsh-theme —— p11k 的 zsh 主题（MVP）。
+# p11k.zsh-theme —— ⚠️ 实验存档，不再维护（archived, not maintained）。
 #
-# 目标（与 README 一致）：
+# 本文件曾尝试在 zsh 里重写 powerlevel10k 的渲染。结论：p10k 的 zsh 渲染
+# 是十年打磨的产物，重写永远追不上（配置兼容只到一小部分 POWERLEVEL9K_*）。
+# p11k 的定位改为：**复用 p10k 主题（渲染/配置/视觉全兼容），只把
+# gitstatusd 替换成 Rust 内核 p11k-d**（GITSTATUS_DAEMON=p11k-d）。
+#
+# 本文件保留仅为：
+# - 记录重写渲染的尝试（git 历史含全部踩坑过程）
+# - 作为未来"Rust 渲染引擎"（单一二进制、跨 shell）探索的 zsh 侧参考
+#
+# 使用方式（如果仍想体验）：source 本文件 + `cargo build --release` 构建
+# p11k-d。不推荐日常使用——请用 powerlevel10k 主题 + GITSTATUS_DAEMON=p11k-d。
+#
+# 历史目标（不再追求）：
 # 1. source 同一份 ~/.p10k.zsh（POWERLEVEL9K_* 配置完全兼容）
-# 2. 视觉与 powerlevel10k 一致（双行布局、分隔符、图标、vcs 段）
+# 2. 视觉与 powerlevel10k 一致
 # 3. 性能不差：git 状态由 p11k-d（Rust）后台提供
-#
-# 设计：
-# - 本文件是纯 zsh；渲染逻辑在 zsh 侧（MVP），后续迁往 p11k-d 原生协议。
-# - gitstatus 客户端（zsh/gitstatus.zsh）负责启动 p11k-d、握手、异步查询。
-# - 配置：~/.p10k.zsh 存在则 source；否则用内置默认（lean 风格精简版）。
-#
-# 当前实现的分段：dir vcs status prompt_char context time virtualenv
-# command_execution_time background_jobs os_icon。未知分段跳过（TODO）。
-#
-# 注意：本主题直接替代 ZSH_THEME 使用；不要与 powerlevel10k 主题同载。
 
 # ────────────────────────── 环境与入口 ──────────────────────────
 

@@ -54,37 +54,41 @@ Three practical reasons:
 
 ## Status
 
-M1 (gitstatusd-compatible daemon) is done: `p11k-d` answers the same
+**M1 (gitstatusd-compatible daemon) is done**: `p11k-d` answers the same
 wire protocol as the original and is byte-identical across a 12-scenario
 differential matrix (modified/deleted/untracked, synthetic 5k-file repo
 and nixpkgs). It can replace gitstatusd via `GITSTATUS_DAEMON`.
 
-A first-party zsh theme (`p11k.zsh-theme`) is under development. It
-sources the same `~/.p10k.zsh` (with default fallbacks for sparse
-configs), renders every segment enabled in the default p10k config
-(including the env/version-manager families), supports
-`POWERLEVEL9K_SHORTEN_STRATEGY`, transient prompt, vi mode and instant
-prompt, and queries git status through `p11k-d` asynchronously.
+### How p11k is meant to be used
 
-Instant prompt follows p10k's mechanism: the theme dumps a static
-per-directory prompt (no vcs/dynamic segments) into
-`~/.cache/p11k/`; sourcing the generated
-`p11k-instant-prompt-$USER.zsh` from the top of `.zshrc` renders the
-prompt while the rest of `.zshrc` is still loading. To enable,
-replace the p10k block at the top of `.zshrc`:
+**p11k = powerlevel10k's theme + p11k-d's Rust git-status kernel.**
+
+powerlevel10k's zsh rendering is a decade of polish and must not be
+rewritten; p11k's job is to keep the *kernel* alive now that p10k is in
+maintenance-only mode (gitstatusd is C++/libgit2 and nobody fixes it).
+So: keep your `ZSH_THEME="powerlevel10k/powerlevel10k"`, keep sourcing
+your existing `~/.p10k.zsh`, and just point the daemon at p11k-d:
 
 ```zsh
-if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p11k/p11k-instant-prompt-${(%):-%n}.zsh" ]]; then
-  source "${XDG_CACHE_HOME:-$HOME/.cache}/p11k/p11k-instant-prompt-${(%):-%n}.zsh"
-fi
+export GITSTATUS_DAEMON=/path/to/p11k-d
 ```
 
-```zsh
-# oh-my-zsh: ZSH_THEME 里不能用自定义路径，直接 source 替代
-source ~/Projects/powerlevel11k/p11k.zsh-theme
-# 或先 build daemon（主题依赖它）
-cd ~/Projects/powerlevel11k && cargo build --release
-```
+Your config, look, status, vcs — everything — stays identical to p10k,
+except the git-status backend is now a maintained Rust binary.
+
+An earlier attempt at a first-party theme (`p11k.zsh-theme`) that
+reimplemented p10k's rendering in zsh is **archived** (see the header of
+that file): a reimplementation can never match p10k's config coverage or
+polish. It is kept only as a record and as a zsh-side reference for a
+possible future *Rust* rendering engine (single binary, cross-shell).
+
+### Roadmap for the kernel
+
+- [x] M1: byte-compatible gitstatusd replacement (v1.5.5 protocol)
+- [x] Performance core: index parsing, `fstatat` scanning, parallel
+      shards, untracked cache, RAII directory fds
+- [ ] Long-term maintenance & hardening of the daemon (the point of p11k)
+- [ ] (optional, long-term) Rust rendering engine as a separate project
 
 ## License
 
@@ -146,17 +150,34 @@ M1（gitstatusd 兼容 daemon）已完成：`p11k-d` 与原版走同一线上协
 在 12 场景差分矩阵（修改/删除/untracked，5k 合成仓库与 nixpkgs）中
 逐字节一致，可通过 `GITSTATUS_DAEMON` 直接替换 gitstatusd。
 
-第一方 zsh 主题（`p11k.zsh-theme`）开发中：source 同一份
-`~/.p10k.zsh`（精简配置有默认值兜底），渲染核心分段，支持
-`POWERLEVEL9K_SHORTEN_STRATEGY`、transient prompt 与 vi 模式，
-通过 `p11k-d` 异步获取 git 状态。
+### p11k 的正确用法
+
+**p11k = powerlevel10k 主题 + p11k-d（Rust git 内核）。**
+
+powerlevel10k 的 zsh 渲染是十年打磨的产物，不该重写；p11k 的使命是
+在 p10k 转入维护模式后**延续内核的生命**（gitstatusd 是 C++/libgit2，
+已无人修复）。所以：保留 `ZSH_THEME="powerlevel10k/powerlevel10k"`，
+保留现有 `~/.p10k.zsh`，只需把 daemon 指向 p11k-d：
 
 ```zsh
-# 先构建 daemon（主题依赖它）
-cd ~/Projects/powerlevel11k && cargo build --release
-# 在 .zshrc 里加载主题
-source ~/Projects/powerlevel11k/p11k.zsh-theme
+export GITSTATUS_DAEMON=/path/to/p11k-d
 ```
+
+配置、外观、status、vcs —— 一切与 p10k 完全一致，唯一区别是 git
+状态后端换成了有人维护的 Rust 二进制。
+
+早期尝试的第一方主题（`p11k.zsh-theme`，在 zsh 里重写 p10k 渲染）
+已**存档**（见该文件头部）：重写永远追不上 p10k 的配置覆盖与打磨。
+保留它仅作为记录，以及未来可能的 **Rust 渲染引擎**（单一二进制、
+跨 shell）的 zsh 侧参考。
+
+### 内核路线图
+
+- [x] M1：字节兼容的 gitstatusd 替代（v1.5.5 协议）
+- [x] 性能核心：index 解析、`fstatat` 扫描、并行分片、untracked
+      缓存、RAII 目录 fd
+- [ ] daemon 的长期维护与加固（p11k 的真正价值）
+- [ ]（可选，长期）Rust 渲染引擎（独立项目）
 
 ## 许可证
 
