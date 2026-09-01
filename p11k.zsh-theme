@@ -124,12 +124,30 @@ function _p11k_prompt_segment() {
   if [[ -n $fg ]]; then
     __p11k_out+="%F{$fg}"
   fi
+  # p10k 段正文（对齐 _p9k_left/right_prompt_segment）=
+  #   [段左缘 whitespace] icon [middle whitespace] content [段右缘 whitespace]。
+  # 留白既避免图标紧贴分隔符（图标拥挤），又让双宽 Nerd Font 图标在空格
+  # 邻接下按双宽渲染——紧贴非空格字符会被终端按单宽退化缩小。
+  if (( ${+__p11k_right} )); then
+    __p11k_out+="$(_p11k_p9k POWERLEVEL9K_RIGHT_LEFT_WHITESPACE ' ')"
+  else
+    __p11k_out+="$(_p11k_p9k POWERLEVEL9K_LEFT_LEFT_WHITESPACE ' ')"
+  fi
   __p11k_out+="$icon"
   if [[ -n $icon && -n $text ]]; then
-    __p11k_out+="$(_p11k_p9k POWERLEVEL9K_LEFT_PROMPT_SEGMENT_END_SYMBOL ' ')"
+    if (( ${+__p11k_right} )); then
+      __p11k_out+="$(_p11k_p9k POWERLEVEL9K_RIGHT_MIDDLE_WHITESPACE ' ')"
+    else
+      __p11k_out+="$(_p11k_p9k POWERLEVEL9K_LEFT_MIDDLE_WHITESPACE ' ')"
+    fi
   fi
   # prompt 解析里 % 是转义符：文本中的 % 必须转义（对齐 p10k 的转义处理）
   __p11k_out+="${text//\%/%%}"
+  if (( ${+__p11k_right} )); then
+    __p11k_out+="$(_p11k_p9k POWERLEVEL9K_RIGHT_RIGHT_WHITESPACE ' ')"
+  else
+    __p11k_out+="$(_p11k_p9k POWERLEVEL9K_LEFT_RIGHT_WHITESPACE ' ')"
+  fi
   __p11k_out+="%f%k"
   __p11k_last_bg=$bg
   (( __p11k_seg_count++ ))
