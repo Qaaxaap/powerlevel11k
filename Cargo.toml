@@ -22,6 +22,9 @@ rust-version = "1.85" # edition 2024 的最低支持版本
 [workspace.dependencies]
 libc = "0.2"
 git2 = "0.20"
+# p11k-engine（B 架构：pty 宿主 + 透传 + prompt 窗口主题）用。
+portable-pty = "0.9"
+unicode-width = "0.2"
 
 # 发布构建对齐原版 gitstatusd 的编译配置：其 Makefile 使用 -O3 -std=c++14。
 # p11k 的性能契约（见 CONTRIBUTING.md）要求与 C++ 原版做基准对比，

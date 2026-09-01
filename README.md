@@ -54,12 +54,24 @@ Three practical reasons:
 
 ## Status
 
-**`main` = the Rust rendering engine (work in progress).**
+**`main` = the Rust engine (milestone M0 done).**
 
-The engine renders the prompt in Rust (a resident daemon) behind a thin
-shell bridge, with cross-shell as the product goal (zsh → fish → bash).
-See the engine docs under `crates/p11k-engine` for the architecture and
-current milestone.
+The engine is a **pty host with a transparent proxy**: it spawns a theme-less
+shell in a pty, passes bytes through untouched (the real terminal renders
+vim/outputs directly), and takes over only for a moment at prompt time — a
+shell hook announces the prompt, the engine draws the themed header
+(multiline, right-aligned status) and hands back. The shell's own line editor
+draws the input line, so completion/history/vi-mode geometry stays self-consistent.
+
+Verified in M0: byte passthrough (output, vim fullscreen/editing/exit), prompt
+window takeover (header + right-aligned exit status), Ctrl-C → `✘ 130`,
+Tab completion, history, resize re-alignment, clean `exit`. Real terminal is
+put in raw mode like any pty host (tmux), so ^C reaches the shell, not the engine.
+
+Known limits (M0, tracked): engine death kills the shell (SIGHUP on pty EOF —
+a keepalive holder process is the planned fix); full-screen zle redraws on
+resize can clobber the header; user shell configs are not yet loaded (shell
+runs from an engine-generated ZDOTDIR).
 
 **`compat/p10k` = the p10k-compatible line (maintained).** p10k's zsh
 rendering is a decade of polish and must not be rewritten; that branch
@@ -146,11 +158,21 @@ p11k 从这里接手。计划是：
 
 ## 当前状态
 
-**`main` 分支 = Rust 渲染引擎（开发中）。**
+**`main` 分支 = Rust 引擎（M0 完成）。**
 
-渲染引擎用 Rust（常驻 daemon）在薄 shell 桥背后渲染提示符，产品目标
-是跨 shell（zsh → fish → bash）。架构与当前里程碑见 `crates/p11k-engine`
-下的文档。
+引擎是一个 **pty 宿主 + 透明代理**：在 pty 里跑一个无主题 shell，字节原样
+透传（vim/命令输出由真实终端直接渲染），只在 prompt 时刻短暂接管——shell
+钩子宣告出提示符后，引擎画主题 header（多行、右侧对齐的状态栏），画完交还。
+输入行由 shell 自己的行编辑器画，补全/历史/vi 模式的几何自洽。
+
+M0 已验证：字节透传（输出、vim 全屏/编辑/退出）、prompt 窗口接管（header +
+右侧退出码）、Ctrl-C → `✘ 130`、Tab 补全、历史、resize 重对齐、干净退出。
+真实终端被设为 raw 模式（和 tmux 等 pty 宿主一致），所以 ^C 打到的是 shell
+而不是引擎。
+
+已知局限（M0 记录）：引擎死则 shell 一起死（pty EOF 触发 SIGHUP，计划用
+keepalive 持有进程解决）；resize 时 zle 全屏重绘可能冲掉 header；尚未接入
+用户真实 shell 配置（shell 跑在引擎生成的 ZDOTDIR 里）。
 
 **`compat/p10k` 分支 = p10k 兼容线（维护中）。** p10k 的 zsh 渲染是十年
 打磨的产物，不该重写；该分支 vendor p10k 主题，只替换内核：`p11k-d`
