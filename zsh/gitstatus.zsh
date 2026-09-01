@@ -91,12 +91,18 @@ function _p11k_gitstatus_start() {
     print -rnu $pipe_fd -- ${(l:20:)pgid} || return
     exec <$file_prefix.fifo || return
     zf_rm -- $file_prefix.fifo || return
-    # 必须用 exec：让 p11k-d 替换本进程（进程替换子进程），从而使 daemon 的
-    # 直接父进程是 zsh。否则 daemon 成为本进程中一个孙进程，daemon 内的
-    # PR_SET_PDEATHSIG 绑定的是本进程而不是 zsh——zsh 被 SIGTERM 关窗时 daemon
-    # 不会收到父死信号，残留成孤儿。
-    exec $P11K_DAEMON -G $__p11k_gitstatus_version \
-      "${(@)daemon_args}" >&$pipe_fd
+    # 把 daemon 放进后台 + disown 的子 shell（`{ ... } &!`，对齐原版
+    # gitstatus.plugin.zsh:387-468）。进程替换 `<(...)` 本身不是 job，但
+    # daemon 进程会被 zsh 视作后台作业；kitty 关闭窗口时若检测到 shell 还有
+    # "正在运行的进程"就弹确认框（p10k 不弹、p11k 弹的差异就在这）。`&!`
+    # disown 让 kitty/zsh 的作业表里看不到 daemon。
+    # 注意**不要**用 exec：exec 会让 daemon 成为 zsh 的直接子进程（更易被
+    # kitty 检测），且打断上面的 disown 隔离。daemon 的退出不依赖父死信号，
+    # 而是靠 FIFO EOF（zsh 死 → 写端关 → daemon 读 EOF 退出，见 daemon.rs）。
+    {
+      $P11K_DAEMON -G $__p11k_gitstatus_version \
+        "${(@)daemon_args}" >&$pipe_fd
+    } &!
   }
 
   # 进程替换：创建 pipe，父进程经 resp_fd 读 daemon 输出
