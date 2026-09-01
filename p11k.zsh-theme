@@ -953,11 +953,15 @@ function _p11k_prompt() {
     if [[ -n $right1 ]]; then
       right1="%F{default}$(_p11k_p9k POWERLEVEL9K_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL '\uE0B2')%f$right1"
     fi
-    # gap 填充（默认 \u00B7）
+    # gap 填充（默认 \u00B7）。数量对齐 p10k：
+    # COLUMNS - 左宽 - 右宽 - ZLE_RPROMPT_INDENT - 1（留余量，吸收
+    # PUA 图标双宽/宽度判断偏差，避免右侧段溢出换行）。
     local gap_char=$(_p11k_p9k POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_CHAR ' ')
     local lw=$(_p11k_width "$left1")
     local rw=$(_p11k_width "$right1")
-    local gap=$(( COLUMNS - lw - rw ))
+    local -i ind=${ZLE_RPROMPT_INDENT:-1}
+    (( ind < 0 )) && ind=0
+    local gap=$(( COLUMNS - lw - rw - ind - 1 ))
     PROMPT="$first_prefix$left1"
     # (pl:) 的 p 让 flag 参数里的 $gap_char 正确展开（(l:) 缺 p 会变成字面 _char）
     (( gap > 0 )) && PROMPT+="${(pl:$gap::$gap_char:)}"
@@ -1082,7 +1086,9 @@ function _p11k_set_instant_prompt() {
     _p11k_render_line "${right2_elems[@]}"
     right2=$__p11k_out
   fi
-  __p11k_instant=0
+  # 必须 unset（不是 =0）：render_line 用 ${+__p11k_instant} 存在性检查，
+  # =0 残留会让后续正常渲染把 status/time/vcs 当动态段跳过
+  unset __p11k_instant
   if [[ -n $right2 ]]; then
     left2=$(_p11k_pad "$left2" "$right2")
   fi
