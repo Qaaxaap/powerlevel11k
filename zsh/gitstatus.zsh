@@ -63,6 +63,12 @@ function _p11k_gitstatus_start() {
     -m ${POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY:--1}
     -t ${GITSTATUS_NUM_THREADS:-32}
   )
+  # -p：父进程(本 zsh)监测。zsh 被 SIGTERM 杀掉（如 kitty 关闭窗口，不走
+  # zshexit 钩子）时，daemon 的 1s 轮询里 kill(zsh_pid,0) 失败即退出。否则
+  # daemon 只能靠 FIFO EOF 退出，而 SIGTERM 下 poll 可能不返回 HUP，daemon
+  # 残留成孤儿（kitty 提示 window is running /bin/zsh，且残留实例争抢
+  # untracked 缓存导致 ?N 偶发丢失）。对齐原版 gitstatusd 的 parent_pid 监测。
+  daemon_args+=(-p $sysparams[pid])
   # -e：递归统计 untracked 目录内的文件（对齐 POWERLEVEL9K_VCS_RECURSE_UNTRACKED_DIRS）
   (( ${POWERLEVEL9K_VCS_RECURSE_UNTRACKED_DIRS:-1} )) && daemon_args+=(-e)
 
@@ -85,7 +91,11 @@ function _p11k_gitstatus_start() {
     print -rnu $pipe_fd -- ${(l:20:)pgid} || return
     exec <$file_prefix.fifo || return
     zf_rm -- $file_prefix.fifo || return
-    HOME=$HOME $P11K_DAEMON -G $__p11k_gitstatus_version \
+    # 必须用 exec：让 p11k-d 替换本进程（进程替换子进程），从而使 daemon 的
+    # 直接父进程是 zsh。否则 daemon 成为本进程中一个孙进程，daemon 内的
+    # PR_SET_PDEATHSIG 绑定的是本进程而不是 zsh——zsh 被 SIGTERM 关窗时 daemon
+    # 不会收到父死信号，残留成孤儿。
+    exec $P11K_DAEMON -G $__p11k_gitstatus_version \
       "${(@)daemon_args}" >&$pipe_fd
   }
 
