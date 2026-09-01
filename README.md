@@ -54,45 +54,38 @@ Three practical reasons:
 
 ## Status
 
-**M1 (gitstatusd-compatible daemon) is done**: `p11k-d` answers the same
-wire protocol as the original and is byte-identical across a 12-scenario
-differential matrix (modified/deleted/untracked, synthetic 5k-file repo
-and nixpkgs). It can replace gitstatusd via `GITSTATUS_DAEMON`.
+**`main` = the Rust rendering engine (work in progress).**
 
-### How p11k is meant to be used
+The engine renders the prompt in Rust (a resident daemon) behind a thin
+shell bridge, with cross-shell as the product goal (zsh → fish → bash).
+See the engine docs under `crates/p11k-engine` for the architecture and
+current milestone.
 
-**p11k = powerlevel10k's theme + p11k-d's Rust git-status kernel.**
-
-powerlevel10k's zsh rendering is a decade of polish and must not be
-rewritten; p11k's job is to keep the *kernel* alive now that p10k is in
-maintenance-only mode (gitstatusd is C++/libgit2 and nobody fixes it).
-So: keep your `ZSH_THEME="powerlevel10k/powerlevel10k"`, keep sourcing
-your existing `~/.p10k.zsh`, and just point the daemon at p11k-d:
+**`compat/p10k` = the p10k-compatible line (maintained).** p10k's zsh
+rendering is a decade of polish and must not be rewritten; that branch
+vendors the p10k theme and replaces only the kernel: `p11k-d` (Rust)
+answers the gitstatusd wire protocol, byte-identical across a 12-scenario
+differential matrix. Use it via:
 
 ```zsh
+# on the compat/p10k branch:
 export GITSTATUS_DAEMON=/path/to/p11k-d
 ```
 
-Your config, look, status, vcs — everything — stays identical to p10k,
-except the git-status backend is now a maintained Rust binary.
+Config, look, status, vcs — everything stays identical to p10k, except
+the git-status backend is a maintained Rust binary.
 
-An earlier attempt at a first-party theme (`p11k.zsh-theme`) that
-reimplemented p10k's rendering in zsh is **archived** (see the header of
-that file): a reimplementation can never match p10k's config coverage or
-polish. It is kept only as a record and as a zsh-side reference for a
-possible future *Rust* rendering engine (single binary, cross-shell).
-
-### Roadmap for the kernel
+### Kernel roadmap (shared)
 
 - [x] M1: byte-compatible gitstatusd replacement (v1.5.5 protocol)
 - [x] Performance core: index parsing, `fstatat` scanning, parallel
       shards, untracked cache, RAII directory fds
 - [ ] Long-term maintenance & hardening of the daemon (the point of p11k)
-- [ ] (optional, long-term) Rust rendering engine as a separate project
 
 ## License
 
 GPLv3. See [LICENSE](LICENSE).
+
 
 ### Third-party notices
 
@@ -153,38 +146,31 @@ p11k 从这里接手。计划是：
 
 ## 当前状态
 
-M1（gitstatusd 兼容 daemon）已完成：`p11k-d` 与原版走同一线上协议，
-在 12 场景差分矩阵（修改/删除/untracked，5k 合成仓库与 nixpkgs）中
-逐字节一致，可通过 `GITSTATUS_DAEMON` 直接替换 gitstatusd。
+**`main` 分支 = Rust 渲染引擎（开发中）。**
 
-### p11k 的正确用法
+渲染引擎用 Rust（常驻 daemon）在薄 shell 桥背后渲染提示符，产品目标
+是跨 shell（zsh → fish → bash）。架构与当前里程碑见 `crates/p11k-engine`
+下的文档。
 
-**p11k = powerlevel10k 主题 + p11k-d（Rust git 内核）。**
-
-powerlevel10k 的 zsh 渲染是十年打磨的产物，不该重写；p11k 的使命是
-在 p10k 转入维护模式后**延续内核的生命**（gitstatusd 是 C++/libgit2，
-已无人修复）。所以：保留 `ZSH_THEME="powerlevel10k/powerlevel10k"`，
-保留现有 `~/.p10k.zsh`，只需把 daemon 指向 p11k-d：
+**`compat/p10k` 分支 = p10k 兼容线（维护中）。** p10k 的 zsh 渲染是十年
+打磨的产物，不该重写；该分支 vendor p10k 主题，只替换内核：`p11k-d`
+（Rust）以字节兼容方式应答 gitstatusd 线上协议（12 场景差分矩阵逐字节
+一致）。用法：
 
 ```zsh
+# 在 compat/p10k 分支下：
 export GITSTATUS_DAEMON=/path/to/p11k-d
 ```
 
 配置、外观、status、vcs —— 一切与 p10k 完全一致，唯一区别是 git
 状态后端换成了有人维护的 Rust 二进制。
 
-早期尝试的第一方主题（`p11k.zsh-theme`，在 zsh 里重写 p10k 渲染）
-已**存档**（见该文件头部）：重写永远追不上 p10k 的配置覆盖与打磨。
-保留它仅作为记录，以及未来可能的 **Rust 渲染引擎**（单一二进制、
-跨 shell）的 zsh 侧参考。
-
-### 内核路线图
+### 内核路线图（两条线共用）
 
 - [x] M1：字节兼容的 gitstatusd 替代（v1.5.5 协议）
 - [x] 性能核心：index 解析、`fstatat` 扫描、并行分片、untracked
       缓存、RAII 目录 fd
 - [ ] daemon 的长期维护与加固（p11k 的真正价值）
-- [ ]（可选，长期）Rust 渲染引擎（独立项目）
 
 ## 许可证
 
