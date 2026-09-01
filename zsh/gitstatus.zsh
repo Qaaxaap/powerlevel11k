@@ -188,34 +188,33 @@ function _p11k_gitstatus_process() {
   [[ $f[1] == $__p11k_gitstatus_req_id ]] || return
   unset __p11k_gitstatus_pending
   if [[ $f[2] == 0 ]]; then
-    # 非仓库：清空 vcs
+    # 非仓库：清空 vcs（对齐 p10k 的 _p9k_vcs_status_purge）
     unset __p11k_vcs_ready
     unset __p11k_vcs_branch
     __p11k_vcs_dirty=0
-    return
+  else
+    # 仓库响应：id + flag + 27 字段 = 29 段
+    ((${#f} < 29)) && return
+    # 字段映射：f[1]=id, f[2]=flag(1/0), f[3]=field[0]（workdir），
+    # 故 field[i] = f[3+i]。索引见 protocol.rs field 模块。
+    #   LOCAL_BRANCH=2 → f[5];  NUM_UNSTAGED=9  → f[12]
+    #   NUM_UNTRACKED=11 → f[14]; COMMITS_AHEAD=12 → f[15]
+    #   COMMITS_BEHIND=13 → f[16]; STASHES=14 → f[17]; TAG=15 → f[18]
+    __p11k_vcs_ready=1
+    __p11k_vcs_branch=$f[5]
+    __p11k_vcs_unstaged=$f[12]
+    __p11k_vcs_untracked=$f[14]
+    __p11k_vcs_ahead=$f[15]
+    __p11k_vcs_behind=$f[16]
+    __p11k_vcs_stashes=$f[17]
+    __p11k_vcs_tag=$f[18]
+    (( __p11k_vcs_dirty = __p11k_vcs_unstaged + __p11k_vcs_untracked > 0 ))
   fi
-  # 仓库响应：id + flag + 27 字段 = 29 段
-  ((${#f} < 29)) && return
-  # 字段映射：f[1]=id, f[2]=flag(1/0), f[3]=field[0]（workdir），
-  # 故 field[i] = f[3+i]。索引见 protocol.rs field 模块。
-  #   LOCAL_BRANCH=2 → f[5];  NUM_UNSTAGED=9  → f[12]
-  #   NUM_UNTRACKED=11 → f[14]; COMMITS_AHEAD=12 → f[15]
-  #   COMMITS_BEHIND=13 → f[16]; STASHES=14 → f[17]; TAG=15 → f[18]
-  __p11k_vcs_ready=1
-  __p11k_vcs_branch=$f[5]
-  __p11k_vcs_unstaged=$f[12]
-  __p11k_vcs_untracked=$f[14]
-  __p11k_vcs_ahead=$f[15]
-  __p11k_vcs_behind=$f[16]
-  __p11k_vcs_stashes=$f[17]
-  __p11k_vcs_tag=$f[18]
-  (( __p11k_vcs_dirty = __p11k_vcs_unstaged + __p11k_vcs_untracked > 0 ))
-  # 状态变化时重绘（对齐 p10k 的异步回填行为）
-  if [[ $__p11k_vcs_last_display != "$__p11k_vcs_branch:$__p11k_vcs_dirty" ]]; then
-    __p11k_vcs_last_display="$__p11k_vcs_branch:$__p11k_vcs_dirty"
-    _p11k_prompt
-    _p11k_reset_prompt
-  fi
+  # 每次响应都重绘（对齐 p10k _p9k_vcs_resume 末尾的无条件 _p9k_reset_prompt）。
+  # 不要用"内容变了才重绘"的缓存：repo→非 repo 或 untracked 计数变化时
+  # 缓存不失效，vcs 会卡在过期/缺失状态（cd 往返后 ?10 消失的根因）。
+  _p11k_prompt
+  _p11k_reset_prompt
 }
 
 # 重绘当前 prompt（对齐 p10k 的 _p9k_reset_prompt）
