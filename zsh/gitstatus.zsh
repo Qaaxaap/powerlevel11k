@@ -18,7 +18,9 @@ typeset -g P11K_DAEMON=${P11K_DAEMON:-$__p11k_root_dir/target/release/p11k-d}
 typeset -g __p11k_gitstatus_version='v1.5.5'
 
 # 会话状态
-typeset -g __p11k_gitstatus_fd=-1
+typeset -g __p11k_gitstatus_fd=-1        # 响应 fd（daemon stdout 的 pipe 读端）
+typeset -gi __p11k_gitstatus_req_fd=-1   # 请求 fd（FIFO 写端）
+typeset -g __p11k_gitstatus_pgid=''      # daemon 进程组 id（清理用）
 typeset -g __p11k_gitstatus_file_prefix=''
 
 # 响应解析产物（供 _p11k_seg_vcs 使用）
@@ -41,43 +43,73 @@ function _p11k_gitstatus_start() {
   }
   zmodload zsh/system zsh/datetime 2>/dev/null
 
-  local -i pipe_fd
-  local file_prefix=$TMPDIR/p11k.$EUID.$sysparams[pid].$EPOCHSECONDS.$((++__p11k_gitstatus_counter))
+  local -i resp_fd req_fd
+  # TMPDIR 未设置/不可写时回退 /tmp（对齐原版 gitstatus.plugin.zsh）
+  local tmpdir=$TMPDIR
+  [[ -n $tmpdir && -d $tmpdir && -w $tmpdir ]] || tmpdir=/tmp
+  local file_prefix=$tmpdir/p11k.$EUID.$sysparams[pid].$EPOCHSECONDS.$((++__p11k_gitstatus_counter))
   __p11k_gitstatus_file_prefix=$file_prefix
 
-  # 进程替换内：写 pgid → daemon stdin 接 FIFO → daemon stdout 回管道
-  {
-    exec 0<&- {pipe_fd}>&1 1>>/dev/null 2>&1 || return
+  # daemon stderr 日志（对齐原版 GITSTATUS_DAEMON_LOG；默认 /dev/null）
+  local daemon_log=${GITSTATUS_DAEMON_LOG:-/dev/null}
+  [[ -z $daemon_log ]] && daemon_log=/dev/null
+
+  # -e：递归统计 untracked 目录内的文件（对齐 POWERLEVEL9K_VCS_RECURSE_UNTRACKED_DIRS）
+  local -a daemon_args=(-s -1 -u -1 -d -1 -c -1 -m -1 -t 32)
+  (( ${POWERLEVEL9K_VCS_RECURSE_UNTRACKED_DIRS:-1} )) && daemon_args+=(-e)
+
+  # 进程替换子进程在交互 shell（monitor on）下是进程组长，kill -- -$pgid
+  # 才能命中 daemon 进程组；显式确保（非交互下无法开启，静默忽略）。
+  setopt monitor 2>/dev/null
+
+  # daemon 进程体：运行在进程替换 <(...) 里，其 stdout 即 pipe 写端。
+  # {pipe_fd}>&1 复制 stdout（pipe 写端）用于回写 pgid 与 daemon 输出；
+  # stdin 换成 FIFO 读端，请求经 FIFO 传入。
+  function _p11k_gitstatus_daemon() {
+    local -i pipe_fd
+    exec 0<&- {pipe_fd}>&1 1>>$daemon_log 2>&1 || return
     local pgid=$sysparams[pid]
     [[ $pgid == <1-> ]] || return
     builtin cd -q / || return
+    # 忽略 SIGPIPE：父进程退出时写 pipe 不应杀掉本进程（对齐原版）
+    trap '' PIPE
     command mkfifo -- $file_prefix.fifo || return
     print -rnu $pipe_fd -- ${(l:20:)pgid} || return
     exec <$file_prefix.fifo || return
     zf_rm -- $file_prefix.fifo || return
     HOME=$HOME $P11K_DAEMON -G $__p11k_gitstatus_version \
-      -s -1 -u -1 -d -1 -c -1 -m -1 -t 32 >&$pipe_fd
-  } 2>/dev/null &!
+      "${(@)daemon_args}" >&$pipe_fd
+  }
 
-  # 读 pgid（20 字节）与响应 fd
+  # 进程替换：创建 pipe，父进程经 resp_fd 读 daemon 输出
+  sysopen -r -o cloexec -u resp_fd <(_p11k_gitstatus_daemon) || return 1
+
+  # 读 pgid（20 字节左对齐）
   local pgid=''
   while (( $#pgid < 20 )); do
-    sysread -s $((20 - $#pgid)) -t 1 -i $pipe_fd 'pgid[$#pgid+1]' || return 1
+    [[ -t $resp_fd ]]
+    sysread -s $((20 - $#pgid)) -t 1 -i $resp_fd 'pgid[$#pgid+1]' || return 1
   done
   [[ $pgid == ' '#<1-> ]] || return 1
-  __p11k_gitstatus_fd=$pipe_fd
+  __p11k_gitstatus_pgid=$pgid
+
+  # 打开 FIFO 写端（请求通道；daemon 侧 exec <fifo 阻塞等待此处打开）
+  sysopen -w -o cloexec -u req_fd -- $file_prefix.fifo || return 1
+  __p11k_gitstatus_req_fd=$req_fd
+  __p11k_gitstatus_fd=$resp_fd
 
   # 握手
   local resp=''
-  print -rn -- $'}hello\x1f\x1e' >&$pipe_fd || return 1
+  print -rn -- $'}hello\x1f\x1e' >&$req_fd || return 1
   while true; do
-    sysread -s 1 -t 1 -i $pipe_fd 'resp[$#resp+1]' || return 1
+    [[ -t $resp_fd ]]
+    sysread -s 1 -t 1 -i $resp_fd 'resp[$#resp+1]' || return 1
     [[ $resp == *$'\x1e' ]] && break
   done
   [[ $resp == $'}hello\x1f0\x1e' ]] || return 1
 
   # 响应 fd 挂 zle -F（异步回调）
-  zle -F $pipe_fd _p11k_gitstatus_on_readable 2>/dev/null
+  zle -F $resp_fd _p11k_gitstatus_on_readable 2>/dev/null
   return 0
 }
 
@@ -98,10 +130,14 @@ function _p11k_gitstatus_query() {
       qdir=":$PWD/$GIT_DIR"
     fi
   fi
-  if ! print -rn -- "$__p11k_gitstatus_req_id\x1f$qdir\x1e" >&$__p11k_gitstatus_fd 2>/dev/null; then
+  # 请求：`<id>\x1f<dir>\x1f<diff>\x1e`（\x1f/\x1e 须用 $'...' 拼，
+  # 双引号内 \x1f 是字面文本）。diff 字段缺省（全量统计）。
+  if ! print -rn -- "$__p11k_gitstatus_req_id"$'\x1f'"$qdir"$'\x1e' >&$__p11k_gitstatus_req_fd 2>/dev/null; then
     # daemon 已退出（EPIPE 等）：清理 fd 并重启，下个 precmd 恢复
     exec {__p11k_gitstatus_fd}>&- 2>/dev/null
+    exec {__p11k_gitstatus_req_fd}>&- 2>/dev/null
     __p11k_gitstatus_fd=-1
+    __p11k_gitstatus_req_fd=-1
     unset __p11k_gitstatus_pending
     _p11k_gitstatus_start
   fi
@@ -129,7 +165,8 @@ function _p11k_gitstatus_process() {
   emulate -L zsh
   local msg=$1
   local -a f
-  f=("${(@s:\x1f:)msg}")
+  # (@ps:) 的 p 让 \x1f 按转义解析（缺 p 则 \x1f 是字面 4 字符，不切分）
+  f=("${(@ps:\x1f:)msg}")
   ((${#f} < 2)) && return
   # id 匹配
   [[ $f[1] == $__p11k_gitstatus_req_id ]] || return
@@ -141,18 +178,21 @@ function _p11k_gitstatus_process() {
     __p11k_vcs_dirty=0
     return
   fi
-  ((${#f} < 30)) && return
-  # 字段映射（协议索引 +2）：
-  # 4 branch, 11 unstaged, 13 untracked, 14 ahead, 15 behind,
-  # 16 stashes, 17 tag
+  # 仓库响应：id + flag + 27 字段 = 29 段
+  ((${#f} < 29)) && return
+  # 字段映射：f[1]=id, f[2]=flag(1/0), f[3]=field[0]（workdir），
+  # 故 field[i] = f[3+i]。索引见 protocol.rs field 模块。
+  #   LOCAL_BRANCH=2 → f[5];  NUM_UNSTAGED=9  → f[12]
+  #   NUM_UNTRACKED=11 → f[14]; COMMITS_AHEAD=12 → f[15]
+  #   COMMITS_BEHIND=13 → f[16]; STASHES=14 → f[17]; TAG=15 → f[18]
   __p11k_vcs_ready=1
-  __p11k_vcs_branch=$f[4]
-  __p11k_vcs_unstaged=$f[11]
-  __p11k_vcs_untracked=$f[13]
-  __p11k_vcs_ahead=$f[14]
-  __p11k_vcs_behind=$f[15]
-  __p11k_vcs_stashes=$f[16]
-  __p11k_vcs_tag=$f[17]
+  __p11k_vcs_branch=$f[5]
+  __p11k_vcs_unstaged=$f[12]
+  __p11k_vcs_untracked=$f[14]
+  __p11k_vcs_ahead=$f[15]
+  __p11k_vcs_behind=$f[16]
+  __p11k_vcs_stashes=$f[17]
+  __p11k_vcs_tag=$f[18]
   (( __p11k_vcs_dirty = __p11k_vcs_unstaged + __p11k_vcs_untracked > 0 ))
   # 状态变化时重绘（对齐 p10k 的异步回填行为）
   if [[ $__p11k_vcs_last_display != "$__p11k_vcs_branch:$__p11k_vcs_dirty" ]]; then
@@ -167,11 +207,16 @@ function _p11k_reset_prompt() {
   zle && zle .reset-prompt 2>/dev/null || true
 }
 
-# 会话退出时清理
+# 会话退出时清理：关 fd + 杀 daemon 进程组（避免孤儿残留）
 function _p11k_gitstatus_stop() {
   (( __p11k_gitstatus_fd > 0 )) || return
   zle -F $__p11k_gitstatus_fd 2>/dev/null
-  exec {__p11k_gitstatus_fd}>&-
+  exec {__p11k_gitstatus_fd}>&- 2>/dev/null
+  exec {__p11k_gitstatus_req_fd}>&- 2>/dev/null
+  if [[ $__p11k_gitstatus_pgid == <1-> ]]; then
+    kill -- -$__p11k_gitstatus_pgid 2>/dev/null
+  fi
   __p11k_gitstatus_fd=-1
+  __p11k_gitstatus_req_fd=-1
 }
 add-zsh-hook zshexit _p11k_gitstatus_stop
