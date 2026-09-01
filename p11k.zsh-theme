@@ -863,12 +863,27 @@ function _p11k_render_line() {
   done
 }
 
-# 可见宽度（字符数）：剥离 prompt 转义后数字符。
-# 注意不能写 ${#$(...)}——命令输出含空格时 zsh 会返回单词数而非字符数，
-# 必须先存进变量再取 ${#var}。
+# 可见宽度（列数）：对齐 p10k 的 _p9k_prompt_length。
+# 原理：${(%):-...} 做 prompt 展开（%K{}/%F{} 变 ANSI，双宽图标按 2 列计），
+# %$m(l.1.0) 判断"截断到 m 列后内容是否变短"，二分逼近真实宽度。
+# 不能写 ${#$(...)}（命令输出含空格时 zsh 返回单词数），也避免用字符数
+# （不认双宽图标，会低估宽度导致 gap 过大、右侧段溢出换行）。
 function _p11k_width() {
-  local v=$(print -rn -- "$1" | sed -E 's/%\{[^}]*\}//g; s/%[0-9]*[kfKFBuUsS]\{[^}]*\}//g; s/%[0-9]*[kfKFBuUsS]//g')
-  print -rn -- ${#v}
+  # COLUMNS 必须固定：%$n(l.x.y) 的截断判断受 COLUMNS 限制（对齐 p10k）
+  local -i COLUMNS=1024
+  local v=$1
+  local -i x y=${#v} m
+  if (( y )); then
+    while (( ${${(%):-$v%$y(l.1.0)}[-1]} )); do
+      x=$y
+      (( y *= 2 ))
+    done
+    while (( y > x + 1 )); do
+      (( m = x + (y - x) / 2 ))
+      (( ${${(%):-$v%$m(l.x.y)}[-1]} = m ))
+    done
+  fi
+  print -rn -- $x
 }
 
 # _p11k_pad <left> <right>：右对齐拼接（gap 空格填充；宽度用 sed 剥
