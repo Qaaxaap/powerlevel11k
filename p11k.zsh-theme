@@ -698,18 +698,48 @@ function _p11k_seg_virtualenv() {
 }
 
 # command_execution_time：超过 POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD 才显示
+# 格式化对齐 p10k 的 prompt_command_execution_time：
+# - <60s：按 PRECISION 保留小数（默认 2 位；-F N 是小数位数不是有效数字），
+#   PRECISION=0 时四舍五入到整数
+# - >=60s：四舍五入到秒，默认 H:M:S（1:23、1:02:03）
 function _p11k_seg_command_execution_time() {
+  (( ${+__p11k_last_exec_time} )) || return
   local thresh=$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_THRESHOLD 3)
   (( __p11k_last_exec_time >= thresh )) || return
-  # 格式化（对齐 p10k：>=1h 显示 h/m/s，>=1m 显示 m/s，否则秒）
-  local s=${__p11k_last_exec_time%.*}
   local text
-  if (( s >= 3600 )); then
-    text="$(( s / 3600 ))h $(( (s % 3600) / 60 ))m $(( s % 60 ))s"
-  elif (( s >= 60 )); then
-    text="$(( s / 60 ))m $(( s % 60 ))s"
+  if (( __p11k_last_exec_time < 60 )); then
+    local -i prec=$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_PRECISION 2)
+    if (( !prec )); then
+      local -i sec=$((__p11k_last_exec_time + 0.5))
+    else
+      local -F $prec sec=__p11k_last_exec_time
+    fi
+    text=${sec}s
   else
-    text="${__p11k_last_exec_time}s"
+    local -i d=$((__p11k_last_exec_time + 0.5))
+    local fmt=$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_FORMAT 'H:M:S')
+    if [[ $fmt == 'H:M:S' ]]; then
+      text=${(l.2..0.)$((d % 60))}
+      if (( d >= 60 )); then
+        text=${(l.2..0.)$((d / 60 % 60))}:$text
+        if (( d >= 36000 )); then
+          text=$((d / 3600)):$text
+        elif (( d >= 3600 )); then
+          text=0$((d / 3600)):$text
+        fi
+      fi
+    else
+      text="$((d % 60))s"
+      if (( d >= 60 )); then
+        text="$((d / 60 % 60))m $text"
+        if (( d >= 3600 )); then
+          text="$((d / 3600 % 24))h $text"
+          if (( d >= 86400 )); then
+            text="$((d / 86400))d $text"
+          fi
+        fi
+      fi
+    fi
   fi
   _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_BACKGROUND yellow)" \
     "$(_p11k_p9k POWERLEVEL9K_COMMAND_EXECUTION_TIME_FOREGROUND 236)" \
@@ -997,11 +1027,15 @@ $last_prefix$left2"
 function _p11k_precmd() {
   emulate -L zsh
   __p11k_last_status=$?
-  local now=$EPOCHREALTIME
+  # 执行时间只从 preexec 计时（对齐 p10k 的 _p9k__timer_start）：空命令/
+  # 刚启动没有 preexec，不显示执行时间。precmd 不再回写 __p11k_last_cmd_time，
+  # 否则裸回车也会算出"上次 precmd 到本次 precmd"的假时长。
   if (( ${+__p11k_last_cmd_time} )); then
-    __p11k_last_exec_time=$(( now - __p11k_last_cmd_time ))
+    __p11k_last_exec_time=$(( EPOCHREALTIME - __p11k_last_cmd_time ))
+    unset __p11k_last_cmd_time
+  else
+    unset __p11k_last_exec_time
   fi
-  __p11k_last_cmd_time=$now
   __p11k_last_pwd=$PWD
   # gitstatus：异步查询当前目录（失败不传播，避免钩子返回非零）
   (( ${+functions[_p11k_gitstatus_query]} )) && _p11k_gitstatus_query || true
