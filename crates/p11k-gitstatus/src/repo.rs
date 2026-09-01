@@ -1,35 +1,42 @@
-//! 仓库句柄与缓存（对齐 `repo_cache.cc` 与 `gitstatus.cc` 的 ProcessRequest）。
+//! Repo handles and caching (mirrors `repo_cache.cc` and gitstatus.cc's
+//! ProcessRequest).
 //!
-//! # 常驻 vs 现算
+//! # Resident vs computed-per-request
 //!
-//! **常驻**（以 gitdir 为 key 的 map + TTL，见 [`RepoCache::evict_expired`]）：
-//! - git 对象模型句柄：HEAD、分支、远端、tag 数据库、stash 列表、commit message
-//! - HEAD oid 缓存（staged 差分与 tag 查询的依据，对齐原版 head_target）
-//! - staged/conflicted 差分结果（**按 head_oid 缓存**：HEAD 未变则复用，
-//!   变了才用 `Diff::tree_to_index` 重算；skip-worktree/assume-unchanged
-//!   计数同批缓存）
+//! **Resident** (map keyed by gitdir + TTL, see [`RepoCache::evict_expired`]):
+//! - git object handles: HEAD, branches, remotes, tag db, stash list,
+//!   commit message
+//! - HEAD oid cache (basis for the staged diff and tag lookup)
+//! - staged/conflicted diff results (**cached by head_oid**: reused while
+//!   HEAD is unchanged, recomputed via `Diff::tree_to_index` only when it
+//!   changes; skip-worktree/assume-unchanged counts cached in the same batch)
 //!
-//! **现算**（每次请求重新计算）：
-//! - 本模块的字段组装（分支/远端/action/ahead-behind 等，libgit2 自身有缓存）
-//! - unstaged/untracked 的工作区遍历（index 树每次重建，候选经
-//!   `Diff::index_to_workdir` 精确确认；TODO(perf)：index 未变时复用树）
+//! **Computed per request**:
+//! - field assembly (branch/remote/action/ahead-behind; libgit2 caches
+//!   internally)
+//! - unstaged/untracked worktree traversal (index tree rebuilt each time;
+//!   candidates confirmed via `Diff::index_to_workdir`;
+//!   TODO(perf): reuse the tree when the index is unchanged)
 //!
-//! # 与原版的已知简化
+//! # Known simplifications vs the original
 //!
-//! - 原版 staged 扫描与 dirty 扫描、tag 查询并行（RunAsync + Wait）；
-//!   p11k 当前顺序执行。TODO(perf)：benchmark 后再引入并行。
-//! - 原版按路径区间分片跑 `git_diff_tree_to_index`；p11k 单次全量 diff。
-//!   TODO(perf)：同上。
+//! - The original runs staged scan, dirty scan, and tag query in parallel
+//!   (RunAsync + Wait); p11k runs them sequentially.
+//!   TODO(perf): revisit after benchmarking.
+//! - The original shards `git_diff_tree_to_index` by path ranges; p11k does
+//!   one full diff. TODO(perf): same.
 //!
-//! # TTL 语义
+//! # TTL
 //!
-//! 主循环每次迭代调用 [`RepoCache::evict_expired`]；TTL（`-r`，默认
-//! 3600 秒）从**最后一次访问**起算。对齐原版：只按时间淘汰，不按容量。
+//! [`RepoCache::evict_expired`] runs every main-loop iteration; TTL (`-r`,
+//! default 3600s) counts from the last access. Time-based eviction only, no
+//! capacity cap, matching the original.
 //!
-//! # 路径字节
+//! # Path bytes
 //!
-//! 仓库路径用 `Vec<u8>` 承载：Linux 路径无编码约定，原版 std::string 同样
-//! 字节忠实。本 crate 仅支持 unix 系（对齐 p10k 的支持矩阵：Linux/macOS/WSL）。
+//! Repo paths are `Vec<u8>`: Linux paths have no encoding contract, and the
+//! original std::string is byte-faithful too. This crate supports unix only
+//! (matching p10k's matrix: Linux/macOS/WSL).
 
 use crate::index::{Index, IndexEntry, RepoCaps};
 use crate::options::Options;
@@ -43,7 +50,8 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::Instant;
 
-/// 从 git2 Index 拷贝条目（路径加尾部 NUL，stat 字段取自 git2）。
+/// Copy entries from a git2 Index (paths get a trailing NUL, stat fields
+/// taken from git2).
 fn copy_entries(git_index: &GitIndex) -> Vec<IndexEntry> {
     git_index
         .iter()
@@ -57,7 +65,7 @@ fn copy_entries(git_index: &GitIndex) -> Vec<IndexEntry> {
                 mtime_sec: e.mtime.seconds(),
                 mtime_nsec: e.mtime.nanoseconds(),
                 mode: e.mode,
-                // GIT_INDEX_ENTRY_STAGE_SHIFT = 12（git2 无 stage 访问器）
+                // GIT_INDEX_ENTRY_STAGE_SHIFT = 12 (git2 has no stage accessor).
                 stage: (e.flags >> 12) & 0x3,
                 flags_extended: e.flags_extended,
                 assume_valid: e.flags & git2::IndexEntryFlag::VALID.bits() != 0,
@@ -66,19 +74,21 @@ fn copy_entries(git_index: &GitIndex) -> Vec<IndexEntry> {
         .collect()
 }
 
-/// 远端信息（tracking 或 push 共用）。
+/// Remote info (shared by tracking and push remotes).
 struct RemoteInfo {
-    /// remote 名（如 "origin"）。
+    /// Remote name (e.g. "origin").
     name: String,
-    /// 剥掉 `<remote>/` 前缀的分支名（如 "master"）。
+    /// Branch name with the `<remote>/` prefix stripped (e.g. "master").
     branch: String,
-    /// remote URL。
+    /// Remote URL.
     url: String,
-    /// 远端分支的完整 ref 名（如 "refs/remotes/origin/master"），revwalk 范围用。
+    /// Full ref of the remote branch (e.g. "refs/remotes/origin/master"),
+    /// used as the revwalk range.
     ref_name: String,
 }
 
-/// staged 差分缓存（按 head_oid 复用，对齐原版 staged_/conflicted_ 等原子量）。
+/// Staged-diff cache (reused per head_oid, mirroring the original's
+/// staged_/conflicted_ atoms).
 #[derive(Default, Clone, Copy)]
 struct StagedStats {
     staged: usize,
@@ -89,7 +99,7 @@ struct StagedStats {
     assume_unchanged: usize,
 }
 
-/// index 与 dirty 统计（对齐原版 IndexStats）。
+/// Index and dirty stats (IndexStats).
 #[derive(Default)]
 struct IndexStats {
     index_size: usize,
@@ -104,37 +114,40 @@ struct IndexStats {
     num_assume_unchanged: usize,
 }
 
-/// 单个仓库的常驻状态。
+/// Resident state for one repo.
 pub struct Repo {
-    /// 工作目录绝对路径（无尾部 /；字节忠实）。
+    /// Absolute workdir path (no trailing '/'; byte-faithful).
     pub workdir: Vec<u8>,
     git: GitRepository,
-    /// HEAD 指向的 oid；空仓库为 None（对齐原版 head_target）。
+    /// Oid HEAD points to; None for an empty repo (head_target).
     head_oid: Option<Oid>,
-    /// 计数上限与开关（原版 Repo 构造时保存 Limits，此处保存整个 Options）。
+    /// Count caps and switches (the original saves Limits at Repo
+    /// construction; here the whole Options is kept).
     limits: Options,
-    /// staged 缓存对应的 HEAD（对齐原版 head_：变了才重算）。
+    /// HEAD the staged cache corresponds to (head_): recompute when changed.
     staged_head: Option<Oid>,
-    /// staged 差分缓存。
+    /// Staged-diff cache.
     staged_stats: StagedStats,
-    /// untracked cache 探针（后台线程）。
+    /// Untracked-cache probe (background thread).
     untracked: UntrackedCache,
-    /// p11k index 树缓存：dirs 的 untracked 状态（st/unmatched）随树持久化，
-    /// index 未变时复用，readdir 靠 mtime 剪枝（对齐原版常驻 Index）。
+    /// p11k index-tree cache: the dirs' untracked state (st/unmatched)
+    /// persists with the tree; reused while the index is unchanged, with
+    /// readdir pruned by mtime (the original's resident Index).
     index_tree: Option<Index>,
-    /// 上次建树时 `.git/index` 的 (mtime_sec, mtime_nsec, size)；变了重建。
+    /// `.git/index` (mtime_sec, mtime_nsec, size) at last build; rebuild
+    /// when it changes.
     index_stat: Option<(i64, i64, i64)>,
-    /// TTL 依据：最后一次访问时刻。
+    /// TTL basis: last access time.
     last_used: Instant,
 }
 
-/// gitdir → [`Repo`] 的缓存。
+/// gitdir → [`Repo`] cache.
 pub struct RepoCache {
-    /// 闲置关闭秒数（`-r`；负值=永不过期）。
+    /// Idle close seconds (`-r`; negative = never expire).
     pub ttl_seconds: i64,
-    /// 传给每个 Repo 的 limits 副本。
+    /// Limits copy handed to each Repo.
     limits: Options,
-    /// key = gitdir 路径（`repo.path()`，形如 "/path/.git/"）。
+    /// Key = gitdir path (`repo.path()`, like "/path/.git/").
     repos: HashMap<Vec<u8>, Repo>,
 }
 
@@ -147,28 +160,30 @@ impl RepoCache {
         }
     }
 
-    /// 取出或打开一个仓库；打不开（非 git 仓库 / bare 仓库）返回 None，
-    /// 调用方按"非仓库"响应处理（对齐原版 ProcessRequest 的 `if (!repo) return`）。
+    /// Fetch or open a repo; None when unopenable (not a git repo / bare),
+    /// and the caller responds "non-repo".
     pub fn get_or_open(&mut self, dir: &[u8], dir_is_gitdir: bool) -> Option<&mut Repo> {
         let dir = Path::new(OsStr::from_bytes(dir));
         let git = if dir_is_gitdir {
-            // 对齐原版 from_dotgit：直接把 dir 当 GIT_DIR 打开，不向上搜索
+            // from_dotgit: open `dir` as GIT_DIR directly, no upward search.
             GitRepository::open(dir)
         } else {
-            // 对齐原版：向上搜索 .git（含 linked worktree 的 .git 文件）
+            // Search upward for .git (including the .git file of linked
+            // worktrees).
             GitRepository::discover(dir)
         };
         let git = match git {
             Ok(g) => g,
             Err(_) => return None,
         };
-        // bare 仓库无 workdir → 非仓库（对齐原版 workdir.len == 0 → return）。
-        // workdir 转 owned 以解除对 git 的借用，便于 git 随后 move 进 Repo。
+        // Bare repos have no workdir → non-repo. Own the workdir to release
+        // the borrow on git so it can move into Repo.
         let workdir = git.workdir()?.to_path_buf();
         let key = git.path().as_os_str().as_bytes().to_vec();
         let limits = self.limits.clone();
         let now = Instant::now();
-        // entry API：命中刷新访问时间；未命中时 git/workdir move 进新建 Repo
+        // Entry API: hits refresh the access time; misses move git/workdir
+        // into a fresh Repo.
         let repo = self
             .repos
             .entry(key)
@@ -177,10 +192,11 @@ impl RepoCache {
         Some(repo)
     }
 
-    /// 主循环每次迭代调用：关闭 TTL 到期的闲置仓库（对齐 repo_cache.cc Free）。
+    /// Called every main-loop iteration: close repos idle past the TTL
+    /// (repo_cache.cc Free).
     pub fn evict_expired(&mut self) {
         if self.ttl_seconds < 0 {
-            return; // 负值 = 永不过期
+            return; // negative = never expire
         }
         let cutoff = std::time::Duration::from_secs(self.ttl_seconds as u64);
         let now = Instant::now();
@@ -191,19 +207,22 @@ impl RepoCache {
 
 impl Repo {
     fn open(git: GitRepository, workdir: &Path, limits: Options) -> Repo {
-        // 对齐原版 main 的 libgit2 opts：关闭严格 hash 校验（git2 唯一有绑定的
-        // 一项；其余为 romkatv fork 专有 opts，官方 libgit2 无对应）
+        // libgit2 opts from the original main: disable strict hash
+        // verification (the only one git2 binds; the rest are romkatv-fork
+        // opts with no upstream libgit2 equivalent).
         git2::opts::strict_hash_verification(false);
-        // 空仓库：find_reference("HEAD") 成功（symbolic），resolve() 失败 → None
+        // Empty repo: find_reference("HEAD") succeeds (symbolic), resolve()
+        // fails → None.
         let head_oid = git
             .find_reference("HEAD")
             .ok()
             .and_then(|r| r.resolve().ok())
             .and_then(|r| r.target());
-        // untracked cache 探针在 gitdir 上跑（对齐原版 Index 构造时的 CheckDirMtime）
+        // The untracked-cache probe runs on gitdir (CheckDirMtime at Index
+        // construction).
         let untracked = UntrackedCache::start_probe(git.path());
-        // 对齐原版：workdir 去尾部 '/'（git2/libgit2 的 workdir 带尾斜杠，
-        // 原版 gitstatus.cc 显式 --workdir.len）
+        // Strip the trailing '/' from the workdir (git2/libgit2 keeps it;
+        // the original strips it explicitly).
         let mut workdir_bytes = workdir.as_os_str().as_bytes().to_vec();
         if workdir_bytes.len() > 1 && workdir_bytes.last() == Some(&b'/') {
             workdir_bytes.pop();
@@ -222,11 +241,11 @@ impl Repo {
         }
     }
 
-    /// 组装 27 个数据字段（对齐 gitstatus.cc ProcessRequest 的 Print 顺序）。
+    /// Assemble the 27 data fields (gitstatus.cc ProcessRequest's Print
+    /// order).
     ///
-    /// skip_index（线上 diff='1'）时跳过 index 统计：对齐原版
-    /// `if (req.diff) stats = repo->GetIndexStats(...)`——跳过后
-    /// stats 为默认全 0。
+    /// With skip_index (wire diff='1'), index stats are skipped: stats stay
+    /// all-zero, like the original's `if (req.diff) stats = ...`.
     pub fn build_fields(&mut self, skip_index: bool) -> [Vec<u8>; field::COUNT] {
         let mut f: [Vec<u8>; field::COUNT] = std::array::from_fn(|_| Vec::new());
         f[field::WORKDIR] = self.workdir.clone();
@@ -283,7 +302,7 @@ impl Repo {
                 f[field::COMMIT_ENCODING] =
                     commit.message_encoding().unwrap_or("").as_bytes().to_vec();
                 let mut summary = commit.summary().unwrap_or("").as_bytes().to_vec();
-                // 对齐原版 Truncate：字节级 resize（gitstatus.cc:44-46）
+                // Truncate byte-wise (gitstatus.cc:44-46).
                 summary.truncate(self.limits.max_commit_summary_length);
                 f[field::COMMIT_SUMMARY] = summary;
             }
@@ -291,10 +310,11 @@ impl Repo {
         f
     }
 
-    /// 本地分支名（对齐 git.cc LocalBranchName）：
-    /// - HEAD resolve 成功（direct）→ 是分支则 shorthand，否则（detached）空串
-    /// - resolve 失败（空仓库，symbolic unborn HEAD）→ target 以
-    ///   `refs/heads/` 开头则返回其后缀，否则空串
+    /// Local branch name (git.cc LocalBranchName):
+    /// - HEAD resolves (direct) → shorthand if a branch, else empty
+    ///   (detached).
+    /// - resolve fails (empty repo, symbolic unborn HEAD) → suffix after
+    ///   `refs/heads/` when the target starts with it, else empty.
     fn local_branch(&self) -> String {
         let Some(head) = self.git.find_reference("HEAD").ok() else {
             return String::new();
@@ -314,9 +334,9 @@ impl Repo {
         }
     }
 
-    /// tracking remote（对齐 git.cc GetRemote）：
-    /// 读 config `branch.<name>.remote` 与 `branch.<name>.merge`；
-    /// 未配置或无本地分支 → None（三字段全空）。
+    /// Tracking remote (git.cc GetRemote): read `branch.<name>.remote` and
+    /// `branch.<name>.merge`; None (all three fields empty) without config
+    /// or a local branch.
     fn upstream_remote(&self) -> Option<RemoteInfo> {
         let branch = self.local_branch();
         if branch.is_empty() {
@@ -344,9 +364,9 @@ impl Repo {
         })
     }
 
-    /// push remote（对齐 git.cc GetPushRemote）：
-    /// `branch.<name>.pushRemote` → `remote.pushDefault` → None。
-    /// 主流路径（pushRemote/pushDefault 配置）push ref 取 tracking ref。
+    /// Push remote (git.cc GetPushRemote): `branch.<name>.pushRemote` →
+    /// `remote.pushDefault` → None. On the mainstream path
+    /// (pushRemote/pushDefault configured) the push ref is the tracking ref.
     fn push_remote(&self) -> Option<RemoteInfo> {
         let branch = self.local_branch();
         if branch.is_empty() {
@@ -377,7 +397,8 @@ impl Repo {
         })
     }
 
-    /// 仓库状态（对齐 git.cc RepoState）：libgit2 的 repository state + rebase 进度后缀。
+    /// Repo state (git.cc RepoState): libgit2 repository state plus a rebase
+    /// progress suffix.
     fn repo_state(&self) -> String {
         let state = match self.git.state() {
             RepositoryState::Clean => "",
@@ -394,7 +415,7 @@ impl Repo {
             RepositoryState::ApplyMailboxOrRebase => "am/rebase",
         };
         let gitdir = self.git.path();
-        // 对齐原版：rebase-merge/{msgnum,end} 或 rebase-apply/{next,last}
+        // rebase-merge/{msgnum,end} or rebase-apply/{next,last}.
         let (next_file, last_file) = if gitdir.join("rebase-merge").is_dir() {
             ("rebase-merge/msgnum", "rebase-merge/end")
         } else if gitdir.join("rebase-apply").is_dir() {
@@ -420,9 +441,9 @@ impl Repo {
         }
     }
 
-    /// 指向 HEAD 的 tag 名（对齐 `git describe --tags --exact-match` + tag_db）：
-    /// 遍历 refs/tags/*（含 packed-refs），resolve 后 target 等于 HEAD 的
-    /// 候选里选**字典序最大**者；无则空串。
+    /// Tag pointing at HEAD (`git describe --tags --exact-match` + tag_db):
+    /// walk refs/tags/* (incl. packed-refs), resolve and compare targets
+    /// with HEAD, pick the lexicographically largest name; empty if none.
     fn tag_name(&self) -> Vec<u8> {
         let Some(oid) = self.head_oid else {
             return Vec::new();
@@ -430,7 +451,7 @@ impl Repo {
         let mut best: Option<String> = None;
         if let Ok(tags) = self.git.references_glob("refs/tags/*") {
             for t in tags.flatten() {
-                // resolve：annotated tag 剥到 commit 再比对
+                // resolve: peel annotated tags down to the commit.
                 let matches = t
                     .resolve()
                     .ok()
@@ -449,9 +470,8 @@ impl Repo {
         best.map(String::into_bytes).unwrap_or_default()
     }
 
-    /// stash 数（对齐 git.cc NumStashes）：git_stash_foreach 计数；
-    /// 任一步失败回 0（对齐原版 WARN 后 return 0）。
-    /// 需要 `&mut self`：git2 的 stash_foreach 借用可变。
+    /// Stash count (git.cc NumStashes): git_stash_foreach count; any
+    /// failure → 0. Needs `&mut self`: git2's stash_foreach borrows mutably.
     fn num_stashes(&mut self) -> usize {
         let mut n = 0usize;
         match self.git.stash_foreach(|_, _, _| {
@@ -463,7 +483,7 @@ impl Repo {
         }
     }
 
-    /// revwalk 范围计数（对齐 git.cc CountRange），失败回 0。
+    /// Revwalk range count (git.cc CountRange), 0 on failure.
     fn count_range(&self, range: &str) -> Vec<u8> {
         let count = self
             .git
@@ -475,17 +495,18 @@ impl Repo {
         count.to_string().into_bytes()
     }
 
-    // ────────────────────────── index 与 dirty 统计 ──────────────────────────
+    // ────────────────────────── index and dirty stats ──────────────────────────
 
-    /// index 与 dirty 统计（对齐 repo.cc GetIndexStats）。
+    /// Index and dirty stats (repo.cc GetIndexStats).
     ///
-    /// 流程：config 开关（showUntrackedFiles / showDirtyState）→ staged
-    /// 差分（head_oid 缓存，变了才 `Diff::tree_to_index`）→ dirty 候选
-    /// （`Index::get_dirty_candidates`）→ `Diff::index_to_workdir` 精确计数
-    /// （notify 回调 + 上限截断）→ min(cap) 汇总。
+    /// Flow: config switches (showUntrackedFiles / showDirtyState) → staged
+    /// diff (head_oid cache, `Diff::tree_to_index` when changed) → dirty
+    /// candidates (`Index::get_dirty_candidates`) → precise counts via
+    /// `Diff::index_to_workdir` (notify callback + cap truncation) →
+    /// min(cap) aggregation.
     fn get_index_stats(&mut self) -> IndexStats {
-        // config 开关（对齐 Off lambda：config 显式 false 时清零对应计数；
-        // -U/-W/-D 参数可覆盖忽略）
+        // Config switches: explicit false zeroes the corresponding counts
+        // (-U/-W/-D override and ignore).
         if let Ok(cfg) = self.git.config() {
             let off = |name: &str| cfg.get_bool(name).map(|v| !v).unwrap_or(false);
             if !self.limits.ignore_status_show_untracked_files && off("status.showUntrackedFiles") {
@@ -501,22 +522,22 @@ impl Repo {
             }
         }
 
-        // git2 Index：每次新对象（缓存对象会导致 libgit2 复用 read 路径的
-        // racy 写回改写 .git/index mtime，进而使 index 树缓存失效——
-        // 实测比不缓存慢一倍，故不缓存）
+        // Fresh git2 Index each time (a cached object lets libgit2's racy
+        // write-back rewrite .git/index's mtime through its read path,
+        // invalidating the index-tree cache — measured twice as slow).
         let mut git_index = match self.git.index() {
             Ok(i) => i,
             Err(_) => return IndexStats::default(),
         };
-        // 对齐原版 git_index_read_ex 的增量刷新
+        // Incremental refresh, like git_index_read_ex.
         let _ = git_index.read(false);
         let index_size = git_index.len();
 
-        // index 树缓存：.git/index 未变则复用（dirs 的 untracked 状态持久化，
-        // readdir 靠 mtime 剪枝；对齐原版常驻 Index 对象）
+        // Index-tree cache: reuse when .git/index is unchanged (the dirs'
+        // untracked state persists; readdir pruned by mtime).
         let mut index = self.index_tree_or_rebuild(&git_index);
 
-        // caps（对齐 RepoCaps；config 缺失按默认 true）
+        // Caps (RepoCaps; config missing → default true).
         let caps = self.repo_caps(&git_index);
 
         let mut stats = IndexStats {
@@ -524,8 +545,8 @@ impl Repo {
             ..Default::default()
         };
 
-        // ── staged 路径（对齐 GetIndexStats 的 staged 分支）──
-        // 上限非零即启用（对齐原版 size_t 语义：-1 = SIZE_MAX = 无限）
+        // ── staged path (GetIndexStats' staged branch) ──
+        // Enabled when the cap is non-zero (size_t semantics: -1 = unlimited).
         let want_staged = self.limits.max_num_staged != 0 || self.limits.max_num_conflicted != 0;
         if !want_staged {
             self.staged_head = None;
@@ -536,7 +557,8 @@ impl Repo {
                 self.staged_stats = self.compute_staged(&git_index, head);
             }
         } else {
-            // 空仓库/初始提交：无 HEAD 树，staged = 全部非 intent-to-add 条目
+            // Empty repo / initial commit: no HEAD tree, staged = all
+            // non-intent-to-add entries.
             self.staged_head = None;
             let mut staged = 0usize;
             let mut skip = 0usize;
@@ -568,7 +590,7 @@ impl Repo {
         stats.num_skip_worktree = self.staged_stats.skip_worktree;
         stats.num_assume_unchanged = self.staged_stats.assume_unchanged;
 
-        // ── dirty 路径（对齐 GetIndexStats 的候选 + StartDirtyScan）──
+        // ── dirty path (GetIndexStats' candidate + StartDirtyScan) ──
         let dirty_allowed = self.limits.dirty_max_index_size < 0
             || index_size <= self.limits.dirty_max_index_size as usize;
         if dirty_allowed
@@ -586,19 +608,20 @@ impl Repo {
             }
         }
 
-        // 扫描完成后把树放回缓存（untracked 状态随树持久化）
+        // Put the tree back into the cache (untracked state persists with it).
         self.index_tree = Some(index);
         stats
     }
 
-    /// 取 index 树，三级缓存策略：
+    /// Fetch the index tree, three-level cache:
     ///
-    /// 1. `.git/index` 的 (mtime, size) 未变 → 整树复用（含 entries 与
-    ///    untracked cache 状态）。
-    /// 2. stat 变了但**路径集合未变**（libgit2 的 racy 写回只改条目 stat
-    ///    字段）→ 复用树结构，仅更新 entries 的 stat 字段。避免 5 万级
-    ///    仓库因 racy 写回触发全量重建（实测 200ms+ 尖峰）。
-    /// 3. 路径集合真变了（git add/rm）→ 全量重建。
+    /// 1. `.git/index` (mtime, size) unchanged → reuse the whole tree
+    ///    (entries + untracked-cache state).
+    /// 2. Stat changed but the path set is unchanged (libgit2's racy
+    ///    write-back only mutates entry stat fields) → reuse the structure,
+    ///    refresh only the stat fields. Avoids a full rebuild of a 50k-entry
+    ///    index on every racy write-back (measured 200ms+ spikes).
+    /// 3. Path set really changed (git add/rm) → full rebuild.
     fn index_tree_or_rebuild(&mut self, git_index: &GitIndex) -> Index {
         let mut index_path = self.git.path().to_path_buf();
         index_path.push("index");
@@ -606,15 +629,15 @@ impl Repo {
             let mut st: libc::stat = unsafe { std::mem::zeroed() };
             let mut bytes = index_path.as_os_str().as_bytes().to_vec();
             bytes.push(0);
-            // SAFETY: 路径 NUL 结尾，st 合法缓冲。
+            // SAFETY: path NUL-terminated, st a valid buffer.
             let ok = unsafe { libc::stat(bytes.as_ptr().cast(), &mut st) } == 0;
             ok.then_some((st.st_mtime, st.st_mtime_nsec, st.st_size))
         };
         if let Some(tree) = self.index_tree.take() {
             if self.index_stat == cur_stat {
-                return tree; // 快速路径：整树复用
+                return tree; // fast path: reuse the whole tree
             }
-            // stat 变了：拷贝新条目，比对路径集合
+            // Stat changed: copy new entries, compare the path set.
             let new_entries = copy_entries(git_index);
             let same_paths = tree.entries.len() == new_entries.len()
                 && tree
@@ -623,13 +646,13 @@ impl Repo {
                     .zip(&new_entries)
                     .all(|(a, b)| a.path == b.path);
             if same_paths {
-                // 路径集合未变：复用结构，更新 stat 字段
+                // Path set unchanged: reuse structure, update stats.
                 let mut tree = tree;
                 tree.update_stats(&new_entries);
                 self.index_stat = cur_stat;
                 return tree;
             }
-            // 路径变了：旧树丢弃，走重建
+            // Path set changed: drop the old tree, rebuild.
         }
         let entries = copy_entries(git_index);
         let mut index = Index::from_entries(entries);
@@ -638,16 +661,17 @@ impl Repo {
         index
     }
 
-    /// staged 差分（对齐 StartStagedScan）：HEAD tree vs index，
-    /// foreach 计数 staged/conflicted/staged_new/staged_deleted，
-    /// 达到上限后提前停止遍历（对齐 OnDelta 的 GIT_EUSER 语义）。
+    /// Staged diff (StartStagedScan): HEAD tree vs index, foreach counting
+    /// staged/conflicted/staged_new/staged_deleted, stopping early once the
+    /// caps are reached (OnDelta's GIT_EUSER semantics).
     ///
-    /// 与原版差异：原版靠 notify_cb 在 diff 构造中提前终止；git2 0.20
-    /// 未暴露 notify 回调（diff.rs 中 TODO），改为构造后 foreach 提前停止。
-    /// TODO(perf)：benchmark 后再评估。
+    /// Difference from the original: it aborts early inside diff
+    /// construction via notify_cb; git2 0.20 does not expose a notify
+    /// callback (TODO in diff.rs), so the early stop happens in foreach
+    /// after construction. TODO(perf): revisit after benchmarking.
     fn compute_staged(&self, git_index: &GitIndex, head: Oid) -> StagedStats {
         let mut stats = StagedStats::default();
-        // skip-worktree/assume-unchanged 遍历 index 统计（对齐原版分片内统计）
+        // skip-worktree/assume-unchanged counted by walking the index.
         for e in git_index.iter() {
             if e.flags_extended & git2::IndexEntryExtendedFlag::SKIP_WORKTREE.bits() != 0 {
                 stats.skip_worktree += 1;
@@ -696,24 +720,18 @@ impl Repo {
         stats
     }
 
-    /// dirty 精确计数（对齐 StartDirtyScan 的完整语义）。
+    /// Precise dirty counts (StartDirtyScan semantics), classifying the
+    /// scan layer's "possibly dirty" candidates: in-index + on-disk →
+    /// unstaged (modified, stat-based like git status); in-index + missing
+    /// on disk → unstaged + unstaged_deleted; not in index → untracked
+    /// (gitignore-filtered via `status_should_ignore`). Directory
+    /// candidates (trailing '/') count as 1 per ENABLE_FAST_UNTRACKED_DIRS.
     ///
-    /// 用 libgit2-sys raw FFI 复刻原版 diff 选项：notify_cb 在 diff 构造中
-    /// 计数并提前终止（GIT_EUSER）、range_start/range_end 限制遍历区间、
-    /// GIT_DIFF_DISABLE_PATHSPEC_MATCH 的 pathspec 前缀匹配、
-    /// ignore_submodules=DIRTY。git2 0.20 未绑定这些，raw 是唯一对齐路径；
-    /// unsafe 范围受控（见各 SAFETY 注释）。
-    /// dirty 计数（绕过 libgit2 diff 的候选分类）。
-    ///
-    /// 扫描层的候选已携带"可能脏"信息；本层按 index 归属与磁盘存在性
-    /// 分类：index 有 + 磁盘有 → unstaged（modified，stat 判定与
-    /// git status 同源）；index 有 + 磁盘无 → unstaged + unstaged_deleted；
-    /// index 无 → untracked（经 git2 `status_should_ignore` 做 gitignore
-    /// 过滤）。目录候选（尾 '/'）按 ENABLE_FAST_UNTRACKED_DIRS 语义计 1。
-    ///
-    /// 相比原版 diff 方案：无 pathspec 匹配爆炸（1.9 无 range 时实测
-    /// 1 秒级尖峰）、无 libgit2 内部重活；代价是极端 racy 场景缺少
-    /// 内容级确认（git status 同样以 stat 为主）。对拍验证字节一致。
+    /// Why not the original's diff approach: no pathspec-matching blowup
+    /// (measured 1s spikes without ranges), no libgit2 internal rework;
+    /// the cost is no content-level confirmation in extreme racy cases (git
+    /// status is stat-dominated anyway). Differential tests confirm
+    /// byte-identical output.
     fn compute_dirty(&self, index: &Index, candidates: &[Vec<u8>], stats: &mut IndexStats) {
         if candidates.is_empty() {
             return;
@@ -722,8 +740,9 @@ impl Repo {
         let m_untracked = self.limits.max_num_untracked;
         for c in candidates {
             if c.last() == Some(&b'/') {
-                // 目录候选：目录内存在未忽略内容才计 1（对齐 diff 的
-                // ENABLE_FAST_UNTRACKED_DIRS 语义：空目录/全忽略目录不报告）
+                // Directory candidate: count 1 only if it contains unignored
+                // content (ENABLE_FAST_UNTRACKED_DIRS: empty/all-ignored
+                // dirs are not reported).
                 if m_untracked != 0 {
                     let dir_rel = &c[..c.len() - 1];
                     let mut dir_abs = self.workdir.clone();
@@ -734,15 +753,17 @@ impl Repo {
                             let mut rel = dir_rel.to_vec();
                             rel.push(b'/');
                             rel.extend_from_slice(e.file_name().as_bytes());
-                            // untracked 判定：未忽略且不在 index（tracked 文件
-                            // 也不被忽略，必须排除）
+                            // Untracked means unignored and not in the index
+                            // (tracked files are also unignored, so they
+                            // must be excluded).
                             let ignored = self
                                 .git
                                 .status_should_ignore(Path::new(OsStr::from_bytes(&rel)))
                                 .unwrap_or(false);
                             let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
                             let tracked = if is_dir {
-                                // 子目录：entries 里存在 "rel/" 前缀即 tracked
+                                // Subdir: tracked iff an entry has the
+                                // "rel/" prefix.
                                 let mut probe = rel.clone();
                                 probe.push(b'/');
                                 match index.entries.binary_search_by(|en| {
@@ -764,18 +785,19 @@ impl Repo {
                             };
                             if !ignored && !tracked {
                                 stats.num_untracked += 1;
-                                break; // FAST 语义：目录计 1
+                                break; // FAST semantics: dir counts as 1
                             }
                         }
                     }
                 }
             } else {
-                // index 归属：entries 按路径（含尾 NUL）排序，二分查找
+                // Index membership: entries are sorted by path (with
+                // trailing NUL), binary search.
                 let in_index = index
                     .entries
                     .binary_search_by(|e| e.path[..e.path.len() - 1].cmp(c.as_slice()))
                     .is_ok();
-                // 磁盘存在性（绝对路径拼接，symlink 不跟随）
+                // Disk existence (absolute path join, symlinks not followed).
                 let mut full = self.workdir.clone();
                 full.push(b'/');
                 full.extend_from_slice(c);
@@ -795,7 +817,7 @@ impl Repo {
                     }
                 }
             }
-            // 上限到达（对齐 OnDelta 的 GIT_EUSER 提前终止）
+            // Caps reached (OnDelta's GIT_EUSER early stop).
             let reached1 = m_unstaged >= 0 && stats.num_unstaged >= m_unstaged as usize;
             let reached2 = m_untracked >= 0 && stats.num_untracked >= m_untracked as usize;
             if reached1 && reached2 {
@@ -807,7 +829,7 @@ impl Repo {
         stats.num_unstaged_deleted = cap(stats.num_unstaged_deleted, stats.num_unstaged as i64);
     }
 
-    /// 仓库能力位（对齐 RepoCaps；config 缺失按默认值）。
+    /// Repo capability bits (RepoCaps; config missing → defaults).
     fn repo_caps(&self, _index: &GitIndex) -> RepoCaps {
         let get_bool = |name: &str, default: bool| {
             self.git
@@ -823,17 +845,17 @@ impl Repo {
         }
     }
 
-    /// 打开工作目录 fd（dirty 扫描的 root_fd）；失败 None（跳过扫描）。
+    /// Open the workdir fd (root_fd for the dirty scan); None → skip scan.
     fn open_workdir_fd(&self) -> Option<RawFd> {
         let mut p = self.workdir.clone();
         p.push(0);
-        // SAFETY: workdir 已 NUL 结尾。
+        // SAFETY: workdir is NUL-terminated.
         let fd = unsafe { libc::open(p.as_ptr().cast(), libc::O_RDONLY | libc::O_DIRECTORY) };
         (fd >= 0).then_some(fd)
     }
 }
 
-/// 计数上限截断（对齐原版 size_t 上限语义：负值 = 无限）。
+/// Cap a count (size_t semantics: negative = unlimited).
 fn cap(count: usize, max: i64) -> usize {
     if max < 0 {
         count
@@ -842,8 +864,8 @@ fn cap(count: usize, max: i64) -> usize {
     }
 }
 
-/// 对齐 OnDelta 的停止条件：c1 达到 m1 且 c2 达到 m2 → 停止 diff（返回 false）。
-/// 负值上限 = 无限（永不到达）。
+/// OnDelta stop condition: stop the diff (return false) once c1 hits m1 and
+/// c2 hits m2. Negative caps are unlimited.
 fn should_continue(c1: usize, m1: i64, c2: usize, m2: i64) -> bool {
     let reached1 = m1 >= 0 && c1 >= m1 as usize;
     let reached2 = m2 >= 0 && c2 >= m2 as usize;

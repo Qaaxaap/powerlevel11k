@@ -1,27 +1,21 @@
-//! p11k-d：p11k 的常驻守护进程。
+//! p11k-d — the p11k resident daemon.
 //!
-//! # M1 阶段：gitstatusd 兼容模式
+//! Runs in gitstatusd-compatible mode: parses the full gitstatus argument
+//! set and serves the request/response loop, so existing powerlevel10k
+//! `gitstatus.plugin.zsh` can use it as gitstatusd via `GITSTATUS_DAEMON`.
 //!
-//! 解析 gitstatus 参数全集，进入请求/响应主循环。目标：现有
-//! powerlevel10k 的 `gitstatus.plugin.zsh` 无需修改即可把 p11k-d 当
-//! gitstatusd 使用（把 `GITSTATUS_DAEMON` 指向 p11k-d）。
+//! The pgid handshake is done by the zsh side before exec'ing this process;
+//! the daemon inherits stdin (FIFO read end) and stdout (pipe write end) and
+//! goes straight into the main loop. stdout is reserved for protocol
+//! responses; all logging goes to stderr.
 //!
-//! 注意：pgid 握手由 zsh 侧在 exec 本进程之前完成（gitstatus.plugin.zsh:411），
-//! 本进程只继承 stdin（FIFO 读端）与 stdout（管道写端）直接进入主循环。
-//! stdout 只能写协议响应；一切日志走 stderr。
+//! # Exit codes
 //!
-//! # 后续阶段
-//!
-//! 在 gitstatus 兼容模式之上增加 p11k 原生协议（渲染引擎、异步分段），
-//! 由启动参数/环境变量选择模式，默认仍保持 gitstatus 兼容。
-//!
-//! # 退出码
-//!
-//! | 码 | 含义 |
+//! | Code | Meaning |
 //! |---|---|
-//! | 0 | 正常（EOF / 探活失败） |
-//! | 10 | 参数错误 |
-//! | 11 | `-G` 版本不匹配 |
+//! | 0 | Normal (EOF / liveness failed) |
+//! | 10 | Bad arguments |
+//! | 11 | `-G` version mismatch |
 
 use p11k_gitstatus::daemon::Daemon;
 use p11k_gitstatus::options::{
@@ -30,7 +24,7 @@ use p11k_gitstatus::options::{
 };
 use std::process::ExitCode;
 
-/// 用法文本。对齐原版 options.cc PrintUsage 的参数全集（措辞不必逐字一致）。
+/// Mirrors options.cc PrintUsage (wording need not match verbatim).
 const USAGE: &str = "Usage: p11k-d [OPTION]...\n\
 Print machine-readable status of the git repos for directories in stdin.\n\
 \n\
@@ -62,7 +56,6 @@ fn main() -> ExitCode {
             return ExitCode::from(EXIT_BAD_ARGS as u8);
         }
         Err(ParseError::VersionMismatch { pattern }) => {
-            // 对齐原版 options.cc 的措辞
             eprintln!("Version mismatch. Wanted (pattern): {pattern}. Actual: {PROTOCOL_VERSION}.");
             return ExitCode::from(EXIT_VERSION_MISMATCH as u8);
         }
@@ -82,6 +75,6 @@ fn main() -> ExitCode {
 
 fn run_daemon(options: Options) -> ExitCode {
     let mut daemon = Daemon::new(options);
-    daemon.run(); // run 内部以 exit(0) 结束；正常返回是死代码
+    daemon.run(); // exits with 0 inside; reaching here is dead code
     ExitCode::SUCCESS
 }

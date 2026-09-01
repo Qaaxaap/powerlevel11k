@@ -1,60 +1,66 @@
-//! 命令行参数（对齐 gitstatusd `options.cc:62-243` / `options.h:29-72`）。
+//! Command-line arguments (mirrors gitstatusd `options.cc:62-243` /
+//! `options.h:29-72`).
 //!
-//! # 退出码
+//! # Exit codes
 //!
-//! | 码 | 含义 |
+//! | Code | Meaning |
 //! |---|---|
-//! | 0 | 成功，或 EOF 正常退出 |
-//! | 10 | 参数错误（打印用法后退出） |
-//! | 11 | `-G` 版本 glob 不匹配 |
+//! | 0 | Success, or normal EOF exit |
+//! | 10 | Bad arguments (usage printed, then exit) |
+//! | 11 | `-G` version glob mismatch |
 //!
-//! zsh 侧 `gitstatus_start` 把 `-s/-u/-c/-d/-m/-e/-U/-W/-D` 直接透传，
-//! 并默认追加 `-t 2*cpu`（上限 32）。因此参数解析必须容忍任意顺序、
-//! `--long` 与 `-x` 两种写法、以及 `-xVALUE` 与 `-x VALUE` 两种赋值形式。
+//! The zsh side passes `-s/-u/-c/-d/-m/-e/-U/-W/-D` straight through and
+//! appends `-t 2*cpu` (capped at 32) by default. Parsing must accept any
+//! order, both `--long` and `-x`, and both `-xVALUE` and `-x VALUE`.
 
-/// 参数字典。默认值必须与原版完全一致（见各字段注释）。
+/// Option dictionary. Defaults must match the original exactly.
 #[derive(Debug, Clone)]
 pub struct Options {
-    /// `-l/--lock-fd=N`：锁文件描述符探活（默认 -1 = 不启用）。
-    /// 主循环 select 超时（1s）时 `fcntl(F_GETLK)` 检查该 fd 上的锁
-    /// 是否仍被持有；不被持有说明父进程已死，daemon 应退出。
+    /// `-l/--lock-fd=N`: lock fd liveness (default -1 = disabled). On each
+    /// poll timeout the daemon checks the lock is still held via
+    /// `fcntl(F_GETLK)`; if not, the parent died and the daemon exits.
     pub lock_fd: i32,
-    /// `-p/--parent-pid=N`：父进程探活（默认 -1）。超时后 `kill(pid, 0)`
-    /// 失败即退出。bash 版传 `--parent-pid=$$`，zsh 版不传（靠 EOF + kill）。
+    /// `-p/--parent-pid=N`: parent liveness (default -1). Exits when
+    /// `kill(pid, 0)` fails on timeout. bash passes `--parent-pid=$$`; zsh
+    /// relies on EOF + kill instead.
     pub parent_pid: i32,
-    /// `-t/--num-threads=N`：工作区扫描线程数（默认 1；zsh 设 2*cpu 上限 32）。
+    /// `-t/--num-threads=N`: worktree scan threads (default 1; zsh sets
+    /// 2*cpu, capped at 32).
     pub num_threads: usize,
-    /// `-v/--log-level`：日志级别。
+    /// `-v/--log-level`: log level.
     pub log_level: LogLevel,
-    /// `-r/--repo-ttl-seconds`：闲置仓库 LRU 关闭秒数（默认 3600；负值=永不过期）。
+    /// `-r/--repo-ttl-seconds`: LRU close time for idle repos
+    /// (default 3600; negative = never expire).
     pub repo_ttl_seconds: i64,
-    /// `-z/--max-commit-summary-length`：commit summary 截断字节数（默认 256）。
+    /// `-z/--max-commit-summary-length`: commit summary truncation in bytes
+    /// (default 256).
     pub max_commit_summary_length: usize,
-    /// `-s`：staged 计数上限（默认 1；负值=无限）。
+    /// `-s`: staged count cap (default 1; negative = unlimited).
     pub max_num_staged: i64,
-    /// `-u`：unstaged 计数上限（默认 1；负值=无限）。
+    /// `-u`: unstaged count cap (default 1; negative = unlimited).
     pub max_num_unstaged: i64,
-    /// `-c`：conflicted 计数上限（默认 1；负值=无限）。
+    /// `-c`: conflicted count cap (default 1; negative = unlimited).
     pub max_num_conflicted: i64,
-    /// `-d`：untracked 计数上限（默认 1；负值=无限）。
+    /// `-d`: untracked count cap (default 1; negative = unlimited).
     pub max_num_untracked: i64,
-    /// `-m/--dirty-max-index-size`：index 条目数超过此值时
-    /// unstaged/untracked/conflicted 直接报 0（默认 -1 = 不启用）。
+    /// `-m/--dirty-max-index-size`: report zero dirty files when the index
+    /// exceeds this many entries (default -1 = disabled).
     pub dirty_max_index_size: i64,
-    /// `-e`：递归统计 untracked 目录（默认只报告目录本身，不展开）。
+    /// `-e`: recurse into untracked directories (default reports the
+    /// directory itself only).
     pub recurse_untracked_dirs: bool,
-    /// `-U`：忽略 `status.showUntrackedFiles` 配置。
+    /// `-U`: ignore `status.showUntrackedFiles`.
     pub ignore_status_show_untracked_files: bool,
-    /// `-W`：忽略 `bash.showUntrackedFiles` 配置。
+    /// `-W`: ignore `bash.showUntrackedFiles`.
     pub ignore_bash_show_untracked_files: bool,
-    /// `-D`：忽略 `bash.showDirtyState` 配置。
+    /// `-D`: ignore `bash.showDirtyState`.
     pub ignore_bash_show_dirty_state: bool,
-    /// `-G/--version-glob`：版本 fnmatch 匹配串；当前版本不匹配则 exit 11。
-    /// zsh 侧传 `build.info` 里的 `gitstatus_version`（如 `v1.5.5`）。
+    /// `-G/--version-glob`: version fnmatch pattern; exit 11 on mismatch.
+    /// The zsh side passes the build.info version (e.g. `v1.5.5`).
     pub version_glob: Option<String>,
 }
 impl Default for Options {
-    /// 全部默认值，与原版 `options.cc:58-79` 保持一致。
+    /// All defaults, matching `options.cc:58-79`.
     fn default() -> Self {
         Self {
             lock_fd: -1,
@@ -77,7 +83,7 @@ impl Default for Options {
     }
 }
 
-/// 日志级别（`-v` 的取值，大小写不敏感）。
+/// Log level (`-v` values, case-insensitive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
     Debug,
@@ -87,7 +93,7 @@ pub enum LogLevel {
     Fatal,
 }
 impl LogLevel {
-    /// 与 libgit2 的 `git_trace_level_t` 对应。
+    /// Maps to libgit2's `git_trace_level_t`.
     pub fn as_git_trace_level(self) -> i32 {
         match self {
             Self::Debug => 5,
@@ -99,51 +105,53 @@ impl LogLevel {
     }
 }
 
-/// 成功或 EOF 正常退出。
+/// Success or normal EOF exit.
 pub const EXIT_OK: i32 = 0;
-/// 参数错误。
+/// Bad arguments.
 pub const EXIT_BAD_ARGS: i32 = 10;
-/// `-G` 版本 glob 不匹配。
+/// `-G` version glob mismatch.
 pub const EXIT_VERSION_MISMATCH: i32 = 11;
 
-/// 解析命令行参数（不含 argv[0]）。
+/// Parse command-line arguments (excluding argv[0]).
 ///
-/// `Err(BadArgs)` 时调用方打印错误与用法后以 [`EXIT_BAD_ARGS`] 退出；
-/// `Err(VersionMismatch)` 时以 [`EXIT_VERSION_MISMATCH`] 退出。
+/// `Err(BadArgs)` → caller prints the error and usage, exits with
+/// [`EXIT_BAD_ARGS`]; `Err(VersionMismatch)` → exits with
+/// [`EXIT_VERSION_MISMATCH`].
 ///
-/// 实现要点：
-/// - 支持 `-x` / `--long` / `-xVALUE` / `-x VALUE` / `--long=VALUE` 全部形式；
-///   与原版 getopt 一样，取值短选项的值可作为下一个参数（`-t 4`）。
-/// - `-h`/`-V` 走 [`ParseOutcome::Help`]/[`ParseOutcome::Version`] 快速路径。
-/// - 布尔开关（`-e/-U/-W/-D` 及其 long 形式）不接受参数。
-/// - 数字参数解析失败按参数错误处理（exit 10），不要 panic。
-/// - `-G` 在解析期立即校验版本（对齐原版 options.cc：不匹配 exit 11）。
-/// - 原版 getopt 的 GNU 特性（选项重排、`--` 分隔符）不做支持：zsh 侧
-///   不会传位置参数，出现位置参数一律报错。
+/// Notes:
+/// - Supports `-x` / `--long` / `-xVALUE` / `-x VALUE` / `--long=VALUE`.
+///   Like the original getopt, a short option's value may be the next arg.
+/// - `-h`/`-V` take the [`ParseOutcome::Help`]/[`ParseOutcome::Version`]
+///   fast paths.
+/// - Boolean switches (`-e/-U/-W/-D` and their long forms) take no value.
+/// - Numeric parse failures are argument errors (exit 10), never panics.
+/// - `-G` validates the version during parsing (mismatch → exit 11).
+/// - GNU getopt features (option permutation, `--`) are unsupported: the
+///   zsh side never passes positional args.
 #[derive(Debug)]
 pub enum ParseOutcome {
-    /// 用户要求打印帮助（`-h`/`--help`），main 打印用法后退出 0。
+    /// User asked for help (`-h`/`--help`); main prints usage, exits 0.
     Help,
-    /// 用户要求打印版本（`-V`/`--version`），main 打印版本后退出 0。
+    /// User asked for the version (`-V`/`--version`); main prints it, exits 0.
     Version,
-    /// 解析完成，进入 daemon 主流程。
+    /// Parsing done; enter the daemon main loop.
     Run(Options),
 }
 
-/// 参数解析的错误，映射到不同的退出码。
+/// Argument parse errors, mapped to exit codes.
 #[derive(Debug)]
 pub enum ParseError {
-    /// 参数错误 → 退出码 [`EXIT_BAD_ARGS`]。
+    /// Argument error → [`EXIT_BAD_ARGS`].
     BadArgs(String),
-    /// `-G` 版本 glob 不匹配 → 退出码 [`EXIT_VERSION_MISMATCH`]。
+    /// `-G` version glob mismatch → [`EXIT_VERSION_MISMATCH`].
     VersionMismatch {
-        /// 用户传入的 glob 模式。
+        /// The glob pattern the user passed.
         pattern: String,
     },
 }
 
-/// parse_short_opt / parse_long_opt 共用的内部错误；
-/// [`ParseError::VersionMismatch`] 只能由 `-G` 分支触发。
+/// Internal error shared by short/long option parsing;
+/// [`ParseError::VersionMismatch`] can only come from the `-G` branch.
 enum OptError {
     Bad(String),
     VersionMismatch(String),
@@ -170,7 +178,7 @@ pub fn parse_args(args: &[String]) -> Result<ParseOutcome, ParseError> {
             return Ok(ParseOutcome::Version);
         }
         if let Some(long) = arg.strip_prefix("--") {
-            // 注意：布尔型 long 选项（--recurse-untracked-dirs 等）不带值。
+            // Boolean long options (--recurse-untracked-dirs etc.) take no value.
             if let Some(eq) = long.find('=') {
                 let name = &long[..eq];
                 let value = &long[eq + 1..];
@@ -191,10 +199,11 @@ pub fn parse_args(args: &[String]) -> Result<ParseOutcome, ParseError> {
         } else if arg.starts_with('-') && arg.len() > 1 {
             let name = &arg[1..2];
             if arg.len() > 2 {
-                // -xVALUE 形式（-t4、-Gv1.5.5）；布尔选项带值会在解析层被拒绝。
+                // -xVALUE form (-t4, -Gv1.5.5); boolean options with a value
+                // are rejected at parse time.
                 parse_short_opt(&mut options, name, Some(&arg[2..]))?;
             } else if short_opt_takes_value(name) {
-                // -x VALUE 形式：值在下一个参数。
+                // -x VALUE form: value is the next argument.
                 i += 1;
                 if i >= args.len() {
                     return Err(ParseError::BadArgs(format!(
@@ -203,11 +212,10 @@ pub fn parse_args(args: &[String]) -> Result<ParseOutcome, ParseError> {
                 }
                 parse_short_opt(&mut options, name, Some(&args[i]))?;
             } else {
-                // 布尔短选项（-e/-U/-W/-D）。
+                // Boolean short option (-e/-U/-W/-D).
                 parse_short_opt(&mut options, name, None)?;
             }
         } else {
-            // 对齐原版措辞（options.cc 的 "unexpected positional argument"）。
             return Err(ParseError::BadArgs(format!(
                 "unexpected positional argument: {arg}"
             )));
@@ -217,7 +225,8 @@ pub fn parse_args(args: &[String]) -> Result<ParseOutcome, ParseError> {
     Ok(ParseOutcome::Run(options))
 }
 
-/// 该短选项是否要求值。带值：l p t v r z s u c d m G；布尔：e U W D。
+/// Whether the short option takes a value. Value-taking: l p t v r z s u c d
+/// m G; boolean: e U W D.
 fn short_opt_takes_value(name: &str) -> bool {
     matches!(
         name,
@@ -225,7 +234,8 @@ fn short_opt_takes_value(name: &str) -> bool {
     )
 }
 
-/// 该 long 选项是否要求值。布尔型 long（对应 -e/-U/-W/-D）返回 false。
+/// Whether the long option takes a value. Boolean longs (corresponding to
+/// -e/-U/-W/-D) return false.
 fn long_opt_takes_value(name: &str) -> bool {
     matches!(
         name,
@@ -252,7 +262,7 @@ fn parse_short_opt(options: &mut Options, name: &str, value: Option<&str>) -> Re
         "t" => {
             let n: usize = parse_int(value, &opt)?;
             if n == 0 {
-                // 对齐原版 options.cc：num_threads 必须 > 0。
+                // Matches options.cc: num_threads must be > 0.
                 return Err(OptError::Bad("invalid number of threads: 0".to_string()));
             }
             options.num_threads = n;
@@ -267,8 +277,8 @@ fn parse_short_opt(options: &mut Options, name: &str, value: Option<&str>) -> Re
         "m" => options.dirty_max_index_size = parse_limit(value, &opt)?,
         "G" => {
             let pattern = take_value(value, &opt)?;
-            // 对齐原版"解析期校验"（options.cc case 'G'）：立即 fnmatch，
-            // 不匹配走 exit 11 而非 10。
+            // Validate during parsing (options.cc case 'G'): mismatch is
+            // exit 11, not 10.
             if !version_matches(PROTOCOL_VERSION, pattern) {
                 return Err(OptError::VersionMismatch(pattern.to_string()));
             }
@@ -317,7 +327,7 @@ fn parse_long_opt(options: &mut Options, name: &str, value: Option<&str>) -> Res
         "dirty-max-index-size" => options.dirty_max_index_size = parse_limit(value, &opt)?,
         "version-glob" => {
             let pattern = take_value(value, &opt)?;
-            // 同 -G：解析期校验。
+            // Same as -G: validate during parsing.
             if !version_matches(PROTOCOL_VERSION, pattern) {
                 return Err(OptError::VersionMismatch(pattern.to_string()));
             }
@@ -344,10 +354,10 @@ fn parse_long_opt(options: &mut Options, name: &str, value: Option<&str>) -> Res
     Ok(())
 }
 
-/// 带值选项取值：None 报缺参，Some 解析失败报"非整数"。
-///
-/// 对齐原版 `strtol`（ParseLong）：允许前导空白（`" 4"`），拒绝尾随垃圾
-/// （`"4x"`）。Rust 的 `parse` 不接受前导空白，故先 trim。
+/// Value-taking options: None means missing arg, parse failure means
+/// "not an integer". Mirrors the original `strtol` (ParseLong): leading
+/// whitespace is allowed (`" 4"`), trailing garbage is rejected (`"4x"`).
+/// Rust's `parse` rejects leading whitespace, so trim first.
 fn parse_int<T: std::str::FromStr>(value: Option<&str>, opt: &str) -> Result<T, OptError> {
     let v = value.ok_or_else(|| OptError::Bad(format!("option {opt} requires an argument")))?;
     v.trim()
@@ -355,21 +365,21 @@ fn parse_int<T: std::str::FromStr>(value: Option<&str>, opt: &str) -> Result<T, 
         .map_err(|_| OptError::Bad(format!("not an integer: {v}")))
 }
 
-/// 对齐原版 ParseSizeT（options.cc:56-59）：解析为 i64，
-/// 负数统一映射为 -1（原版存 size_t，-1 = SIZE_MAX）。
+/// Mirrors ParseSizeT (options.cc:56-59): parse as i64, map negatives to -1
+/// (the original stores size_t, where -1 = SIZE_MAX).
 fn parse_limit(value: Option<&str>, opt: &str) -> Result<i64, OptError> {
     let n: i64 = parse_int(value, opt)?;
     Ok(if n < 0 { -1 } else { n })
 }
 
-/// 对齐原版 ParseSizeT 的 size_t 语义：负数映射为 usize::MAX
-/// （`-z` 的 summary 长度上限，负值 = 不截断）。
+/// Mirrors ParseSizeT's size_t semantics: negatives map to usize::MAX
+/// (`-z` summary length cap; negative = no truncation).
 fn parse_size(value: Option<&str>, opt: &str) -> Result<usize, OptError> {
     let n: i64 = parse_int(value, opt)?;
     Ok(if n < 0 { usize::MAX } else { n as usize })
 }
 
-/// 布尔短选项拒绝带值（`-efoo` 应报错，不静默忽略）。
+/// Boolean short options reject a value (`-efoo` is an error, not ignored).
 fn reject_value(value: Option<&str>, opt: &str) -> Result<(), OptError> {
     match value {
         Some(_) => Err(OptError::Bad(format!(
@@ -379,8 +389,8 @@ fn reject_value(value: Option<&str>, opt: &str) -> Result<(), OptError> {
     }
 }
 
-/// 布尔 long 选项兜底：正常情况下主循环已拦截 `--flag=value`，
-/// 这里防御性再查一次。
+/// Defensive re-check for boolean long options; the main loop already
+/// intercepts `--flag=value`.
 fn no_value_ok(value: Option<&str>, opt: &str) -> Result<(), OptError> {
     match value {
         Some(_) => Err(OptError::Bad(format!(
@@ -390,13 +400,13 @@ fn no_value_ok(value: Option<&str>, opt: &str) -> Result<(), OptError> {
     }
 }
 
-/// 字符串取值（`-G` 专用）。
+/// String value (`-G` only).
 fn take_value<'a>(value: Option<&'a str>, opt: &str) -> Result<&'a str, OptError> {
     value.ok_or_else(|| OptError::Bad(format!("option {opt} requires an argument")))
 }
 
-/// `-v` 取值：大小写不敏感，debug/info/warn/error/fatal。
-/// 对齐原版错误措辞 "invalid log level: X"。
+/// `-v` values, case-insensitive: debug/info/warn/error/fatal.
+/// Matches the original error wording "invalid log level: X".
 fn parse_log_level(value: Option<&str>, opt: &str) -> Result<LogLevel, OptError> {
     let v = value.ok_or_else(|| OptError::Bad(format!("option {opt} requires an argument")))?;
     match v.to_ascii_lowercase().as_str() {
@@ -409,19 +419,18 @@ fn parse_log_level(value: Option<&str>, opt: &str) -> Result<LogLevel, OptError>
     }
 }
 
-/// 当前实现的协议版本串。对齐 p10k master 内嵌 gitstatus 的 build.info
-/// （实测用户环境为 v1.5.5）：zsh 侧以 build.info 的版本串做 `-G` 校验，
-/// p11k 必须声称同版本才能通过，否则直接 exit 11。
-/// 注意：p10k release v1.20.0 的 build.info 可能为 v1.5.4，声称版本
-/// 只与一个 build.info 匹配（原版二进制同样有此约束）。
+/// The protocol version this daemon claims. Must match the version the zsh
+/// side passes to `-G` (from build.info, measured v1.5.5 in the user's
+/// environment), otherwise it exits 11. Note p10k release v1.20.0's
+/// build.info may say v1.5.4; the claimed version matches only one
+/// build.info (the original binary has the same constraint).
 pub const PROTOCOL_VERSION: &str = "v1.5.5";
 
-/// `-G` 的 fnmatch 校验：版本串与 glob 匹配即通过，否则返回 false
-/// （调用方以 [`EXIT_VERSION_MISMATCH`] 退出）。
-///
-/// 实现要点：等价 glibc `fnmatch(pattern, version, 0)`（flags=0）——
-/// `*`/`?` 可匹配 `/`，`\` 转义生效，无前导 `.` 特殊规则。
-/// 版本串只有 `v1.5.5` 这类短串，回溯式递归的复杂度完全可接受。
+/// `-G` fnmatch check: the version matches the glob, or the caller exits
+/// with [`EXIT_VERSION_MISMATCH`]. Equivalent to glibc
+/// `fnmatch(pattern, version, 0)` (flags=0): `*`/`?` match `/`, `\`
+/// escapes, no leading-dot special-casing. Version strings are short
+/// (`v1.5.5`), so backtracking recursion is fine.
 pub fn version_matches(version: &str, glob: &str) -> bool {
     fnmatch(glob.as_bytes(), version.as_bytes())
 }
@@ -430,21 +439,24 @@ fn fnmatch(pat: &[u8], text: &[u8]) -> bool {
     match pat.split_first() {
         None => text.is_empty(),
         Some((b'*', rest)) => {
-            // * 匹配任意长度（含 0 个字符）；flags=0 下也匹配 '/'
+            // * matches any length (including 0); with flags=0 it also
+            // matches '/'.
             (0..=text.len()).any(|i| fnmatch(rest, &text[i..]))
         }
         Some((b'?', rest)) => !text.is_empty() && fnmatch(rest, &text[1..]),
         Some((b'[', rest)) => match parse_class(rest) {
-            // 合法字符类：取文本首字符判定后继续
+            // Valid class: match the first text byte, then continue.
             Some((class, consumed)) => {
                 let Some(&c) = text.first() else { return false };
                 class.matches(c) && fnmatch(&rest[consumed..], &text[1..])
             }
-            // '[' 后不是合法字符类（缺右括号等）：按字面量 '[' 处理（glibc 行为）
+            // '[' without a valid class (e.g. no closing bracket) is a
+            // literal '[' (glibc behavior).
             None => text.first() == Some(&b'[') && fnmatch(rest, &text[1..]),
         },
         Some((b'\\', rest)) => match rest.split_first() {
-            // \x 匹配字面量 x；模式以 \ 结尾时 \ 按字面量处理（glibc 行为）
+            // \x matches literal x; a trailing \ in the pattern is literal
+            // (glibc behavior).
             Some((c, rest2)) => text.first() == Some(c) && fnmatch(rest2, &text[1..]),
             None => text == *b"\\",
         },
@@ -452,12 +464,12 @@ fn fnmatch(pat: &[u8], text: &[u8]) -> bool {
     }
 }
 
-/// 解析 '[' 之后的字符类内容（`pat` 是 '[' 之后的切片）。
-/// 返回（类定义、消费字节数：含闭合 ']'）；不合法返回 None。
+/// Parse a character class following '[' (`pat` is the slice after '[').
+/// Returns (class, bytes consumed incl. closing ']'); None if invalid.
 struct CharClass {
-    /// 成员 (lo, hi) 闭区间。
+    /// Members as closed (lo, hi) ranges.
     ranges: Vec<(u8, u8)>,
-    /// `[!...]` / `[^...]` 取反（`^` 是 GNU 扩展，glibc 支持）。
+    /// `[!...]` / `[^...]` negation (`^` is a GNU extension, glibc supports it).
     negate: bool,
 }
 
@@ -484,14 +496,15 @@ fn parse_class(pat: &[u8]) -> Option<(CharClass, usize)> {
             break;
         }
         if c == b']' {
-            // "[]..."：']' 紧跟 '['/'[!' 后是字面量成员而非终结符
+            // "[]...": ']' right after '[' / '[!' is a literal member, not
+            // the terminator.
             ranges.push((b']', b']'));
         } else if c == b'\\' && i + 1 < pat.len() {
-            // 类内转义
+            // Escape inside the class.
             i += 1;
             ranges.push((pat[i], pat[i]));
         } else if i + 2 < pat.len() && pat[i + 1] == b'-' && pat[i + 2] != b']' {
-            // 范围 a-z；'-' 在开头/结尾按字面量
+            // Range a-z; '-' at start/end is literal.
             ranges.push((c, pat[i + 2]));
             i += 2;
         } else {

@@ -1,29 +1,26 @@
-//! 工作区遍历（对齐 `index.cc` 的 ScanDirs 与 `dir.cc` 的 ListDir）。
+//! Worktree traversal (mirrors `index.cc` ScanDirs and `dir.cc` ListDir).
 //!
-//! # 遍历要求（与原版逐点对齐）
-//!
-//! - **从父目录 fd 出发**：`openat(fd, name)` + `fstatat(fd, name,
-//!   AT_SYMLINK_NOFOLLOW)`，避免逐级绝对路径查找。
-//! - **目录栈**：`fds[d-1]` 为深度 d 的目录 fd；前序访问保证父目录 fd
-//!   在栈顶，`truncate(depth)` 后 push 新 fd（等价原版 rotate，openat 次数相同）。
-//! - **StatFiles**：index 文件逐个 fstatat + is_modified（无论 untracked
-//!   缓存如何都做，对齐原版）。
-//! - **merge join**：readdir 条目（排序）与 index 文件/子目录三方合并，
-//!   产生 modified / deleted / new（untracked）候选。
-//! - **untracked cache 剪枝**：目录 mtime 未变时跳过 readdir，复用
-//!   unmatched（对齐 index.cc 的 StatEq 检查）。
-//! - **d_type**：直接信任 readdir 的 d_type（DT_DIR 判定）；DT_UNKNOWN
-//!   按普通文件处理（对齐原版：DirentDup 存 d_type，`entry[-1] == DT_DIR`
-//!   判定，不做 fallback stat）。
+//! - Walk from a parent directory fd: `openat(fd, name)` + `fstatat(fd,
+//!   name, AT_SYMLINK_NOFOLLOW)`, avoiding absolute-path lookups.
+//! - Directory stack: `fds[d-1]` is the fd of depth d; a pre-order visit
+//!   keeps the parent fd on top, so `truncate(depth)` + push needs the same
+//!   number of openat calls as the original's rotate.
+//! - StatFiles: index files are fstatat'ed + is_modified one by one
+//!   (always done, regardless of the untracked cache).
+//! - Merge join of sorted readdir entries against index files and
+//!   subdirectories yields modified / deleted / new (untracked) candidates.
+//! - Untracked-cache pruning: when a dir's mtime is unchanged, skip readdir
+//!   and reuse the stored unmatched entries.
+//! - d_type is trusted as-is (DT_DIR); DT_UNKNOWN is treated as a regular
+//!   file (no fallback stat), like the original.
 
 use crate::index::{IndexDir, IndexEntry, RepoCaps, is_modified};
 use std::os::fd::RawFd;
 
-/// 目录 fd 栈（RAII）。扫描过程中打开的目录 fd 在栈被截断、清空或本结构
-/// 析构时全部 close。原版 gitstatusd 用 Directory RAII；这里若放任裸
-/// `Vec<RawFd>` 析构，每次扫描都会泄漏全部目录 fd——nixpkgs 级仓库一次
-/// 扫描即累积上千 fd，逼近进程 fd 上限后 openat 失败，untracked 扫描
-/// 退化为 0（提示符 ?N 偶发丢失）。
+/// RAII directory-fd stack: fds opened during a scan are closed on
+/// truncate, clear, and drop. Without this, a nixpkgs-scale scan leaks
+/// thousands of directory fds per pass; once the process fd limit is hit,
+/// openat fails and untracked scanning degrades to 0.
 struct DirStack {
     fds: Vec<RawFd>,
 }
@@ -43,13 +40,13 @@ impl DirStack {
     }
     fn truncate(&mut self, n: usize) {
         for fd in self.fds.drain(n..) {
-            // SAFETY: fd 为本结构先前 push 的、由 openat/dup 返回的目录 fd。
+            // SAFETY: fd was pushed here, from openat/dup.
             unsafe { libc::close(fd) };
         }
     }
     fn close_all(&mut self) {
         for fd in self.fds.drain(..) {
-            // SAFETY: 同上。
+            // SAFETY: as above.
             unsafe { libc::close(fd) };
         }
     }
@@ -62,20 +59,21 @@ impl Drop for DirStack {
 }
 
 pub struct ScanOpts {
-    /// 是否收集 untracked 候选（`-d` 上限 > 0）。
+    /// Collect untracked candidates (`-d` cap > 0).
     pub include_untracked: bool,
-    /// untracked cache 探针结论。
+    /// Whether the untracked cache probe succeeded.
     pub untracked_cache_enabled: bool,
 }
 
-/// 一个 readdir 条目。名字含尾部 NUL（fstatat 零分配直传）。
+/// One readdir entry. Name carries a trailing NUL (passed straight to
+/// fstatat, zero allocation).
 struct Dirent {
     name: Vec<u8>,
     is_dir: bool,
 }
 
-/// 扫描 dirs[from..to] 目录片，返回候选路径（相对仓库根的字节串，无 NUL）。
-/// 对齐 ScanDirs 的完整流程（见模块文档）。
+/// Scan dirs[from..to] and return candidate paths (relative to the repo
+/// root, no NUL).
 pub fn scan_dirs(
     dirs: &mut [IndexDir],
     entries: &[IndexEntry],
@@ -84,15 +82,15 @@ pub fn scan_dirs(
     opts: &ScanOpts,
 ) -> Vec<Vec<u8>> {
     let mut candidates: Vec<Vec<u8>> = Vec::new();
-    // fds[d-1] = 深度 d 的目录 fd
+    // fds[d-1] = fd of depth d.
     let mut fds = DirStack::new();
 
     for idx in 0..dirs.len() {
-        // 打开当前目录（父 fd 来自栈，栈截断后 push）
+        // Open the current dir (parent fd from the stack, truncated then push).
         let fd = match open_dir(&mut fds, root_fd, dirs, idx) {
             Some(fd) => fd,
             None => {
-                // 目录打不开：清 untracked 缓存、无候选（对齐原版 AddUnmached("")）
+                // Unopenable dir: clear untracked cache, no candidates.
                 dirs[idx].st = None;
                 dirs[idx].unmatched.clear();
                 continue;
@@ -100,13 +98,13 @@ pub fn scan_dirs(
         };
         let dir_path_len = dirs[idx].path.len() - 1;
 
-        // StatFiles：index 记录的文件逐个比对（对齐原版，无论缓存如何都做）
+        // StatFiles: compare every index file (regardless of the cache).
         let file_idxs = dirs[idx].files.clone();
         for &ei in &file_idxs {
             let entry = &entries[ei];
             let basename = &entry.path[dir_path_len..entry.path.len() - 1];
             let mut st: libc::stat = unsafe { std::mem::zeroed() };
-            // SAFETY: basename 由条目路径派生且 NUL 结尾；st 为合法 stat 缓冲。
+            // SAFETY: basename is derived from an entry path and NUL-terminated.
             let r = unsafe {
                 libc::fstatat(
                     fd,
@@ -116,10 +114,8 @@ pub fn scan_dirs(
                 )
             };
             if r != 0 {
-                let errno = std::io::Error::last_os_error().raw_os_error();
-                // deleted（ENOENT）或 unreadable 都进候选（对齐原版）
+                // Deleted (ENOENT) or unreadable → candidate.
                 candidates.push(entry.path[..entry.path.len() - 1].to_vec());
-                let _ = errno;
             } else if is_modified(entry, &st, caps) {
                 candidates.push(entry.path[..entry.path.len() - 1].to_vec());
             }
@@ -129,10 +125,10 @@ pub fn scan_dirs(
             continue;
         }
 
-        // untracked cache：目录 mtime 未变 → 复用 unmatched，跳过 readdir
+        // Untracked cache: unchanged mtime → reuse unmatched, skip readdir.
         if opts.untracked_cache_enabled {
             let mut st: libc::stat = unsafe { std::mem::zeroed() };
-            // SAFETY: fd 为已打开的目录 fd。
+            // SAFETY: fd is an open directory.
             if unsafe { libc::fstat(fd, &mut st) } == 0 {
                 let cur = (st.st_mtime, st.st_mtime_nsec);
                 if dirs[idx].st == Some(cur) {
@@ -149,7 +145,7 @@ pub fn scan_dirs(
             }
         }
 
-        // readdir + 排序；读失败 → 清缓存、无候选（对齐原版 ListDir 返回 false）
+        // readdir + sort; on failure clear cache, no candidates.
         let Some(dirents) = list_dir(fd, caps.case_sensitive) else {
             dirs[idx].st = None;
             dirs[idx].unmatched.clear();
@@ -157,26 +153,27 @@ pub fn scan_dirs(
         };
         dirs[idx].unmatched.clear();
 
-        // merge join：dirents（排序） vs files（entries 已排序） vs subdirs（建树序）
+        // Merge join: dirents (sorted) vs files (entries sorted) vs
+        // subdirs (tree order).
         let files = dirs[idx].files.clone();
         let subdirs = dirs[idx].subdirs.clone();
         let mut fi = 0usize;
         let mut si = 0usize;
         for de in &dirents {
-            let name = &de.name[..de.name.len() - 1]; // 去 NUL
-            // 与 index 文件合并
+            let name = &de.name[..de.name.len() - 1]; // strip NUL
+            // Merge against index files.
             let mut matched = false;
             while fi < files.len() {
                 let entry = &entries[files[fi]];
                 let base = &entry.path[dir_path_len..entry.path.len() - 1];
                 let cmp = cmp_name(base, name, caps.case_sensitive);
                 if cmp == std::cmp::Ordering::Less {
-                    // index 有、磁盘无 → deleted
+                    // In index, missing on disk → deleted.
                     candidates.push(entry.path[..entry.path.len() - 1].to_vec());
                     fi += 1;
                 } else if cmp == std::cmp::Ordering::Equal {
                     let mut st: libc::stat = unsafe { std::mem::zeroed() };
-                    // SAFETY: name 来自 readdir 且 NUL 结尾。
+                    // SAFETY: name comes from readdir and is NUL-terminated.
                     let r = unsafe {
                         libc::fstatat(
                             fd,
@@ -198,7 +195,7 @@ pub fn scan_dirs(
             if matched {
                 continue;
             }
-            // 与子目录合并（cmp < 0 继续推进，对齐原版循环）
+            // Merge against subdirectories.
             while si < subdirs.len() {
                 let cmp = cmp_name(&subdirs[si], name, caps.case_sensitive);
                 if cmp == std::cmp::Ordering::Greater {
@@ -212,8 +209,7 @@ pub fn scan_dirs(
                 si += 1;
             }
             if !matched {
-                // untracked：拼目录前缀 + 名字；目录名加 '/' 后缀
-                // （对齐原版 AddUnmached 的 StrCat(dir.path, basename)）
+                // Untracked: dir prefix + name; dirs get a trailing '/'.
                 let mut p = dirs[idx].path[..dirs[idx].path.len() - 1].to_vec();
                 p.extend_from_slice(name);
                 if de.is_dir {
@@ -223,7 +219,7 @@ pub fn scan_dirs(
                 candidates.push(p);
             }
         }
-        // 剩余 index 文件 → deleted
+        // Remaining index files → deleted.
         while fi < files.len() {
             let entry = &entries[files[fi]];
             candidates.push(entry.path[..entry.path.len() - 1].to_vec());
@@ -233,25 +229,28 @@ pub fn scan_dirs(
     candidates
 }
 
-/// 打开 dirs[idx] 的目录 fd，维护 fds 栈（fds[d-1] = 深度 d 的目录 fd）。
+/// Open dirs[idx]'s directory fd, maintaining the fds stack
+/// (fds[d-1] = fd of depth d).
 ///
-/// 两种路径：
-/// - 父 fd 已在栈（前序累积）→ 栈截断到 depth 后 openat 打开，push 新 fd。
-/// - 父 fd 不在栈（**分片内起点**：祖先目录落在相邻片）→ 清栈，从根 dup
-///   沿 `dirs[idx].path` 逐段 openat 重建完整祖先链（对齐原版每片开头
-///   OpenTail 的行为）。
+/// Two paths:
+/// - Parent fd already on the stack (pre-order accumulation) → truncate the
+///   stack to depth, openat, push.
+/// - Parent fd not on the stack (shard start: ancestors fell in a
+///   neighbouring shard) → clear the stack, dup the root, and rebuild the
+///   full ancestor chain along `dirs[idx].path` (like the original's
+///   OpenTail at each shard start).
 fn open_dir(fds: &mut DirStack, root_fd: RawFd, dirs: &[IndexDir], idx: usize) -> Option<RawFd> {
     let depth = dirs[idx].depth;
     if depth != 0 && fds.get(depth - 1).is_none() {
-        // 片内起点：重建祖先链
+        // Shard start: rebuild the ancestor chain.
         fds.close_all();
-        // SAFETY: dup 语义标准。
+        // SAFETY: standard dup semantics.
         let mut fd = unsafe { libc::dup(root_fd) };
         if fd < 0 {
             return None;
         }
         fds.push(fd);
-        let path = &dirs[idx].path[..dirs[idx].path.len() - 1]; // 如 "a/b/"
+        let path = &dirs[idx].path[..dirs[idx].path.len() - 1]; // e.g. "a/b/"
         for seg in path.split(|&b| b == b'/') {
             if seg.is_empty() {
                 continue;
@@ -259,7 +258,7 @@ fn open_dir(fds: &mut DirStack, root_fd: RawFd, dirs: &[IndexDir], idx: usize) -
             let mut name = seg.to_vec();
             name.push(0); // NUL
             let parent = *fds.last().expect("chain non-empty");
-            // SAFETY: name NUL 结尾。
+            // SAFETY: name is NUL-terminated.
             fd = unsafe {
                 libc::openat(
                     parent,
@@ -281,10 +280,10 @@ fn open_dir(fds: &mut DirStack, root_fd: RawFd, dirs: &[IndexDir], idx: usize) -
     };
     fds.truncate(depth);
     let fd = if depth == 0 {
-        // SAFETY: dup 语义标准。
+        // SAFETY: standard dup semantics.
         unsafe { libc::dup(root_fd) }
     } else {
-        // SAFETY: basename NUL 结尾（见模块文档）。
+        // SAFETY: basename is NUL-terminated (see module docs).
         unsafe {
             libc::openat(
                 parent_fd,
@@ -300,42 +299,43 @@ fn open_dir(fds: &mut DirStack, root_fd: RawFd, dirs: &[IndexDir], idx: usize) -
     Some(fd)
 }
 
-/// readdir 收集并排序（对齐 dir.cc ListDir）：dup(fd) + fdopendir +
-/// readdir 循环，跳过 "." ".."，名字存 NUL 结尾。
-/// 排序：大小写敏感按字节序，不敏感按 ASCII fold（对齐 C locale 的
-/// strcasecmp 语义；不依赖进程 locale）。
+/// readdir + sort (mirrors dir.cc ListDir): dup(fd) + fdopendir + readdir
+/// loop, skipping "." and "..", names kept NUL-terminated. Sorting is
+/// byte-wise when case-sensitive, ASCII-folded otherwise (C-locale
+/// strcasecmp semantics; independent of the process locale).
 fn list_dir(fd: RawFd, case_sensitive: bool) -> Option<Vec<Dirent>> {
-    // SAFETY: dup 出的 fd 由 fdopendir 接管，closedir 时释放。
+    // SAFETY: the dup'd fd is taken over by fdopendir and released on
+    // closedir.
     let dup_fd = unsafe { libc::dup(fd) };
     if dup_fd < 0 {
         return None;
     }
-    // SAFETY: fdopendir 接管 dup_fd。
+    // SAFETY: fdopendir takes ownership of dup_fd.
     let dirp = unsafe { libc::fdopendir(dup_fd) };
     if dirp.is_null() {
-        // SAFETY: fdopendir 失败时 fd 未被接管，手动关闭。
+        // SAFETY: on fdopendir failure the fd was not taken over; close it.
         unsafe { libc::close(dup_fd) };
         return None;
     }
     let mut entries: Vec<Dirent> = Vec::with_capacity(128);
     loop {
-        // SAFETY: readdir 返回 dirp 内部的 dirent 指针。
+        // SAFETY: readdir returns a pointer into dirp's internal buffer.
         let ent = unsafe { libc::readdir(dirp) };
         if ent.is_null() {
             break;
         }
-        // SAFETY: ent 有效（readdir 非 null 返回）。
+        // SAFETY: ent is valid (readdir returned non-null).
         let name_bytes = unsafe { std::ffi::CStr::from_ptr((*ent).d_name.as_ptr()) }.to_bytes();
         if name_bytes == b"." || name_bytes == b".." {
             continue;
         }
         let mut name = name_bytes.to_vec();
-        name.push(0); // NUL（fstatat 直传）
-        // SAFETY: ent 有效。
+        name.push(0); // NUL (passed to fstatat as-is)
+        // SAFETY: ent is valid.
         let is_dir = unsafe { (*ent).d_type == libc::DT_DIR };
         entries.push(Dirent { name, is_dir });
     }
-    // SAFETY: closedir 同时释放 fdopendir 接管的 fd。
+    // SAFETY: closedir releases the fd taken by fdopendir.
     unsafe { libc::closedir(dirp) };
     if case_sensitive {
         entries.sort_by(|a, b| a.name[..a.name.len() - 1].cmp(&b.name[..b.name.len() - 1]));
@@ -353,7 +353,7 @@ fn list_dir(fd: RawFd, case_sensitive: bool) -> Option<Vec<Dirent>> {
     Some(entries)
 }
 
-/// 名字比较（对齐 StrCmp 的 StringView vs char* 语义：逐字节 + 长度决胜）。
+/// Name comparison (StrCmp semantics: byte-wise, length decides the tie).
 fn cmp_name(a: &[u8], b: &[u8], case_sensitive: bool) -> std::cmp::Ordering {
     let n = a.len().min(b.len());
     for i in 0..n {

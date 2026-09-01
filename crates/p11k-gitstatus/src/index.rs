@@ -1,89 +1,99 @@
-//! git index 解析与脏候选扫描（性能核心，对齐 index.cc）。
+//! git index parsing and dirty-candidate scan (performance core, mirrors
+//! index.cc).
 //!
-//! # 总体策略（照搬算法，不照搬代码）
+//! Strategy (same algorithm, not same code):
 //!
-//! 1. **建树**：index 条目（已按路径排序）经栈算法建成目录树 [`IndexDir`]
-//!    （对齐 InitDirs 的 CommonDir 公共前缀法）。
-//! 2. **分片**：`16 * num_threads` 片、最小片权重 512，按目录权重切分
-//!    （对齐 InitSplits）；每片由 [`Index::get_dirty_candidates`] 交给一个
-//!    作用域线程并行扫描，分片保证目录不重叠（每片独立 `&mut [IndexDir]`）。
-//! 3. **脏检测不调用 git**：`fstatat(dir_fd, basename, AT_SYMLINK_NOFOLLOW)`
-//!    取磁盘 stat 与 index 记录比较（[`is_modified`]）。
-//! 4. **候选收集**：候选 = modified / deleted / new（untracked）/ unreadable，
-//!    全量收集、排序、去重后交给 repo 层做精确 diff（原版同样先收集再
-//!    git_diff_index_to_workdir）。
+//! 1. **Build the tree**: index entries (path-sorted by git) become a
+//!    directory tree of [`IndexDir`] via a stack algorithm (InitDirs'
+//!    CommonDir common-prefix method).
+//! 2. **Shard**: `16 * num_threads` shards with a minimum shard weight of
+//!    512, split by directory weight (InitSplits). Each shard is scanned by
+//!    one scoped thread via [`Index::get_dirty_candidates`]; shards never
+//!    overlap directories (each gets its own `&mut [IndexDir]`).
+//! 3. **Dirty detection calls no git**: `fstatat(dir_fd, basename,
+//!    AT_SYMLINK_NOFOLLOW)` compares the on-disk stat against the index
+//!    record ([`is_modified`]).
+//! 4. **Candidates**: modified / deleted / new (untracked) / unreadable.
+//!    Collected fully, sorted, deduped, then handed to the repo layer for
+//!    the precise diff (the original also collects first, then runs
+//!    git_diff_index_to_workdir).
 //!
-//! # 路径内嵌 NUL
+//! # Embedded NUL in paths
 //!
-//! [`IndexEntry::path`] 与 [`IndexDir::path`] 的最后一个字节是 NUL（可见
-//! 长度 = len - 1）：`fstatat`/`openat` 直传指针，零分配。这是原版 Arena
-//! 布局（d_type 存 `[-1]`、NUL 结尾）的 Rust 等价。
+//! [`IndexEntry::path`] and [`IndexDir::path`] keep a trailing NUL byte
+//! (visible length = len - 1): `fstatat`/`openat` take the pointer directly,
+//! zero allocation. This is the Rust equivalent of the original's Arena
+//! layout (d_type at `[-1]`, NUL-terminated).
 
 use crate::scan::{self, ScanOpts};
 use std::os::fd::RawFd;
 
-/// 仓库能力位（对齐 index.cc RepoCaps）。
-/// precompose_unicode（macOS HFS+ 归一化）TODO(macOS)，第一阶段不实现。
+/// Repo capability bits (index.cc RepoCaps). precompose_unicode (macOS HFS+
+/// normalization) is TODO(macOS), not implemented in phase 1.
 #[derive(Clone, Copy)]
 pub struct RepoCaps {
-    /// core.filemode。
+    /// core.filemode.
     pub trust_filemode: bool,
-    /// core.symlinks。
+    /// core.symlinks.
     pub has_symlinks: bool,
-    /// 大小写敏感（!core.ignorecase）。
+    /// Case sensitivity (!core.ignorecase).
     pub case_sensitive: bool,
 }
 
-/// index 条目（从 git2 IndexEntry 拷贝）。
+/// Index entry (copied from a git2 IndexEntry).
 pub struct IndexEntry {
-    /// 完整相对路径，含尾部 NUL（见模块文档）。
+    /// Full relative path, NUL-terminated (see module docs).
     pub path: Vec<u8>,
     pub ino: u32,
     pub fsize: u32,
     pub mtime_sec: i32,
     pub mtime_nsec: u32,
     pub mode: u32,
-    /// GIT_INDEX_ENTRY_STAGE（非 0 = 冲突条目，恒为候选）。
+    /// GIT_INDEX_ENTRY_STAGE (non-zero = conflict entry, always a candidate).
     pub stage: u16,
-    /// GIT_INDEX_ENTRY_EXTENDED 位：SKIP_WORKTREE / INTENT_TO_ADD。
+    /// GIT_INDEX_ENTRY_EXTENDED bits: SKIP_WORKTREE / INTENT_TO_ADD.
     pub flags_extended: u16,
-    /// GIT_INDEX_ENTRY_VALID（assume-unchanged）。
+    /// GIT_INDEX_ENTRY_VALID (assume-unchanged).
     pub assume_valid: bool,
 }
 
-/// index 目录树节点。`dirs` 为前序（`dirs[0]` 是根）。
+/// Index directory-tree node. `dirs` is in pre-order (`dirs[0]` is the root).
 pub struct IndexDir {
-    /// 完整相对路径，以 '/' 结尾（根为 ""），含尾部 NUL。
+    /// Full relative path ending in '/', NUL-terminated (root is "").
     pub path: Vec<u8>,
-    /// 目录名（不含父路径、不含 '/'），含尾部 NUL（openat 直传；根为空 Vec）。
+    /// Directory name (no parent path, no '/'), NUL-terminated (passed to
+    /// openat; empty Vec for the root).
     pub basename: Vec<u8>,
-    /// 深度（根为 0）。
+    /// Depth (root = 0).
     pub depth: usize,
-    /// 本目录下条目在 [`Index::entries`] 中的下标。
+    /// Indices into [`Index::entries`] for files in this dir.
     pub files: Vec<usize>,
-    /// 子目录 basename（副本，非下标）：分片扫描时子目录可能落在相邻片，
-    /// merge join 只需名字比较，存副本让分片切片自包含。
+    /// Subdirectory basenames (copies, not indices): during sharded scans a
+    /// subdir may fall in a neighbouring shard, and the merge join only
+    /// needs name comparison, so copies keep each shard slice self-contained.
     pub subdirs: Vec<Vec<u8>>,
-    /// untracked cache：上次 readdir 时的目录 mtime。
+    /// Untracked cache: the dir mtime from the last readdir.
     pub st: Option<(i64, i64)>,
-    /// untracked cache：上次 readdir 发现的 untracked 名。
+    /// Untracked cache: untracked names found by the last readdir.
     pub unmatched: Vec<Vec<u8>>,
 }
 
 pub struct Index {
     pub entries: Vec<IndexEntry>,
     pub dirs: Vec<IndexDir>,
-    /// 分片边界：相邻两个下标成一片（对齐 index.cc splits_）。
+    /// Shard boundaries: each pair of adjacent indices is one shard
+    /// (index.cc splits_).
     pub splits: Vec<usize>,
 }
 
 impl Index {
-    /// 建树。entries 必须按路径排序（git index 保证）。
-    /// 照搬 InitDirs 的栈算法：与栈顶求公共目录前缀 → 弹多余层 →
-    /// 为剩余路径逐层建子目录 → 条目落入栈顶 files。
+    /// Build the tree. Entries must be path-sorted (git guarantees this).
+    /// Mirrors InitDirs' stack algorithm: find the common dir prefix with
+    /// the stack top, pop the excess levels, create subdirs for the
+    /// remaining path, and file the entry into the top dir.
     pub fn from_entries(entries: Vec<IndexEntry>) -> Index {
         let mut dirs = vec![IndexDir {
-            path: vec![0], // 根："" + NUL
+            path: vec![0], // root: "" + NUL
             basename: Vec::new(),
             depth: 0,
             files: Vec::new(),
@@ -93,8 +103,9 @@ impl Index {
         }];
         let mut stack: Vec<usize> = vec![0];
         for (i, entry) in entries.iter().enumerate() {
-            let path = &entry.path[..entry.path.len() - 1]; // 去 NUL
-            // 与栈顶求公共目录前缀（对齐 CommonDir：含末尾 '/' 的长度 + 深度）
+            let path = &entry.path[..entry.path.len() - 1]; // strip NUL
+            // Common dir prefix with the stack top (CommonDir: length incl.
+            // trailing '/', plus depth).
             let mut common_len = 0usize;
             let mut common_depth = 0usize;
             {
@@ -110,23 +121,25 @@ impl Index {
                     }
                 }
             }
-            // 弹掉公共深度之下的层
+            // Pop levels below the common depth.
             while stack.len() > common_depth + 1 {
                 stack.pop();
             }
-            // 路径剩余部分逐层建子目录
+            // Create subdirs for the remaining path segments.
             let mut p = common_len;
             while let Some(rel) = path[p..].iter().position(|&b| b == b'/') {
                 let slash = p + rel;
                 let parent = stack[stack.len() - 1];
                 let parent_len = dirs[parent].path.len() - 1;
-                // basename 含尾部 NUL（openat 零分配直传）；subdirs 副本保持无 NUL
+                // basename NUL-terminated (zero-alloc openat); subdirs keep
+                // NUL-free copies.
                 let mut basename = path[parent_len..slash].to_vec();
                 basename.push(0);
-                let mut dir_path = path[..=slash].to_vec(); // 含 '/'
+                let mut dir_path = path[..=slash].to_vec(); // incl. '/'
                 dir_path.push(0); // NUL
                 let idx = dirs.len();
-                // 先记父目录的子目录名（副本，去 NUL），再 push 新目录（basename move 进）
+                // Record the subdir name on the parent (copy, no NUL), then
+                // push the new dir (basename moved in).
                 dirs[parent]
                     .subdirs
                     .push(basename[..basename.len() - 1].to_vec());
@@ -142,7 +155,7 @@ impl Index {
                 stack.push(idx);
                 p = slash + 1;
             }
-            // 条目落入栈顶目录
+            // File the entry into the top dir.
             let dir_idx = stack[stack.len() - 1];
             dirs[dir_idx].files.push(i);
         }
@@ -153,8 +166,9 @@ impl Index {
         }
     }
 
-    /// 按 `16 * num_threads` 分片（对齐 InitSplits）：最小片权重 512，
-    /// 按目录权重累计切分；splits 升序、无重复、首 0 尾 len。
+    /// Split into `16 * num_threads` shards (InitSplits): minimum shard
+    /// weight 512, accumulated by dir weight; splits ascending, no
+    /// duplicates, first 0 last len.
     pub fn init_splits(&mut self, num_threads: usize) {
         const MIN_SHARD_WEIGHT: usize = 512;
         let num_shards = 16 * num_threads.max(1);
@@ -175,9 +189,10 @@ impl Index {
         }
     }
 
-    /// 并行收集脏候选（对齐 GetDirtyCandidates）：每片一个作用域线程，
-    /// 结果合并、排序（大小写敏感按字节序，不敏感按 ASCII fold）、
-    /// 按字节相等去重。root_fd 是仓库根目录 fd。
+    /// Collect dirty candidates in parallel (GetDirtyCandidates): one scoped
+    /// thread per shard, results merged, sorted (byte-wise when
+    /// case-sensitive, ASCII-folded otherwise), deduped by byte equality.
+    /// root_fd is the repo root directory fd.
     pub fn get_dirty_candidates(
         &mut self,
         root_fd: RawFd,
@@ -186,7 +201,7 @@ impl Index {
     ) -> Vec<Vec<u8>> {
         let entries = &self.entries;
         let mut results: Vec<Vec<Vec<u8>>> = Vec::new();
-        // 分片不重叠：从 dirs 头部逐片切 &mut 切片，交给各线程。
+        // Shards don't overlap: carve &mut slices from the front of dirs.
         std::thread::scope(|scope| {
             let mut rest: &mut [IndexDir] = &mut self.dirs;
             for pair in self.splits.windows(2) {
@@ -202,7 +217,7 @@ impl Index {
             }
         });
         let mut out: Vec<Vec<u8>> = results.into_iter().flatten().collect();
-        // 排序：大小写不敏感时按 ASCII fold 排（对齐 StrSort 的 C locale 语义）
+        // Sort: ASCII-fold when case-insensitive (StrSort's C-locale semantics).
         if caps.case_sensitive {
             out.sort();
         } else {
@@ -216,10 +231,10 @@ impl Index {
         out
     }
 
-    /// 用新条目（路径集合与当前相同，调用方保证）仅更新 stat 字段。
-    /// 复用树结构（dirs/subdirs/files 下标）与 untracked 状态，
-    /// 用于 libgit2 racy 写回只改条目 stat 字段的场景——避免大仓库
-    /// 因 stat 变化触发全量重建。
+    /// Refresh only the stat fields from new entries (the caller guarantees
+    /// the path set is unchanged), reusing the tree structure and untracked
+    /// state. Used when libgit2's racy write-back only mutates stat fields,
+    /// avoiding a full rebuild of a large index.
     pub fn update_stats(&mut self, new_entries: &[IndexEntry]) {
         for (old, new) in self.entries.iter_mut().zip(new_entries) {
             old.ino = new.ino;
@@ -233,23 +248,26 @@ impl Index {
         }
     }
 
-    /// 目录权重（对齐 index.cc Weight：1 + subdirs + files）。
+    /// Directory weight (index.cc Weight: 1 + subdirs + files).
     pub fn weight(dir: &IndexDir) -> usize {
         1 + dir.subdirs.len() + dir.files.len()
     }
 }
 
-/// 单条目脏检测（对齐 index.cc IsModified）。
+/// Per-entry dirty check (index.cc IsModified).
 ///
-/// mode 先规范化：常规文件仅保留可执行位（`0755/0644`）；trust_filemode
-/// 或 symlinks 能力缺失时跳过 mode 比较；非常规文件只比文件类型。
-/// 比较序 ino → stage → fsize → mtime → mode，任一不等即候选。
-/// mtime 的 nsec 特例：index 记录 nsec 为 0 时不比较 nsec（对齐
-/// GITSTATUS_ZERO_NSEC：git 在 racy 检测后会把 nsec 归零）。
+/// mode is normalized first: regular files keep only the executable bit
+/// (`0755/0644`); when trust_filemode or symlinks capability is missing,
+/// mode comparison is skipped; non-regular files compare only the file
+/// type. Comparison order: ino → stage → fsize → mtime → mode; any
+/// difference makes it a candidate. mtime nsec special case: an index
+/// nsec of 0 skips nsec comparison (GITSTATUS_ZERO_NSEC — git zeroes nsec
+/// after racy detection).
 pub fn is_modified(entry: &IndexEntry, st: &libc::stat, caps: &RepoCaps) -> bool {
     let mut mode = st.st_mode;
     if mode & libc::S_IFMT == libc::S_IFREG {
-        // symlinks 能力缺失且条目是符号链接，或 filemode 不可信 → 跳过 mode 比较
+        // Missing symlinks capability with a symlink entry, or untrusted
+        // filemode → skip mode comparison.
         if (!caps.has_symlinks && entry.mode & libc::S_IFMT == libc::S_IFLNK)
             || !caps.trust_filemode
         {
