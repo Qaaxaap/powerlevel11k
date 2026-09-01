@@ -639,17 +639,15 @@ function _p11k_seg_prompt_char() {
   __p11k_prompt_char_fg=$fg
 }
 
-# 独立的 vi_mode 段（用户配置含 vi_mode 元素时显示）
+# 独立的 vi_mode 段（对齐 p10k：无图标，INSERT 蓝字/NORMAL 白字，背景 236）
 function _p11k_seg_vi_mode() {
   local mode=${__p11k_vi_mode:-0}
   if (( mode )); then
     _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_VI_MODE_NORMAL_BACKGROUND 236)" \
-      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_NORMAL_FOREGROUND 255)" \
-      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_NORMAL_VISUAL_IDENTIFIER_EXPANSION 'N')" 'NORMAL'
+      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_NORMAL_FOREGROUND white)" '' 'NORMAL'
   else
-    _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_VI_MODE_INSERT_BACKGROUND 238)" \
-      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_INSERT_FOREGROUND 255)" \
-      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_INSERT_VISUAL_IDENTIFIER_EXPANSION 'I')" 'INSERT'
+    _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_VI_MODE_INSERT_BACKGROUND 236)" \
+      "$(_p11k_p9k POWERLEVEL9K_VI_MODE_INSERT_FOREGROUND blue)" '' 'INSERT'
   fi
 }
 
