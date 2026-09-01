@@ -93,11 +93,25 @@ function _p11k_prompt_segment() {
   # 默认色：POWERLEVEL9K_${name}_FOREGROUND/BACKGROUND 已由配置展开，
   # 这里只处理"无颜色"（空=默认）
   if (( __p11k_seg_count > 0 )); then
-    # 分隔符：用上一段背景色
+    # 分隔符：背景色相同 → 子分隔符（左 \uE0B1 / 右 \uE0B3），不同 → 段分隔符（左 \uE0B0 / 右 \uE0B2）
     local sep_bg=$__p11k_last_bg
     local sep_fg=$bg
     [[ -n $sep_fg ]] || sep_fg='default'
-    __p11k_out+="%K{$sep_bg}%F{$sep_fg}$(_p11k_p9k POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR '\uE0B0')%f%k"
+    local sep
+    if (( ${+__p11k_right} )); then
+      if [[ -n $sep_bg && -n $bg && $sep_bg == $bg ]]; then
+        sep=$(_p11k_p9k POWERLEVEL9K_RIGHT_SUBSEGMENT_SEPARATOR '\uE0B3')
+      else
+        sep=$(_p11k_p9k POWERLEVEL9K_RIGHT_SEGMENT_SEPARATOR '\uE0B2')
+      fi
+    else
+      if [[ -n $sep_bg && -n $bg && $sep_bg == $bg ]]; then
+        sep=$(_p11k_p9k POWERLEVEL9K_LEFT_SUBSEGMENT_SEPARATOR '\uE0B1')
+      else
+        sep=$(_p11k_p9k POWERLEVEL9K_LEFT_SEGMENT_SEPARATOR '\uE0B0')
+      fi
+    fi
+    __p11k_out+="%K{$sep_bg}%F{$sep_fg}$sep%f%k"
   fi
   if [[ -n $bg ]]; then
     __p11k_out+="%K{$bg}"
@@ -464,18 +478,22 @@ function _p11k_seg_dir() {
       fi;;
   esac
   local icon=$(_p11k_p9k POWERLEVEL9K_DIR_ICON '')
-  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_DIR_BACKGROUND blue)" \
-    "$(_p11k_p9k POWERLEVEL9K_DIR_FOREGROUND 236)" "$icon" "$dir"
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_DIR_BACKGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_DIR_FOREGROUND 31)" "$icon" "$dir"
   :
 }
 
-# status：上一条命令退出码（0 时不显示，对齐 p10k）
+# status：上一条命令退出码。0 显示 ✔（OK），非 0 显示 ✘N（对齐 p10k）
 function _p11k_seg_status() {
-  (( __p11k_last_status == 0 )) && return
-  local text=$__p11k_last_status
-  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_STATUS_ERROR_BACKGROUND red)" \
-    "$(_p11k_p9k POWERLEVEL9K_STATUS_ERROR_FOREGROUND 236)" \
-    "$(_p11k_p9k POWERLEVEL9K_STATUS_ERROR_VISUAL_IDENTIFIER_EXPANSION '✘') " "$text"
+  if (( __p11k_last_status == 0 )); then
+    _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_STATUS_OK_BACKGROUND 236)" \
+      "$(_p11k_p9k POWERLEVEL9K_STATUS_OK_FOREGROUND 70)" \
+      "$(_p11k_p9k POWERLEVEL9K_STATUS_OK_VISUAL_IDENTIFIER_EXPANSION '✔')" ''
+  else
+    _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_STATUS_ERROR_BACKGROUND 236)" \
+      "$(_p11k_p9k POWERLEVEL9K_STATUS_ERROR_FOREGROUND 196)" \
+      "$(_p11k_p9k POWERLEVEL9K_STATUS_ERROR_VISUAL_IDENTIFIER_EXPANSION '✘') " "$__p11k_last_status"
+  fi
   :
 }
 
@@ -652,8 +670,8 @@ function _p11k_seg_context() {
   # zsh 的 // 替换中 % 需转义（\%n 才匹配字面 %n）
   text=${text//\%n/$user}
   text=${text//\%m/$host}
-  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_CONTEXT_BACKGROUND 238)" \
-    "$(_p11k_p9k POWERLEVEL9K_CONTEXT_FOREGROUND 255)" "$icon" "$text"
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_CONTEXT_BACKGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_CONTEXT_FOREGROUND 180)" "$icon" "$text"
   :
 }
 
@@ -662,9 +680,10 @@ function _p11k_seg_time() {
   local fmt=$(_p11k_p9k POWERLEVEL9K_TIME_FORMAT '%D{%H:%M:%S}')
   local text=$POWERLEVEL9K_TIME_CONTENT_EXPANSION
   [[ -z $text ]] && text=${(%):-$fmt}
-  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_TIME_BACKGROUND 234)" \
-    "$(_p11k_p9k POWERLEVEL9K_TIME_FOREGROUND 244)" \
-    "$(_p11k_p9k POWERLEVEL9K_TIME_VISUAL_IDENTIFIER_EXPANSION '') " "$text"
+  # p10k 的 time 段图标在文本后（"13:42:44 ⏱"），与其他段相反
+  local icon=$(_p11k_p9k POWERLEVEL9K_TIME_VISUAL_IDENTIFIER_EXPANSION '')
+  _p11k_prompt_segment "$(_p11k_p9k POWERLEVEL9K_TIME_BACKGROUND 236)" \
+    "$(_p11k_p9k POWERLEVEL9K_TIME_FOREGROUND 66)" '' "$text $icon"
   :
 }
 
@@ -731,25 +750,25 @@ function _p11k_seg_vcs() {
   # detached/tag：无分支时用 tag 名
   [[ -n $text ]] || text=$__p11k_vcs_tag
   [[ -n $text ]] || return
-  # ahead/behind（对齐 p10k 的 ↑n↓n）
+  # ahead/behind（对齐 p10k 的 ⇡n⇣n）
   if (( __p11k_vcs_ahead > 0 || __p11k_vcs_behind > 0 )); then
-    (( __p11k_vcs_ahead > 0 )) && text+=" ↑$__p11k_vcs_ahead"
-    (( __p11k_vcs_behind > 0 )) && text+=" ↓$__p11k_vcs_behind"
+    (( __p11k_vcs_ahead > 0 )) && text+=" ⇡$__p11k_vcs_ahead"
+    (( __p11k_vcs_behind > 0 )) && text+=" ⇣$__p11k_vcs_behind"
   fi
   # stash
   (( __p11k_vcs_stashes > 0 )) && text+=" $(_p11k_p9k POWERLEVEL9K_VCS_STASH_ICON '⬤')$__p11k_vcs_stashes"
   # dirty 细分：unstaged/untracked（对齐 p10k 的 !n ?n）
   local bg fg
   if (( __p11k_vcs_dirty )); then
-    bg=$(_p11k_p9k POWERLEVEL9K_VCS_MODIFIED_BACKGROUND yellow)
-    fg=$(_p11k_p9k POWERLEVEL9K_VCS_MODIFIED_FOREGROUND 236)
+    bg=$(_p11k_p9k POWERLEVEL9K_VCS_MODIFIED_BACKGROUND 236)
+    fg=$(_p11k_p9k POWERLEVEL9K_VCS_MODIFIED_FOREGROUND 178)
     (( __p11k_vcs_unstaged > 0 )) &&
       text+=" $(_p11k_p9k POWERLEVEL9K_VCS_UNSTAGED_ICON '!')$__p11k_vcs_unstaged"
     (( __p11k_vcs_untracked > 0 )) &&
       text+=" $(_p11k_p9k POWERLEVEL9K_VCS_UNTRACKED_ICON '?')$__p11k_vcs_untracked"
   else
-    bg=$(_p11k_p9k POWERLEVEL9K_VCS_CLEAN_BACKGROUND green)
-    fg=$(_p11k_p9k POWERLEVEL9K_VCS_CLEAN_FOREGROUND 236)
+    bg=$(_p11k_p9k POWERLEVEL9K_VCS_CLEAN_BACKGROUND 236)
+    fg=$(_p11k_p9k POWERLEVEL9K_VCS_CLEAN_FOREGROUND 76)
   fi
   _p11k_prompt_segment "$bg" "$fg" \
     "$(_p11k_p9k POWERLEVEL9K_VCS_GIT_ICON '') " "$text"
@@ -844,12 +863,20 @@ function _p11k_render_line() {
   done
 }
 
+# 可见宽度（字符数）：剥离 prompt 转义后数字符。
+# 注意不能写 ${#$(...)}——命令输出含空格时 zsh 会返回单词数而非字符数，
+# 必须先存进变量再取 ${#var}。
+function _p11k_width() {
+  local v=$(print -rn -- "$1" | sed -E 's/%\{[^}]*\}//g; s/%[0-9]*[kfKFBuUsS]\{[^}]*\}//g; s/%[0-9]*[kfKFBuUsS]//g')
+  print -rn -- ${#v}
+}
+
 # _p11k_pad <left> <right>：右对齐拼接（gap 空格填充；宽度用 sed 剥
 # %{...%} 与 %K{}/%F{}/%B{} 转义后估算，CJK 按 1 列计，近似宽度）。
 function _p11k_pad() {
   emulate -L zsh
-  local lw=${#$(print -rn -- "$1" | sed -E 's/%\{[^}]*\}//g; s/%[KFB]\{[^}]*\}//g')}
-  local rw=${#$(print -rn -- "$2" | sed -E 's/%\{[^}]*\}//g; s/%[KFB]\{[^}]*\}//g')}
+  local lw=$(_p11k_width "$1")
+  local rw=$(_p11k_width "$2")
   local gap=$(( COLUMNS - lw - rw ))
   local out=$1
   (( gap > 0 )) && out+="${(l:$gap:: :)}"
@@ -866,64 +893,80 @@ function _p11k_prompt() {
   local -a left right
   left=("${POWERLEVEL9K_LEFT_PROMPT_ELEMENTS[@]}")
   right=("${POWERLEVEL9K_RIGHT_PROMPT_ELEMENTS[@]}")
-  # 拆行：LEFT 里第一个 newline 前是第一行
-  local -a line1 line2
-  local name split=0
+
+  # 拆行（LEFT/RIGHT 按 newline 拆成两行；对齐 p10k _p9k_init_lines）
+  local -a l1=() l2=() r1=() r2=()
+  local name side=1
   for name in "${left[@]}"; do
-    if [[ $name == newline ]]; then
-      split=1
-      continue
-    fi
-    if (( split )); then
-      line2+=("$name")
-    else
-      line1+=("$name")
-    fi
+    if [[ $name == newline ]]; then side=2; continue; fi
+    if (( side == 1 )); then l1+=("$name"); else l2+=("$name"); fi
   done
-  __p11k_out=''
-  __p11k_seg_count=0
-  __p11k_last_bg='default'
-  _p11k_render_line "${line1[@]}"
-  local left_prompt=$__p11k_out
-  __p11k_out=''
-  __p11k_seg_count=0
-  __p11k_last_bg='default'
-  _p11k_render_line "${right[@]}"
-  local right_prompt=$__p11k_out
-  # 两行布局：第一行 left+right（RPROMPT 原生右对齐），
-  # 第二行 left2 + right2（right2 用 gap 空格填充右对齐）。
-  PROMPT="$left_prompt$POWERLEVEL9K_PROMPT_ADD_NEWLINE_PREFIX"
-  RPROMPT="$right_prompt"
-  if (( ${#line2} > 0 )); then
-    # 第二行 left
-    __p11k_out=''
-    __p11k_seg_count=0
-    __p11k_last_bg='default'
-    _p11k_render_line "${line2[@]}"
-    local left2=$__p11k_out
-    # 第二行 right（right 元素里 newline 之后的部分）
-    local right2=''
-    local -a right2_elems=()
-    local r_split=0 r_name
-    for r_name in "${right[@]}"; do
-      if [[ $r_name == newline ]]; then
-        r_split=1
-        continue
-      fi
-      (( r_split )) && right2_elems+=("$r_name")
-    done
-    if (( ${#right2_elems} > 0 )); then
-      __p11k_out=''
-      __p11k_seg_count=0
-      __p11k_last_bg='default'
-      _p11k_render_line "${right2_elems[@]}"
-      right2=$__p11k_out
+  side=1
+  for name in "${right[@]}"; do
+    if [[ $name == newline ]]; then side=2; continue; fi
+    if (( side == 1 )); then r1+=("$name"); else r2+=("$name"); fi
+  done
+  local -i has_second=0
+  (( ${left[(I)newline]} || ${right[(I)newline]} )) && has_second=1
+
+  local first_prefix=$(_p11k_p9k POWERLEVEL9K_MULTILINE_FIRST_PROMPT_PREFIX '')
+  local last_prefix=$(_p11k_p9k POWERLEVEL9K_MULTILINE_LAST_PROMPT_PREFIX '')
+
+  # 第一行左段
+  __p11k_out=''; __p11k_seg_count=0; __p11k_last_bg=''
+  _p11k_render_line "${l1[@]}"
+  local left1=$__p11k_out
+  local left1_bg=$__p11k_last_bg  # 左段最后背景（右段渲染会覆盖 __p11k_last_bg）
+
+  # 第一行右段（右侧分隔符 \uE0B2/\uE0B3）
+  __p11k_out=''; __p11k_seg_count=0; __p11k_last_bg=''
+  __p11k_right=1
+  _p11k_render_line "${r1[@]}"
+  __p11k_right=0
+  local right1=$__p11k_out
+
+  if (( has_second )); then
+    # ── 双行布局 ──
+    # 第一行左段行末加 LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL（默认 \uE0B0）
+    local last_sym=$(_p11k_p9k POWERLEVEL9K_LEFT_PROMPT_LAST_SEGMENT_END_SYMBOL '')
+    if [[ -n $last_sym && -n $left1 ]]; then
+      local end_bg=$left1_bg
+      [[ -n $end_bg ]] || end_bg='default'
+      left1+="%K{$end_bg}%F{default}$last_sym%f%k"
     fi
+    # 右段第一个段前加 RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL（默认 \uE0B2）
+    if [[ -n $right1 ]]; then
+      right1="%F{default}$(_p11k_p9k POWERLEVEL9K_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL '\uE0B2')%f$right1"
+    fi
+    # gap 填充（默认 \u00B7）
+    local gap_char=$(_p11k_p9k POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_CHAR ' ')
+    local lw=$(_p11k_width "$left1")
+    local rw=$(_p11k_width "$right1")
+    local gap=$(( COLUMNS - lw - rw ))
+    PROMPT="$first_prefix$left1"
+    # (pl:) 的 p 让 flag 参数里的 $gap_char 正确展开（(l:) 缺 p 会变成字面 _char）
+    (( gap > 0 )) && PROMPT+="${(pl:$gap::$gap_char:)}"
+    PROMPT+="$right1"
+    RPROMPT=''
+
+    # 第二行
+    __p11k_out=''; __p11k_seg_count=0; __p11k_last_bg=''
+    _p11k_render_line "${l2[@]}"
+    local left2=$__p11k_out
+    __p11k_out=''; __p11k_seg_count=0; __p11k_last_bg=''
+    __p11k_right=1
+    _p11k_render_line "${r2[@]}"
+    __p11k_right=0
+    local right2=$__p11k_out
     if [[ -n $right2 ]]; then
       left2=$(_p11k_pad "$left2" "$right2")
     fi
     PROMPT+="
-$left2"
+$last_prefix$left2"
+  else
+    # ── 单行布局：左段 + RPROMPT 原生右对齐 ──
+    PROMPT="$first_prefix$left1$POWERLEVEL9K_PROMPT_ADD_NEWLINE_PREFIX"
+    RPROMPT="$right1"
   fi
   PROMPT+=$POWERLEVEL9K_PROMPT_ADD_NEWLINE_SUFFIX
   PROMPT+=" "
