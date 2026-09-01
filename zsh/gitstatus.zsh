@@ -54,8 +54,16 @@ function _p11k_gitstatus_start() {
   local daemon_log=${GITSTATUS_DAEMON_LOG:-/dev/null}
   [[ -z $daemon_log ]] && daemon_log=/dev/null
 
+  # 透传 p10k 的 VCS 上限配置（默认 -1=无限，对齐 p10k 传给 daemon 的值）
+  local -a daemon_args=(
+    -s ${POWERLEVEL9K_VCS_STAGED_MAX_NUM:--1}
+    -u ${POWERLEVEL9K_VCS_UNSTAGED_MAX_NUM:--1}
+    -d ${POWERLEVEL9K_VCS_UNTRACKED_MAX_NUM:--1}
+    -c ${POWERLEVEL9K_VCS_CONFLICTED_MAX_NUM:--1}
+    -m ${POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY:--1}
+    -t ${GITSTATUS_NUM_THREADS:-32}
+  )
   # -e：递归统计 untracked 目录内的文件（对齐 POWERLEVEL9K_VCS_RECURSE_UNTRACKED_DIRS）
-  local -a daemon_args=(-s -1 -u -1 -d -1 -c -1 -m -1 -t 32)
   (( ${POWERLEVEL9K_VCS_RECURSE_UNTRACKED_DIRS:-1} )) && daemon_args+=(-e)
 
   # 进程替换子进程在交互 shell（monitor on）下是进程组长，kill -- -$pgid
