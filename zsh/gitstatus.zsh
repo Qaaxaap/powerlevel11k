@@ -125,10 +125,18 @@ function _p11k_gitstatus_start() {
 # daemon 未启动或已崩溃时自动（重）启动。
 function _p11k_gitstatus_query() {
   (( __p11k_gitstatus_fd > 0 )) || _p11k_gitstatus_start || return 1
+  # 单飞行：上一查询未完成时跳过。注意必须先检查 pending 再更新 req_id——
+  # 若先覆盖 req_id 再跳过，旧响应的 id 与 req_id 不匹配会永远无法清除
+  # pending，后续查询全部被跳过，vcs 不再更新。
+  if (( ${+__p11k_gitstatus_pending} )); then
+    # 超时保护：响应丢失/daemon 卡住时强制重发（5 秒）
+    local -F _p11k_now=$EPOCHREALTIME
+    (( _p11k_now - __p11k_gitstatus_pending_since < 5 )) && return 0
+    unset __p11k_gitstatus_pending
+  fi
   __p11k_gitstatus_req_id=$EPOCHREALTIME
-  # 单飞行：上一查询未完成时跳过（对齐 p10k 的异步语义）
-  (( ${+__p11k_gitstatus_pending} )) && return 0
   __p11k_gitstatus_pending=1
+  __p11k_gitstatus_pending_since=$EPOCHREALTIME
   # GIT_DIR 模式：dir 字段用 :GIT_DIR 前缀（from_dotgit，对齐原版）
   local qdir=$PWD
   if [[ -n $GIT_DIR ]]; then
