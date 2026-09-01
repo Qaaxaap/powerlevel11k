@@ -45,7 +45,7 @@ _p11k_precmd() {
   done
   rm -f "$P11K_ACK"
 }
-precmd_functions+=(_p11k_precmd)
+precmd_functions=(_p11k_precmd $precmd_functions)
 "#;
 
 fn main() -> anyhow::Result<()> {
@@ -119,7 +119,8 @@ fn main() -> anyhow::Result<()> {
         }
 
         // 真实终端输入 → pty。
-        if fds[0].revents & libc::POLLIN != 0 {
+        // 注意：关闭时 poll 可能只报 POLLHUP 不带 POLLIN，此时 read 返回 0。
+        if fds[0].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
             let mut buf = [0u8; 4096];
             match stdin.read(&mut buf) {
                 Ok(0) => break, // 真实终端关闭
@@ -130,7 +131,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         // pty 输出 → 真实终端（透传）+ 游标跟踪。
-        if fds[1].revents & libc::POLLIN != 0 {
+        if fds[1].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
             let mut buf = [0u8; 8192];
             match reader.read(&mut buf) {
                 Ok(0) => break, // shell 退出
@@ -191,7 +192,14 @@ impl StateDir {
     fn create() -> io::Result<Self> {
         let dir = std::env::temp_dir().join(format!("p11k-{}", process::id()));
         fs::create_dir_all(&dir)?;
-        fs::write(dir.join(".zshrc"), ZSHRC_TEMPLATE)?;
+        // 默认用内置模板（无主题 + precmd 宣告）。P11K_ZSHRC 可指向外部
+        // .zshrc（比如手动改过的用户配置副本），引擎原样使用。
+        let zshrc = match std::env::var("P11K_ZSHRC") {
+            Ok(path) => fs::read_to_string(&path)
+                .unwrap_or_else(|_| ZSHRC_TEMPLATE.to_string()),
+            Err(_) => ZSHRC_TEMPLATE.to_string(),
+        };
+        fs::write(dir.join(".zshrc"), zshrc)?;
         Ok(Self {
             announce: dir.join("announce"),
             ack: dir.join("ack"),
