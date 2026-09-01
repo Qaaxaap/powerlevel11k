@@ -1047,6 +1047,15 @@ $last_prefix$left2"
   fi
   PROMPT+=$POWERLEVEL9K_PROMPT_ADD_NEWLINE_SUFFIX
   PROMPT+=" "
+  # OSC 133 prompt markers（对齐 p10k _p9k_prompt_prefix/suffix_left 8408-8409）：
+  # kitty 的关窗确认用 screen.cursor_at_prompt() 判断 shell 是否"停在 prompt"，
+  # 它靠这些 \e]133;A/\e]133;B 标记识别 prompt 边界。没有标记时 kitty 认为
+  # 有程序一直在运行（关窗提示 "It is running: /bin/zsh"）而弹确认框。
+  # %{...%} 包裹保证零宽、不参与宽度计算（对齐 p10k）。
+  if (( ${+__p11k_force_term_shell_integration} )); then
+    # $'...'：\e/\a 在单引号内立即转义成 ESC/BEL 字节（双引号里是字面）
+    PROMPT=$'%{\e]133;A\a%}'$PROMPT$'%{\e]133;B\a%}'
+  fi
 }
 
 # ────────────────────────── 钩子 ──────────────────────────
@@ -1310,6 +1319,17 @@ if [[ -t 0 && -t 1 && -o interactive && -o no_xtrace &&
 fi
 
 # ────────────────────────── gitstatus 初始化 ──────────────────────────
+
+# kitty 终端 shell integration（对齐 p10k _p9k_precmd_first 9125-9131）：
+# 检测到 kitty 时给 KITTY_SHELL_INTEGRATION 加 no-prompt-mark（p11k 自己发
+# OSC 133 A/B 标记，见 _p11k_prompt，避免 kitty 集成重复标记），并置
+# __p11k_force_term_shell_integration。kitty 关窗确认依赖这些标记判断光标
+# 是否停在 prompt（screen.cursor_at_prompt），缺标记会误判"有程序在运行"
+# 而弹 "It is running: /bin/zsh" 确认框。
+if [[ -n $KITTY_SHELL_INTEGRATION && KITTY_SHELL_INTEGRATION[(wIe)no-prompt-mark] -eq 0 ]]; then
+  KITTY_SHELL_INTEGRATION+=' no-prompt-mark'
+  typeset -gri __p11k_force_term_shell_integration=1
+fi
 
 source "$__p11k_zdir/gitstatus.zsh"
 _p11k_gitstatus_start
