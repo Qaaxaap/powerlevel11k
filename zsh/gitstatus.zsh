@@ -99,7 +99,11 @@ function _p11k_gitstatus_start() {
     sysread -s $((20 - $#pgid)) -t 1 -i $resp_fd 'pgid[$#pgid+1]' || return 1
   done
   [[ $pgid == ' '#<1-> ]] || return 1
-  __p11k_gitstatus_pgid=$pgid
+  # 存整数 pgid（对齐原版 gitstatus.plugin.zsh 的 `typeset -gi ... =pgid`）：
+  # pgid 是 20 位左对齐（前导空格），`-i`/算术展开会按数字解析去掉空格；
+  # 若存带空格的字符串，_p11k_gitstatus_stop 里 `<1->` 匹配失败，kill -- -$pgid
+  # 永不执行，daemon 残留成孤儿（kitty 关闭窗口时提示 /bin/zsh 仍在运行）。
+  __p11k_gitstatus_pgid=$(( pgid ))
 
   # 打开 FIFO 写端（请求通道；daemon 侧 exec <fifo 阻塞等待此处打开）
   sysopen -w -o cloexec -u req_fd -- $file_prefix.fifo || return 1
