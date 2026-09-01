@@ -33,6 +33,17 @@ impl Daemon {
     /// - read 返回 0 = EOF（zsh 退出关 FIFO 写端）→ exit 0。
     /// - 单请求处理失败不杀 daemon（对齐原版 try/catch + LOG(ERROR)）。
     pub fn run(&mut self) {
+        // PR_SET_PDEATHSIG：父进程（启动本 daemon 的 zsh）死亡时，内核给本进程
+        // 发 SIGTERM。这比 `-p` 的 kill(zsh_pid, 0) 轮询可靠——SIGTERM 关窗后
+        // zsh 变僵尸时 kill(zombie,0) 返回 0（误判仍存活），daemon 残留成孤儿。
+        // 设置后若父已死（竞态）立即返回，不进入主循环。
+        // SAFETY: prctl 标准用法；SIGTERM 默认处置会终止本进程。
+        unsafe {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+        }
+        if unsafe { libc::getppid() } == 1 {
+            return; // 父进程已死：不残留
+        }
         let mut buf: Vec<u8> = Vec::new();
         loop {
             // 1. 缓冲里已有完整消息 → 切出处理
