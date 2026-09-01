@@ -113,6 +113,11 @@ function _p11k_prompt_segment() {
     fi
     __p11k_out+="%K{$sep_bg}%F{$sep_fg}$sep%f%k"
   fi
+  # 记录首右段背景（行首 RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL 用它做前景，
+  # 对齐 p10k：箭头前景=该段背景、背景=终端透明）
+  if (( __p11k_seg_count == 0 )) && (( ${+__p11k_right} )); then
+    __p11k_right_first_bg=$bg
+  fi
   if [[ -n $bg ]]; then
     __p11k_out+="%K{$bg}"
   fi
@@ -965,6 +970,7 @@ function _p11k_prompt() {
 
   # 第一行右段（右侧分隔符 \uE0B2/\uE0B3）
   __p11k_out=''; __p11k_seg_count=0; __p11k_last_bg=''
+  unset __p11k_right_first_bg
   __p11k_right=1
   _p11k_render_line "${r1[@]}"
   unset __p11k_right
@@ -977,11 +983,15 @@ function _p11k_prompt() {
     if [[ -n $last_sym && -n $left1 ]]; then
       local end_bg=$left1_bg
       [[ -n $end_bg ]] || end_bg='default'
-      left1+="%K{$end_bg}%F{default}$last_sym%f%k"
+      # p10k 语义：行末箭头前景=最后左段背景，背景为终端透明（%k），
+      # 而不是白前景+灰背景（%F{default}+%K{end_bg}）。
+      left1+="%F{$end_bg}$last_sym%f%k"
     fi
     # 右段第一个段前加 RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL（默认 \uE0B2）
     if [[ -n $right1 ]]; then
-      right1="%F{default}$(_p11k_p9k POWERLEVEL9K_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL '\uE0B2')%f$right1"
+      local rf=$__p11k_right_first_bg
+      [[ -n $rf ]] || rf='default'
+      right1="%F{$rf}$(_p11k_p9k POWERLEVEL9K_RIGHT_PROMPT_FIRST_SEGMENT_START_SYMBOL '\uE0B2')%f$right1"
     fi
     # gap 填充（默认 \u00B7）。数量对齐 p10k：
     # COLUMNS - 左宽 - 右宽 - ZLE_RPROMPT_INDENT - 1（留余量，吸收
