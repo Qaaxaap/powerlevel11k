@@ -94,6 +94,13 @@ possible future *Rust* rendering engine (single binary, cross-shell).
 
 GPLv3. See [LICENSE](LICENSE).
 
+### Third-party notices
+
+This project vendors the powerlevel10k theme under `vendor/powerlevel10k/`,
+licensed under the MIT License, copyright (c) 2019 Roman Perepelitsa and
+contributors (the original copyright notice is kept verbatim in
+`vendor/powerlevel10k/LICENSE`).
+
 ---
 
 # powerlevel11k（中文）
@@ -182,3 +189,9 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 ## 许可证
 
 GPLv3，见 [LICENSE](LICENSE)。
+
+### 第三方声明
+
+本项目在 `vendor/powerlevel10k/` 下包含 powerlevel10k 主题，采用 MIT
+许可证，版权归 Roman Perepelitsa 及贡献者（2019）（原版权声明原样保留于
+`vendor/powerlevel10k/LICENSE`）。
