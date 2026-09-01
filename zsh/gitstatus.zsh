@@ -91,18 +91,16 @@ function _p11k_gitstatus_start() {
     print -rnu $pipe_fd -- ${(l:20:)pgid} || return
     exec <$file_prefix.fifo || return
     zf_rm -- $file_prefix.fifo || return
-    # 把 daemon 放进后台 + disown 的子 shell（`{ ... } &!`，对齐原版
-    # gitstatus.plugin.zsh:387-468）。进程替换 `<(...)` 本身不是 job，但
-    # daemon 进程会被 zsh 视作后台作业；kitty 关闭窗口时若检测到 shell 还有
-    # "正在运行的进程"就弹确认框（p10k 不弹、p11k 弹的差异就在这）。`&!`
-    # disown 让 kitty/zsh 的作业表里看不到 daemon。
-    # 注意**不要**用 exec：exec 会让 daemon 成为 zsh 的直接子进程（更易被
-    # kitty 检测），且打断上面的 disown 隔离。daemon 的退出不依赖父死信号，
-    # 而是靠 FIFO EOF（zsh 死 → 写端关 → daemon 读 EOF 退出，见 daemon.rs）。
-    {
-      $P11K_DAEMON -G $__p11k_gitstatus_version \
-        "${(@)daemon_args}" >&$pipe_fd
-    } &!
+    # 把 daemon 孤儿化（对齐 p10k worker 的 `_p9k_worker_main &` + `exec =true`，
+    # 见 internal/worker.zsh:204-211）：本进程替换子进程立即 exec =true 退出，
+    # daemon 后台化后父进程变为 init，彻底脱离 zsh 的进程树。kitty 关闭窗口
+    # 检测的是 zsh 的子孙进程——孤儿不在其中，故不再弹 "window is running
+    # /bin/zsh"。单纯 disown 只清 job 表，daemon 仍是 zsh 的孙进程，kitty 若
+    # 按进程树检测仍会命中；孤儿化才是 p10k 真正采用的机制。
+    # daemon 退出靠 FIFO EOF：zsh 死 → req_fd(FIFO 写端)关 → daemon 读 EOF 退出。
+    $P11K_DAEMON -G $__p11k_gitstatus_version \
+      "${(@)daemon_args}" >&$pipe_fd &
+    exec =true
   }
 
   # 进程替换：创建 pipe，父进程经 resp_fd 读 daemon 输出
