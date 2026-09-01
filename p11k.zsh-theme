@@ -922,7 +922,7 @@ function _p11k_prompt() {
   __p11k_out=''; __p11k_seg_count=0; __p11k_last_bg=''
   __p11k_right=1
   _p11k_render_line "${r1[@]}"
-  __p11k_right=0
+  unset __p11k_right
   local right1=$__p11k_out
 
   if (( has_second )); then
@@ -956,7 +956,7 @@ function _p11k_prompt() {
     __p11k_out=''; __p11k_seg_count=0; __p11k_last_bg=''
     __p11k_right=1
     _p11k_render_line "${r2[@]}"
-    __p11k_right=0
+    unset __p11k_right
     local right2=$__p11k_out
     if [[ -n $right2 ]]; then
       left2=$(_p11k_pad "$left2" "$right2")
