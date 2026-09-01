@@ -19,6 +19,48 @@
 use crate::index::{IndexDir, IndexEntry, RepoCaps, is_modified};
 use std::os::fd::RawFd;
 
+/// 目录 fd 栈（RAII）。扫描过程中打开的目录 fd 在栈被截断、清空或本结构
+/// 析构时全部 close。原版 gitstatusd 用 Directory RAII；这里若放任裸
+/// `Vec<RawFd>` 析构，每次扫描都会泄漏全部目录 fd——nixpkgs 级仓库一次
+/// 扫描即累积上千 fd，逼近进程 fd 上限后 openat 失败，untracked 扫描
+/// 退化为 0（提示符 ?N 偶发丢失）。
+struct DirStack {
+    fds: Vec<RawFd>,
+}
+
+impl DirStack {
+    fn new() -> Self {
+        Self { fds: Vec::new() }
+    }
+    fn push(&mut self, fd: RawFd) {
+        self.fds.push(fd);
+    }
+    fn get(&self, i: usize) -> Option<&RawFd> {
+        self.fds.get(i)
+    }
+    fn last(&self) -> Option<&RawFd> {
+        self.fds.last()
+    }
+    fn truncate(&mut self, n: usize) {
+        for fd in self.fds.drain(n..) {
+            // SAFETY: fd 为本结构先前 push 的、由 openat/dup 返回的目录 fd。
+            unsafe { libc::close(fd) };
+        }
+    }
+    fn close_all(&mut self) {
+        for fd in self.fds.drain(..) {
+            // SAFETY: 同上。
+            unsafe { libc::close(fd) };
+        }
+    }
+}
+
+impl Drop for DirStack {
+    fn drop(&mut self) {
+        self.close_all();
+    }
+}
+
 pub struct ScanOpts {
     /// 是否收集 untracked 候选（`-d` 上限 > 0）。
     pub include_untracked: bool,
@@ -43,7 +85,7 @@ pub fn scan_dirs(
 ) -> Vec<Vec<u8>> {
     let mut candidates: Vec<Vec<u8>> = Vec::new();
     // fds[d-1] = 深度 d 的目录 fd
-    let mut fds: Vec<RawFd> = Vec::new();
+    let mut fds = DirStack::new();
 
     for idx in 0..dirs.len() {
         // 打开当前目录（父 fd 来自栈，栈截断后 push）
@@ -198,11 +240,11 @@ pub fn scan_dirs(
 /// - 父 fd 不在栈（**分片内起点**：祖先目录落在相邻片）→ 清栈，从根 dup
 ///   沿 `dirs[idx].path` 逐段 openat 重建完整祖先链（对齐原版每片开头
 ///   OpenTail 的行为）。
-fn open_dir(fds: &mut Vec<RawFd>, root_fd: RawFd, dirs: &[IndexDir], idx: usize) -> Option<RawFd> {
+fn open_dir(fds: &mut DirStack, root_fd: RawFd, dirs: &[IndexDir], idx: usize) -> Option<RawFd> {
     let depth = dirs[idx].depth;
     if depth != 0 && fds.get(depth - 1).is_none() {
         // 片内起点：重建祖先链
-        fds.clear();
+        fds.close_all();
         // SAFETY: dup 语义标准。
         let mut fd = unsafe { libc::dup(root_fd) };
         if fd < 0 {
