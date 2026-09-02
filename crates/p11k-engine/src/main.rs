@@ -279,6 +279,8 @@ function fish_prompt
 end
 
 # resize：SIGWINCH 后 fish 更新 COLUMNS/LINES，声明 r。
+set -g _p11k_last_cols $COLUMNS
+set -g _p11k_last_rows $LINES
 function _p11k_winch --on-signal WINCH
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
         set -g _p11k_last_cols $COLUMNS
@@ -564,6 +566,7 @@ fn main() -> anyhow::Result<()> {
                             stdout.write_all(&placeholder_buf[end..])?;
                             placeholder_buf.clear();
                             pending_placeholder = false;
+                            at_prompt = true; // bash/fish 的"prompt 就绪"（等价 zsh 的 p 宣告）
                         } else if placeholder_buf.len() > 8192 {
                             // 防御：占位符迟迟不出现（异常配置），别憋着输出。
                             stdout.write_all(&placeholder_buf)?;
