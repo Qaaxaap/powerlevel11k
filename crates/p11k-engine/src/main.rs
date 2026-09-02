@@ -155,13 +155,13 @@ fn main() -> anyhow::Result<()> {
     // shell 自己的终端（portable-pty 的 slave）由 shell 自己管理 termios。
     let _raw = RawTerminal::enter(libc::STDIN_FILENO)?;
 
-    let (rows, cols) = tty_size().unwrap_or((24, 80));
+    let (rows, cols, xpix, ypix) = tty_size().unwrap_or((24, 80, 0, 0));
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
         rows,
         cols,
-        pixel_width: 0,
-        pixel_height: 0,
+        pixel_width: xpix,
+        pixel_height: ypix,
     })?;
 
     let mut cmd = CommandBuilder::new("zsh");
@@ -208,7 +208,7 @@ fn main() -> anyhow::Result<()> {
     File::create(&state.announce)?;
 
     let mut ann_processed: u64 = 0; // announce 文件已消费字节数
-    let mut last_size = (rows, cols);
+    let mut last_size = (rows, cols, xpix, ypix);
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
 
@@ -326,15 +326,17 @@ fn main() -> anyhow::Result<()> {
         //   2 列，用户输入从列 2 开始，永不触碰。
         for msg in drain_announce(&state.announce, &mut ann_processed) {
             // 尺寸变了就同步给 pty（shell 重排），并让右对齐用新宽度。
-            let (r, c) = tty_size().unwrap_or(last_size);
-            if (r, c) != last_size {
+            // pixel 一并透传，否则 resize 后内部 pty 的 ws_xpixel 又归零
+            // （icat 等读 TIOCGWINSZ 的命令会失效）。
+            let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
+            if (r, c, xp, yp) != last_size {
                 pair.master.resize(PtySize {
                     rows: r,
                     cols: c,
-                    pixel_width: 0,
-                    pixel_height: 0,
+                    pixel_width: xp,
+                    pixel_height: yp,
                 })?;
-                last_size = (r, c);
+                last_size = (r, c, xp, yp);
             }
             match msg {
                 AnnMsg::Header(info) => {
@@ -566,12 +568,14 @@ impl Drop for RawTerminal {
     }
 }
 
-/// 真实终端尺寸（stdout 的 TIOCGWINSZ）。
-fn tty_size() -> Option<(u16, u16)> {
+/// 真实终端尺寸（stdout 的 TIOCGWINSZ），含 pixel 尺寸。
+/// pixel 要透传给内部 pty，否则 icat 这类靠 TIOCGWINSZ 读 ws_xpixel/ws_ypixel
+/// 的命令会认为终端不支持 pixel 报告而报错。
+fn tty_size() -> Option<(u16, u16, u16, u16)> {
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
     let rc = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) };
     if rc == 0 && ws.ws_col > 0 && ws.ws_row > 0 {
-        Some((ws.ws_row, ws.ws_col))
+        Some((ws.ws_row, ws.ws_col, ws.ws_xpixel, ws.ws_ypixel))
     } else {
         None
     }
