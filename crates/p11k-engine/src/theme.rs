@@ -61,10 +61,12 @@ pub fn render_header(
 ) -> io::Result<()> {
     // OSC 133 A：prompt 开始标记（见模块注释）。
     write!(out, "\x1b]133;A\x07")?;
-    // 回行首（常规情况命令输出以换行结尾，光标已在行首；\r 保底无害）。
-    write!(out, "\r")?;
+    // 回行首并清行（常规情况命令输出以换行结尾、光标在行首，\r 保底无害；
+    // \e[K 清掉可能残留的旧行内容——resize 变大时右对齐的时间/状态在旧列残留）。
+    write!(out, "\r\x1b[K")?;
     header_row1(out, cols)?;
     write!(out, "\r\n")?;
+    write!(out, "\r\x1b[K")?;
     header_row2(out, cols, info, vcs)?;
     write!(out, "\r\n")?;
     Ok(())
