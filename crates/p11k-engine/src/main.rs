@@ -474,6 +474,9 @@ fn main() -> anyhow::Result<()> {
     // 引擎在透传流里匹配 `aa` 画前缀顶掉。占位符前的内容累积到缓冲。
     let mut pending_placeholder = false;
     let mut placeholder_buf: Vec<u8> = Vec::new();
+    // fish resize：引擎 resize pty 后等 fish 重绘输出 `aa`，匹配后重画整个
+    // prompt 窗口（header 被 fish 重绘冲掉/旧宽度残留），而不是只画 ❯。
+    let mut pending_redraw = false;
 
     // instant header（对齐 p10k instant prompt）：不等内部 shell 加载完
     // oh-my-zsh，立即用引擎 cwd 画占位 header + ❯，开窗即见 prompt；内部
@@ -490,8 +493,9 @@ fn main() -> anyhow::Result<()> {
     let mut instant_drawn = true;
 
     loop {
-        // resize 信号：同步内部 pty 尺寸（含 pixel）。内部 zsh 收 SIGWINCH →
-        // zle 重绘前 pre-redraw 检测尺寸变化宣告 r → 引擎清屏重画 prompt 窗口。
+        // resize 信号：同步内部 pty 尺寸（含 pixel）。zsh/bash 靠各自的
+        // TRAPWINCH/trap WINCH 宣告 r 后重画；fish 交互时不触发 signal event、
+        // 重绘也不输出字节、不重调 fish_prompt，只能引擎主动重画。
         if RESIZE_FLAG.swap(false, Ordering::Relaxed) {
             let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
             if (r, c, xp, yp) != last_size {
@@ -503,6 +507,13 @@ fn main() -> anyhow::Result<()> {
                 })?;
                 last_size = (r, c, xp, yp);
                 log(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
+                if shell == Shell::Fish {
+                    // fish 不立即 redraw：resize pty 后 fish 会重绘输出 `aa`，
+                    // 引擎匹配它后再重画（避免早于 fish 重绘被覆盖）。
+                    pending_placeholder = true;
+                    placeholder_buf.clear();
+                    pending_redraw = true;
+                }
             }
         }
 
@@ -562,7 +573,21 @@ fn main() -> anyhow::Result<()> {
                             let end = pos + PLACEHOLDER.len();
                             // 占位符（及之前的序列）先透传，再画前缀顶掉。
                             stdout.write_all(&placeholder_buf[..end])?;
-                            theme::render_prompt(&mut stdout)?;
+                            if pending_redraw {
+                                // fish resize：fish 重绘已输出 aa（旧 header 冲掉
+                                // 或旧宽度残留），重画整个 prompt 窗口。
+                                pending_redraw = false;
+                                let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                                theme::redraw_full(
+                                    &mut stdout,
+                                    last_size.1 as usize,
+                                    current_info.as_ref(),
+                                    vcs,
+                                )?;
+                                log("fish resize: matched aa, redrawn full");
+                            } else {
+                                theme::render_prompt(&mut stdout)?;
+                            }
                             stdout.write_all(&placeholder_buf[end..])?;
                             placeholder_buf.clear();
                             pending_placeholder = false;
