@@ -84,19 +84,20 @@ pub fn redraw_vcs(
     Ok(())
 }
 
-/// resize 后全量重画整个 prompt 窗口：清屏 + header + 前缀。
+/// resize 后重画 prompt 窗口（header + 前缀），**不清屏**。
 ///
-/// zle 收到 SIGWINCH 会清屏重画占位 prompt（冲掉引擎画的 header）；`r` 宣告
-/// 发生在 zle 重绘前，引擎 poll 处理后（晚于 zle 重绘完成）再清屏重画，
-/// 画面才不被冲掉。`info` 为 None（还没有任何 prompt）时只清屏。
+/// zle 收到 SIGWINCH 的重绘只用 `\e[J`（清输入行到屏幕底）并重画占位 `aa`，
+/// header 仍在输入行上方 2 行、上方的历史输出也都还在。这里上移 2 行重画
+/// header（新宽度）+ 前缀顶掉 aa，保留可视区域的历史（`\e[2J` 会抹掉它们）。
+/// 前置条件：光标在输入行（prompt 就绪），header 在其上方 2 行。
 pub fn redraw_full(
     out: &mut dyn Write,
     cols: usize,
     info: Option<&HeaderInfo>,
     vcs: Option<&GitStatus>,
 ) -> io::Result<()> {
-    write!(out, "\x1b[2J\x1b[H")?;
     if let Some(info) = info {
+        write!(out, "\x1b[2A")?; // 上移到 header 行 1
         render_header(out, cols, info, vcs)?;
         render_prompt(out)?;
     }

@@ -417,17 +417,23 @@ fn main() -> anyhow::Result<()> {
                     at_prompt = true; // 输入行就绪
                 }
                 AnnMsg::Resize => {
-                    // zle 已清屏重画占位 prompt（尺寸检查在循环开头已 resize
-                    // pty），这里清屏重画整个 prompt 窗口（header + 前缀）。
-                    log("r: redraw full");
-                    let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                    theme::redraw_full(
-                        &mut stdout,
-                        last_size.1 as usize,
-                        current_info.as_ref(),
-                        vcs,
-                    )?;
-                    stdout.flush()?;
+                    // zle 已清输入行并重画占位 prompt（尺寸检查在循环开头已
+                    // resize pty）。只在光标停在输入行时上移重画 header+前缀
+                    // （header 在输入行上方 2 行）；命令执行中 resize 不重画，
+                    // 等下一次 prompt 自然画，避免上移踩到命令输出。
+                    if at_prompt {
+                        log("r: redraw prompt window");
+                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                        theme::redraw_full(
+                            &mut stdout,
+                            last_size.1 as usize,
+                            current_info.as_ref(),
+                            vcs,
+                        )?;
+                        stdout.flush()?;
+                    } else {
+                        log("r: skip redraw (not at prompt)");
+                    }
                 }
             }
         }
