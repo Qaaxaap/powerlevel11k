@@ -30,6 +30,8 @@ fn spawn_engine() -> (
     // 隔离：不依赖测试机上的真实 ~/.zshrc（有 oh-my-zsh/p10k，慢且干扰断言）。
     // 指向空文件，让内部 shell 只跑引擎协议层。
     cmd.env("P11K_USER_ZSHRC", "/dev/null");
+    // 隔离：cwd 用非 git 目录，避免 git 状态同步扫描拖慢/抖动 prompt 时序。
+    cmd.cwd("/tmp");
     let child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
     let reader = pair.master.try_clone_reader().unwrap();

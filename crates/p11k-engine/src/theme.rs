@@ -24,10 +24,23 @@ const C_RESET: &str = "\x1b[0m";
 /// ❯ 宽 1 + 空格宽 1 = 2 列。
 pub const PROMPT_PREFIX: &str = "\x1b[1;32m❯\x1b[0m ";
 
-/// prompt 窗口需要的信息，由宣告行（`f\t<exit>\t<cwd>`）解析而来。
+/// prompt 窗口需要的信息，由宣告行（`h\t<exit>\t<cwd>`）解析而来。
 pub struct HeaderInfo {
     pub exit_code: Option<i32>,
     pub cwd: String,
+}
+
+/// 当前目录的 git 状态（由 p11k-gitstatus 的 API 计算，随 header 一起画）。
+pub struct GitStatus {
+    /// 本地分支名（detached HEAD 时为空）。
+    pub branch: String,
+    pub staged: usize,
+    pub unstaged: usize,
+    pub conflicted: usize,
+    pub untracked: usize,
+    pub ahead: usize,
+    pub behind: usize,
+    pub stashes: usize,
 }
 
 /// 画多行 header 到 `out`（真实终端 stdout），末尾换行把光标送到输入行行首。
@@ -40,12 +53,13 @@ pub struct HeaderInfo {
 /// 布局（M0 内置主题）：
 /// ```text
 /// user@host              HH:MM
-/// ~/some/dir             ✓ | ✘ 1
+/// ~/some/dir main +1     ✓ | ✘ 1
 /// ```
 pub fn render_header(
     out: &mut dyn Write,
     cols: usize,
     info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
 ) -> io::Result<()> {
     // OSC 133 A：prompt 开始标记。kitty 的关窗确认靠 screen.cursor_at_prompt()
     // 判断 shell 是否"停在 prompt"，它依赖这些标记识别 prompt 边界——缺标记时
@@ -64,13 +78,51 @@ pub fn render_header(
     write_row(out, cols, &l1, &r1)?;
     write!(out, "\r\n")?;
 
-    // header 行 2：目录 + 退出码。
+    // header 行 2：目录 + git 状态 + 退出码（右对齐）。
     let cwd = tilde(&info.cwd);
-    let l2 = format!("{C_BLUE}{cwd}{C_RESET}");
+    let mut l2 = format!("{C_BLUE}{cwd}{C_RESET}");
+    if let Some(v) = vcs {
+        l2.push_str(&format!(" {C_GREEN}{}{C_RESET}", vcs_text(v)));
+    }
     let r2 = exit_status(info.exit_code);
     write_row(out, cols, &l2, &r2)?;
     write!(out, "\r\n")?;
     Ok(())
+}
+
+/// 把 git 状态拼成紧凑文本（M0 简版，后续对齐 p10k 的图标/颜色）。
+fn vcs_text(v: &GitStatus) -> String {
+    let mut s = String::new();
+    if !v.branch.is_empty() {
+        s.push_str(&v.branch);
+    }
+    let mut parts = Vec::new();
+    if v.staged > 0 {
+        parts.push(format!("+{}", v.staged));
+    }
+    if v.unstaged > 0 {
+        parts.push(format!("~{}", v.unstaged));
+    }
+    if v.conflicted > 0 {
+        parts.push(format!("!{}", v.conflicted));
+    }
+    if v.untracked > 0 {
+        parts.push(format!("?{}", v.untracked));
+    }
+    if v.ahead > 0 {
+        parts.push(format!("↑{}", v.ahead));
+    }
+    if v.behind > 0 {
+        parts.push(format!("↓{}", v.behind));
+    }
+    if v.stashes > 0 {
+        parts.push(format!("≡{}", v.stashes));
+    }
+    if !parts.is_empty() {
+        s.push(' ');
+        s.push_str(&parts.join(" "));
+    }
+    s
 }
 
 /// 顶掉占位 prompt：`\r` 回输入行行首，画 `PROMPT_PREFIX`（宽 = 占位符宽）。
@@ -185,7 +237,7 @@ mod tests {
             exit_code: Some(0),
             cwd: "/tmp".into(),
         };
-        render_header(&mut out, 80, &info).unwrap();
+        render_header(&mut out, 80, &info, None).unwrap();
         let s = String::from_utf8_lossy(&out);
         assert!(
             s.starts_with("\x1b]133;A\x07"),

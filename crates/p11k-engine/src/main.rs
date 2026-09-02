@@ -43,7 +43,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use theme::HeaderInfo;
+use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
+use theme::{GitStatus, HeaderInfo};
 
 /// 占位 prompt（shell 侧 PROMPT 就是这个字符串）：宽 2 列的纯 ASCII。
 /// 必须与 `theme::PROMPT_PREFIX`（输入行前缀 `❯ `）的可见宽度严格一致，
@@ -166,6 +167,10 @@ fn main() -> anyhow::Result<()> {
     cmd.env("ZDOTDIR", &state.dir);
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
+    // portable-pty 的 spawn_command 默认把 current_dir 设成 HOME；这里显式
+    // 用引擎启动时的 cwd，让内部 shell 落在用户当初 `exec p11k` 的目录
+    // （git 状态等按此目录计算）。
+    cmd.cwd(std::env::current_dir()?);
     // 递归标志：内部 shell 及其子进程若再 exec p11k，入口检测到即降级，
     // 不会无限套娃（引导行 `[[ -z $P11K_ENGINE ]] && exec p11k` 也因此跳过）。
     cmd.env("P11K_ENGINE", "1");
@@ -205,6 +210,9 @@ fn main() -> anyhow::Result<()> {
     let mut last_size = (rows, cols);
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
+    // git 状态后端：同进程复用 p11k-gitstatus 的 RepoCache（缓存 repo，避免
+    // 每次 prompt 重扫）。首次扫描较慢，后续命中缓存。
+    let mut repo_cache = RepoCache::new(&Options::default());
 
     loop {
         let mut fds = [
@@ -281,7 +289,8 @@ fn main() -> anyhow::Result<()> {
                         "h: exit={:?} cwd={:?}",
                         info.exit_code, info.cwd
                     ));
-                    theme::render_header(&mut stdout, c as usize, &info)?;
+                    let vcs = git_status(&mut repo_cache, &info.cwd);
+                    theme::render_header(&mut stdout, c as usize, &info, vcs.as_ref())?;
                     stdout.flush()?;
                     File::create(&state.ack)?; // 放行 precmd → zsh 输出占位符
                     log("drew header, acked");
@@ -390,6 +399,34 @@ fn log(msg: &str) {
     {
         let _ = writeln!(f, "{msg}");
     }
+}
+
+/// 用 p11k-gitstatus 计算当前目录的 git 状态（非 repo 返回 None）。
+///
+/// 同进程复用 `RepoCache`：repo 句柄按 gitdir 缓存，`build_fields` 复用
+/// staged-diff 缓存（HEAD 不变时）与 libgit2 内部缓存，避免每次 prompt 全量
+/// 重扫。M0 同步调用（大仓库首次扫描会拖慢 prompt，后续异步化）。
+fn git_status(cache: &mut RepoCache, cwd: &str) -> Option<GitStatus> {
+    let repo = cache.get_or_open(cwd.as_bytes(), false)?;
+    let f = repo.build_fields(false);
+    Some(GitStatus {
+        branch: String::from_utf8_lossy(&f[field::LOCAL_BRANCH]).into_owned(),
+        staged: parse_field(&f[field::NUM_STAGED]),
+        unstaged: parse_field(&f[field::NUM_UNSTAGED]),
+        conflicted: parse_field(&f[field::NUM_CONFLICTED]),
+        untracked: parse_field(&f[field::NUM_UNTRACKED]),
+        ahead: parse_field(&f[field::COMMITS_AHEAD]),
+        behind: parse_field(&f[field::COMMITS_BEHIND]),
+        stashes: parse_field(&f[field::STASHES]),
+    })
+}
+
+/// 字段是 SafePrint 后的十进制字符串，解析为 usize；失败按 0 处理。
+fn parse_field(b: &[u8]) -> usize {
+    std::str::from_utf8(b)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
 
 /// 真实终端 raw 模式：进入时保存原始 termios，Drop 时恢复。

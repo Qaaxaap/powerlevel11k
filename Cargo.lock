@@ -627,6 +627,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libc",
+ "p11k-gitstatus",
  "portable-pty",
  "unicode-width",
 ]
