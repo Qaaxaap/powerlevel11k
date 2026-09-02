@@ -57,6 +57,56 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
 use theme::{GitStatus, HeaderInfo};
 
+/// 支持的 shell 类型。识别靠特征环境变量（引擎 exec 继承的原始环境）：逐个
+/// 检查该 shell 的特征变量，非空即命中。数据驱动，加 shell = 加一个枚举
+/// 变体 + 一个特征变量名。
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Shell {
+    Zsh,
+    Bash,
+    Fish,
+}
+
+impl Shell {
+    fn all() -> &'static [Shell] {
+        &[Shell::Zsh, Shell::Bash, Shell::Fish]
+    }
+
+    /// 该 shell 的特征环境变量名（exec 后仍保留在引擎环境里）。
+    fn marker(self) -> &'static str {
+        match self {
+            Shell::Zsh => "ZSH_VERSION",
+            Shell::Bash => "BASH_VERSION",
+            Shell::Fish => "FISH_VERSION",
+        }
+    }
+
+    #[allow(dead_code)] // 后续 spawn 对应 shell 时使用
+    fn name(self) -> &'static str {
+        match self {
+            Shell::Zsh => "zsh",
+            Shell::Bash => "bash",
+            Shell::Fish => "fish",
+        }
+    }
+}
+
+/// 识别当前 shell：逐个检查特征环境变量，非空即命中；全不中回退 `$SHELL`
+/// 的 basename（登录 shell）。
+fn detect_shell() -> Shell {
+    for &shell in Shell::all() {
+        if std::env::var_os(shell.marker()).is_some() {
+            return shell;
+        }
+    }
+    let she = std::env::var("SHELL").unwrap_or_default();
+    match she.rsplit('/').next().unwrap_or("") {
+        "bash" => Shell::Bash,
+        "fish" => Shell::Fish,
+        _ => Shell::Zsh,
+    }
+}
+
 /// 占位 prompt（shell 侧 PROMPT 就是这个字符串）：宽 2 列的纯 ASCII。
 /// 必须与 `theme::PROMPT_PREFIX`（输入行前缀 `❯ `）的可见宽度严格一致，
 /// 否则 zle 重绘输入行的列偏移对不齐。字符内容不重要，宽度是协议。
@@ -169,11 +219,12 @@ fn main() -> anyhow::Result<()> {
 
     let state = StateDir::create()?;
     log(&format!(
-        "engine start: dir={} announce={} ack={} placeholder={:?}",
+        "engine start: dir={} announce={} ack={} placeholder={:?} shell={:?}",
         state.dir.display(),
         state.announce.display(),
         state.ack.display(),
-        PLACEHOLDER
+        PLACEHOLDER,
+        detect_shell()
     ));
 
     // 真实终端（stdin 所在的 pty）必须设为 raw 模式：关掉 ISIG/ICANON/ECHO，
