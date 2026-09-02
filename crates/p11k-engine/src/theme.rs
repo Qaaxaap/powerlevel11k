@@ -1,9 +1,10 @@
-//! 主题绘制：只在 prompt 窗口接管真实终端。
+//! 主题绘制：引擎在 prompt 钩子时刻渲染主题 prompt。
 //!
-//! 分工（B 架构核心）：shell 的 zle 只画输入行（`❯ `），本模块在 shell 宣告
-//! prompt 时刻后画输入行上方的 header（多行，左侧内容 + 右侧状态右对齐）。
-//! 引擎画完 header 后光标停在输入行行首，zle 随后从那里渲染输入行——
-//! zle 对输入行的几何认知自洽（它自己画的），补全/重绘都不会碰到 header。
+//! 分工（B 架构核心）：shell 只给一个占位 prompt（宽 2 列，见 main::PLACEHOLDER），
+//! 让 zle 的几何自洽。引擎不解析 pty 输出的 ANSI，只做字节透传 + 光标定位：
+//! - `render_header`：透传占位符**之前**画多行 header（上面的行按原来顺序渲染）。
+//! - `render_prompt`：透传占位符**之后**，用 `\r` + `PROMPT_PREFIX` 顶掉占位符
+//!   （输入行这一行延后绘制）。前缀可见宽度与占位符恒等，zle 重绘列偏移对齐。
 
 use std::io::{self, Write};
 
@@ -16,55 +17,73 @@ const C_GREEN: &str = "\x1b[32m";
 const C_RED: &str = "\x1b[31m";
 const C_RESET: &str = "\x1b[0m";
 
+/// 输入行前缀（引擎在占位符透传后延后绘制、顶掉占位 prompt）。
+///
+/// 可见宽度必须与 `main::PLACEHOLDER`（占位 prompt，宽 2 列）严格一致，
+/// 否则 zle 重绘输入行的列偏移（`\r\e[<N>C`）会对不齐、旧输入清不掉。
+/// ❯ 宽 1 + 空格宽 1 = 2 列。
+pub const PROMPT_PREFIX: &str = "\x1b[1;32m❯\x1b[0m ";
+
 /// prompt 窗口需要的信息，由宣告行（`f\t<exit>\t<cwd>`）解析而来。
 pub struct HeaderInfo {
     pub exit_code: Option<i32>,
     pub cwd: String,
 }
 
-/// 填充 header 到 `out`（真实终端 stdout）。
+/// 画多行 header 到 `out`（真实终端 stdout），末尾换行把光标送到输入行行首。
 ///
-/// 前置条件：zle 刚渲染完占位 PROMPT（`HEADER_ROWS` 个空行 + ❯），
-/// 真实光标在输入行（❯ 后）。本函数保存光标位置、上移 `rows` 行画
-/// header 内容（覆盖空占位行），再恢复光标——zle 的几何认知
-/// （占位行数）与真实终端保持一致，补全菜单/重绘不再错位。
+/// 前置条件：引擎收到 announce（precmd 在等 ack，zsh 尚未输出占位 prompt），
+/// 光标在上一个命令输出末尾（常规情况为行首）。本函数按原来顺序从上到下画
+/// header 行，最后 `\r\n` 让光标停在输入行行首——随后 zsh 输出的占位 prompt
+/// 会出现在这一行，由 `render_prompt` 在透传后顶掉。
 ///
 /// 布局（M0 内置主题）：
 /// ```text
 /// user@host              HH:MM
 /// ~/some/dir             ✓ | ✘ 1
-/// ❯ _
 /// ```
-pub fn fill_header(
+pub fn render_header(
     out: &mut dyn Write,
     cols: usize,
-    rows: usize,
     info: &HeaderInfo,
 ) -> io::Result<()> {
-    // 保存光标（❯ 后）并上移 rows 行到 header 起点。
-    write!(out, "\x1b[s\x1b[{}A", rows)?;
+    // OSC 133 A：prompt 开始标记。kitty 的关窗确认靠 screen.cursor_at_prompt()
+    // 判断 shell 是否"停在 prompt"，它依赖这些标记识别 prompt 边界——缺标记时
+    // kitty 认为有程序一直在运行而弹确认框（对齐 p10k _p9k_prompt_prefix）。
+    write!(out, "\x1b]133;A\x07")?;
+    // 回行首（常规情况命令输出以换行结尾，光标已在行首；\r 保底无害）。
+    write!(out, "\r")?;
 
     let user = std::env::var("USER").unwrap_or_else(|_| "?".into());
     let host = hostname();
     let time = now_hhmm();
 
     // header 行 1：user@host + 时间（右对齐）。
-    write!(out, "\r")?;
     let l1 = format!("{C_CYAN}{user}@{host}{C_RESET}");
     let r1 = format!("{C_GRAY}{time}{C_RESET}");
     write_row(out, cols, &l1, &r1)?;
+    write!(out, "\r\n")?;
 
-    // header 行 2（如果有）：目录 + 退出码。
-    if rows >= 2 {
-        write!(out, "\r\n")?;
-        let cwd = tilde(&info.cwd);
-        let l2 = format!("{C_BLUE}{cwd}{C_RESET}");
-        let r2 = exit_status(info.exit_code);
-        write_row(out, cols, &l2, &r2)?;
-    }
+    // header 行 2：目录 + 退出码。
+    let cwd = tilde(&info.cwd);
+    let l2 = format!("{C_BLUE}{cwd}{C_RESET}");
+    let r2 = exit_status(info.exit_code);
+    write_row(out, cols, &l2, &r2)?;
+    write!(out, "\r\n")?;
+    Ok(())
+}
 
-    // 恢复光标到 ❯ 后（输入位置）。
-    write!(out, "\x1b[u")?;
+/// 顶掉占位 prompt：`\r` 回输入行行首，画 `PROMPT_PREFIX`（宽 = 占位符宽）。
+///
+/// 触发时机：`p` 宣告（zle-line-init）——zle 已渲染完占位 prompt，光标停在
+/// 占位符之后（列 = 占位符宽）。此时输出 `\r` 回到列 0，前缀逐列覆盖占位符
+/// 字符，光标停在前缀后（输入位置）。前缀只覆盖输入行前 `PLACEHOLDER.len()`
+/// 列，因此即使引擎稍慢、用户已开始输入，也不会碰到输入内容。
+pub fn render_prompt(out: &mut dyn Write) -> io::Result<()> {
+    write!(out, "\r{PROMPT_PREFIX}")?;
+    // OSC 133 B：prompt 结束标记，告诉 kitty 光标已停在输入位置（prompt 就绪），
+    // 关窗不再弹"有程序在运行"的确认框（对齐 p10k _p9k_prompt_suffix）。
+    write!(out, "\x1b]133;B\x07")?;
     Ok(())
 }
 
@@ -146,92 +165,46 @@ fn now_hhmm() -> String {
     format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
 }
 
-/// 透传流的轻量游标跟踪：只关心"当前是否在行首"（决定画 header 前要不要
-/// 先换行），以及大概列位置。完整 VT 状态机不在本架构范围内。
-#[derive(Default)]
-pub struct Cursor {
-    pub col: usize,
-    state: EscState,
-}
-
-#[derive(Default)]
-enum EscState {
-    #[default]
-    Plain,
-    /// 刚收到 ESC，等下一个字节决定序列类型。
-    Esc,
-    /// CSI（ESC [ ... 最终字节）：跳过到 0x40..=0x7E。
-    Csi,
-    /// OSC（ESC ] ... BEL/ST）：跳过到 BEL 或 ESC \。
-    Osc,
-}
-
-impl Cursor {
-    pub fn feed(&mut self, buf: &[u8]) {
-        for &b in buf {
-            match self.state {
-                EscState::Plain => match b {
-                    b'\r' | b'\n' => self.col = 0,
-                    0x08 => self.col = self.col.saturating_sub(1),
-                    0x1b => self.state = EscState::Esc,
-                    0x20..=0x7e => self.col += 1,
-                    // 多字节 UTF-8 首字节按 1 列粗算：M0 只把 col 当"是否在
-                    // 行首"用，可打印字符必然 > 0，误差不影响判断。
-                    _ => self.col += 1,
-                },
-                EscState::Esc => match b {
-                    b'[' => self.state = EscState::Csi,
-                    b']' => self.state = EscState::Osc,
-                    0x40..=0x7e => self.state = EscState::Plain, // 单字符序列（如 ESC 7/8）
-                    _ => self.state = EscState::Plain,
-                },
-                EscState::Csi => {
-                    if (0x40..=0x7e).contains(&b) {
-                        self.state = EscState::Plain;
-                        // 行首定位序列（\e[G / \e[<n>G）把光标带回行首。
-                        if b == b'G' {
-                            self.col = 0;
-                        }
-                    }
-                }
-                EscState::Osc => {
-                    if b == 0x07 {
-                        self.state = EscState::Plain;
-                    } else if b == 0x1b {
-                        // ST 的 ESC 部分：下一个字节是 \ 则结束。
-                        self.state = EscState::Esc;
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn cursor_tracks_newlines() {
-        let mut c = Cursor::default();
-        c.feed(b"abc");
-        assert_eq!(c.col, 3);
-        c.feed(b"\r\n");
-        assert_eq!(c.col, 0);
+    fn prefix_width_matches_placeholder() {
+        // 占位 prompt（crate::PLACEHOLDER = "aa"）与输入行前缀的显示宽度
+        // 必须严格一致，zle 的重绘列偏移才与真实终端对齐。
+        let ph_w = crate::PLACEHOLDER.chars().count();
+        assert_eq!(ph_w, 2, "占位符应保持 2 列");
+        assert_eq!(display_width(PROMPT_PREFIX), ph_w);
     }
 
     #[test]
-    fn cursor_skips_csi() {
-        let mut c = Cursor::default();
-        c.feed(b"ab\x1b[31mcd");
-        assert_eq!(c.col, 4); // ANSI 色序列不计列
+    fn render_header_ends_with_newline() {
+        let mut out = Vec::new();
+        let info = HeaderInfo {
+            exit_code: Some(0),
+            cwd: "/tmp".into(),
+        };
+        render_header(&mut out, 80, &info).unwrap();
+        let s = String::from_utf8_lossy(&out);
+        assert!(
+            s.starts_with("\x1b]133;A\x07"),
+            "应以 OSC 133 A 标记开头（kitty 关窗确认依赖）"
+        );
+        assert!(s.ends_with("\r\n"), "末尾应换行把光标送到输入行");
+        assert!(s.contains('@'), "header 应含 user@host");
     }
 
     #[test]
-    fn cursor_csi_g_resets_col() {
-        let mut c = Cursor::default();
-        c.feed(b"ab\x1b[10G");
-        assert_eq!(c.col, 0);
+    fn render_prompt_starts_with_cr() {
+        let mut out = Vec::new();
+        render_prompt(&mut out).unwrap();
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.starts_with("\r\x1b[1;32m❯"), "应回行首并画前缀顶掉占位符");
+        assert!(
+            s.ends_with("\x1b]133;B\x07"),
+            "应以 OSC 133 B 标记结尾（告知 kitty prompt 就绪）"
+        );
     }
 
     #[test]

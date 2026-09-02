@@ -26,7 +26,7 @@ fn spawn_engine() -> (
             pixel_height: 0,
         })
         .unwrap();
-    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_p11k"));
+    let cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_p11k"));
     let child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
     let reader = pair.master.try_clone_reader().unwrap();
@@ -68,14 +68,34 @@ fn read_until(
 #[test]
 fn initial_prompt_shows_header_and_input_line() {
     let (master, _child, mut reader, _writer) = spawn_engine();
-    let out = read_until(&master, &mut reader, "@", Duration::from_secs(10));
+    let out = read_until(&master, &mut reader, "\x1b[1;32m❯", Duration::from_secs(10));
     assert!(
         out.contains('@'),
         "header 应含 user@host，实际输出：{out:?}"
     );
-    assert!(out.contains("❯"), "输入行应含 ❯，实际输出：{out:?}");
+    assert!(out.contains('❯'), "输入行应含 ❯，实际输出：{out:?}");
     // 时间 HH:MM 右对齐存在（用 \e[..G 定位过）。
     assert!(out.contains('\x1b'), "header 应含 ANSI 颜色/定位序列");
+}
+
+/// 占位协议：占位符 `aa` 原样透传，引擎随后 `\r` + 前缀顶掉（输入行延后
+/// 绘制）。前缀的可见宽度与占位符恒等（2 列），zle 重绘列偏移由此对齐。
+#[test]
+fn placeholder_overwritten_by_prefix() {
+    let (master, _child, mut reader, _writer) = spawn_engine();
+    let out = read_until(&master, &mut reader, "\x1b[1;32m❯", Duration::from_secs(10));
+    assert!(
+        out.contains("aa"),
+        "占位符应原样透传，实际输出：{out:?}"
+    );
+    assert!(
+        out.contains("\r\x1b[1;32m❯"),
+        "透传后应回行首画前缀顶掉占位符，实际输出：{out:?}"
+    );
+    // 占位符出现在前缀之前：先透传后顶掉。
+    let ph = out.find("aa").expect("占位符存在");
+    let px = out.find("\r\x1b[1;32m❯").expect("前缀存在");
+    assert!(ph < px, "占位符应先透传再被顶掉，实际输出：{out:?}");
 }
 
 #[test]

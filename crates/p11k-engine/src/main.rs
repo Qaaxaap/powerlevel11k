@@ -1,20 +1,30 @@
-//! p11k 引擎（M0，B 架构）：pty 宿主 + 透明代理 + prompt 窗口主题。
+//! p11k 引擎（B 架构）：pty 宿主 + 终端渲染层。
 //!
 //! 职责链：
 //! 1. 用 portable-pty 起一个无主题 zsh（ZDOTDIR 指向引擎生成的临时目录，
-//!    .zshrc 里只设输入行 PROMPT 和一个 precmd 宣告钩子）。
-//! 2. 双向透传：pty 输出 → 真实终端 stdout；真实终端 stdin → pty。
-//!    vim / 命令输出由真实终端（kitty）直接渲染，引擎零介入。
-//! 3. shell 的 precmd 宣告"要出 prompt 了"（append 到 announce 文件）；
-//!    引擎收到后：排空 pty → 画 header（主题）→ touch ack 文件放行。
-//!    precmd 轮询到 ack 才返回，zle 随后渲染输入行——保证 header 先画、
-//!    输入行后画，两侧几何不打架。
+//!    .zshrc 里只设占位 PROMPT 和宣告钩子）。
+//! 2. 透传：pty 输出 → 真实终端 stdout；真实终端 stdin → pty。引擎不解析
+//!    pty 输出的 ANSI（不交给库、不写状态机），zsh 渲染什么（命令输出、
+//!    zle、占位 prompt、补全菜单）引擎一概不管，vim 等原样透传。
+//! 3. prompt 窗口由 announce 驱动的两笔绘制（不碰 pty 输出流）：
+//!    - `h`（precmd 宣告）：画多行 header（"上面的行"按原来顺序渲染），
+//!      touch ack 放行 zsh 输出占位 prompt。
+//!    - `p`（zle-line-init 宣告，zle 已渲染完占位 prompt）：回行首画真实
+//!      前缀顶掉占位符（输入行这一行延后绘制）。前缀只覆盖输入行前 2 列
+//!      （占位符所在列），即使引擎稍慢、用户已开始输入也不受影响。
+//!
+//! 几何协议：PROMPT 是纯 ASCII 占位（`aa`，宽 2 = 前缀 `❯ ` 宽），无换行、
+//! 无颜色、无 Unicode——zle 对 prompt 宽度的计算精确，这是补全重绘不错位
+//! 的前提。precmd 写 announce 后轮询 ack（precmd 不是 zle hook，阻塞安全），
+//! 保证 header 先画、占位 prompt 后输出。
 //!
 //! 已知局限（M0 记录，后续处理）：
 //! - 引擎退出即 pty master 关闭，shell 收到 SIGHUP 一起退出（透传架构固有，
 //!   后续可用 keepalive 子进程接管 pty）。
-//! - resize 时 zle 全屏重绘会冲掉 header（zle 不知道 header 存在），M0 不做
-//!   重画，记录在案。
+//! - resize / Ctrl-L 全屏重绘时 zle 重画占位 prompt，但没有 `p` 宣告跟随，
+//!   header 会被冲掉、占位符残留（zle 不知道 header 存在）。
+//! - 上一个命令未换行（echo -n）时光标在行中，header 会接在残留后。
+//!   后续处理。
 
 mod theme;
 
@@ -24,56 +34,85 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-use theme::{Cursor, HeaderInfo};
+use theme::HeaderInfo;
 
-/// 引擎画 header 的行数。必须与下面 PROMPT 占位的空行数一致。
-const HEADER_ROWS: usize = 2;
+/// 占位 prompt（shell 侧 PROMPT 就是这个字符串）：宽 2 列的纯 ASCII。
+/// 必须与 `theme::PROMPT_PREFIX`（输入行前缀 `❯ `）的可见宽度严格一致，
+/// 否则 zle 重绘输入行的列偏移对不齐。字符内容不重要，宽度是协议。
+const PLACEHOLDER: &str = "aa";
 
 /// 生成给 shell 的 bootstrap .zshrc。
 ///
-/// 几何协议：PROMPT 渲染「占位」——HEADER_ROWS 个空行 + 输入行 ❯，让
-/// zle 认为 prompt 占 HEADER_ROWS+1 行，与真实终端（引擎画 header 后）一致。
-/// 顺序：precmd 记录状态 → zle 渲染占位（几何建立）→ zle-line-init 宣告 →
-/// 引擎把 header 内容填进占位行 → ack 放行输入。
-const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap —— 无主题 shell。
-# 几何：PROMPT 是占位（header 空行 + ❯ 输入行），zle 认为 prompt 占
-# HEADER_ROWS+1 行，与真实终端一致；引擎在 zle-line-init 后填充 header。
-PROMPT=$'\n\n\e[1;32m❯\e[0m '
-RPROMPT=''
-
+/// 结构：引擎协议（函数定义）→ source 用户配置（P11K_USER_ZSHRC，可选）
+/// → 重申协议不变量（用户配置可能设 PROMPT/precmd，必须压回去）。
+/// 时序：precmd 宣告 `h` → 轮询 ack（引擎画完 header 才 touch）→ 返回后
+/// zsh 渲染占位 PROMPT（zle）→ zle-line-init 宣告 `p` → 引擎回行首画前缀
+/// 顶掉占位符。占位 prompt 由 zle 渲染（zle 几何自洽），主题两笔都由引擎画。
+const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap —— 协议层 + 用户配置。
+# ===== 引擎协议：宣告钩子函数定义 =====
 _p11k_status=0
 _p11k_pwd=$PWD
 
-# precmd：只记录退出码和目录（$? 只有这里还是命令的退出码）。
+# precmd：记录退出码和目录（$? 只有这里还是命令的退出码），宣告 `h`（画
+# header）后等引擎 ack 才返回——header 先画、占位 prompt 后输出，顺序保证。
+# precmd 不是 zle hook，sleep 轮询安全。
 _p11k_precmd() {
   _p11k_status=$?
   _p11k_pwd=$PWD
+  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd" >> "$P11K_ANNOUNCE"
+  until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
+  rm -f "$P11K_ACK"
 }
-precmd_functions=(_p11k_precmd $precmd_functions)
 
-# zle 渲染完占位（几何已建立，光标在 ❯ 后）后宣告。注意：不能在 zle hook
-# 里跑外部命令（sleep 等会挂掉 zle），所以只写文件，引擎异步填充 header
-# （引擎 poll 间隔 ~5ms，通常早于用户输入）。
+# zle 渲染完占位 prompt（几何已建立、光标在占位符后）后宣告 `p`：引擎收到
+# 后回行首画真实前缀顶掉占位符。zle hook 里不能跑外部命令（sleep 会挂 zle），
+# 只写文件，引擎异步处理（poll ~5ms）。引擎的前缀只覆盖输入行前 2 列
+# （占位符所在列），即使引擎稍慢、用户已输入，也不会碰到输入内容。
 _p11k_line_init() {
-  print -r -- "f"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd" >> "$P11K_ANNOUNCE"
+  if [[ -n "${_p11k_user_line_init:-}" ]] && (( $+functions[$_p11k_user_line_init] )); then
+    "$_p11k_user_line_init"   # 用户注册的 handler（如 autosuggestions）先跑
+  fi
+  print -r -- "p" >> "$P11K_ANNOUNCE"
 }
+
+# ===== 用户配置（可选）：先于协议不变量加载 =====
+if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
+  source "$P11K_USER_ZSHRC"
+fi
+
+# ===== 协议不变量：source 后重申（用户配置可能设 PROMPT/precmd/hooks）=====
+# PROMPT 是纯 ASCII 占位（宽 2 列，与引擎前缀 ❯ 同宽），zle 的几何
+# （prompt 宽度、输入行列偏移）由此自洽；真实 prompt 由引擎绘制。
+PROMPT='aa'
+RPROMPT=''
+precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
+# zle-line-init 单 handler：保留用户注册的（链式调用），再注册我们的宣告。
+if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p11k_line_init ]]; then
+  _p11k_user_line_init=${widgets[zle-line-init]#user:}
+fi
 zle -N zle-line-init _p11k_line_init
 
-# 补全：默认流式 list 菜单重绘时不把光标移回输入行（zsh 固有错位，
-# 裸 zsh -f 也复现）；oh-my-zsh 的 menu select 模式带光标管理
-# （\e[A 移回 + 重绘），必须显式启用。
+# 补全：compinit 激活 + complist/menu select（对齐 oh-my-zsh 的 completion.zsh，
+# 菜单行为正常）。占位符宽度 = 前缀宽度，菜单/重绘列偏移由 zle 精确计算。
+autoload -Uz compinit && compinit
+zmodload -i zsh/complist
+setopt auto_menu complete_in_word always_to_end
+unsetopt menu_complete
 zstyle ':completion:*:*:*:*:*' menu select
+zstyle ':completion:*' matcher-list 'm:{[:lower:][:upper:]}={[:upper:][:lower:]}' 'r:|=*' 'l:|=* r:|=*'
 zstyle ':completion:*' special-dirs true
+zstyle ':completion:*' list-colors ''
 zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
 "#;
 
 fn main() -> anyhow::Result<()> {
     let state = StateDir::create()?;
     log(&format!(
-        "engine start: dir={} announce={} ack={}",
+        "engine start: dir={} announce={} ack={} placeholder={:?}",
         state.dir.display(),
         state.announce.display(),
-        state.ack.display()
+        state.ack.display(),
+        PLACEHOLDER
     ));
 
     // 真实终端（stdin 所在的 pty）必须设为 raw 模式：关掉 ISIG/ICANON/ECHO，
@@ -95,7 +134,26 @@ fn main() -> anyhow::Result<()> {
     cmd.env("ZDOTDIR", &state.dir);
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
-    let mut child = pair.slave.spawn_command(cmd)?;
+
+    // double-fork 孤儿化：内部 shell 脱离引擎进程树（父变 init）。kitty 关闭
+    // 窗口时检测的是它 child 的子孙进程，孤儿不在树里 → 不弹"确认关闭"。
+    // 引擎仍持 master fd 读写（fd 不因孤儿而断）；引擎退出时 master 关闭 →
+    // slave 挂断 → 内部 shell 收 SIGHUP 退出，无需再记 PID 去 kill。
+    let mid = unsafe { libc::fork() };
+    if mid < 0 {
+        anyhow::bail!("fork failed: {}", io::Error::last_os_error());
+    }
+    if mid == 0 {
+        // 中间进程：spawn 内部 shell（父 = 本进程），随即退出使其孤儿化。
+        let status = match pair.slave.spawn_command(cmd) {
+            Ok(_) => 0,
+            Err(_) => 1,
+        };
+        unsafe { libc::_exit(status) };
+    }
+    // 引擎：回收中间进程，丢弃 slave 引用（slave 已被内部 shell 接管）。
+    let mut _st = 0;
+    unsafe { libc::waitpid(mid, &mut _st, 0) };
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader()?;
@@ -108,7 +166,6 @@ fn main() -> anyhow::Result<()> {
     // 预创建 announce 文件，保证 shell 的 >> 追加不报错。
     File::create(&state.announce)?;
 
-    let mut cursor = Cursor::default();
     let mut ann_processed: u64 = 0; // announce 文件已消费字节数
     let mut last_size = (rows, cols);
     let mut stdin = io::stdin();
@@ -149,7 +206,9 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        // pty 输出 → 真实终端（透传）+ 游标跟踪。
+        // pty 输出 → 真实终端：纯透传。zsh 渲染什么（命令输出、zle、占位
+        // prompt、补全菜单）引擎一概不管，真实终端照画；主题由 announce
+        // 驱动的两笔绘制完成（h → header 行；p → 输入行前缀顶掉占位符）。
         if fds[1].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
             let mut buf = [0u8; 8192];
             match reader.read(&mut buf) {
@@ -157,19 +216,19 @@ fn main() -> anyhow::Result<()> {
                 Ok(n) => {
                     stdout.write_all(&buf[..n])?;
                     stdout.flush()?;
-                    cursor.feed(&buf[..n]);
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()),
             }
         }
 
-        // prompt 时刻：zle 渲染完占位（几何建立），引擎填充 header 内容。
-        for info in drain_announce(&state.announce, &mut ann_processed) {
-            log(&format!(
-                "got announce: exit={:?} cwd={:?}",
-                info.exit_code, info.cwd
-            ));
+        // prompt 窗口（announce 驱动）：
+        // - `h`（precmd 宣告，zsh 在等 ack）：先画 header 行（占位 prompt 尚
+        //   未输出，"上面的行"按原来顺序渲染），touch ack 放行。
+        // - `p`（zle-line-init 宣告，占位 prompt 已显示、光标在占位符后）：
+        //   回行首画真实前缀顶掉占位符——输入行这一行延后绘制，只覆盖前
+        //   2 列，用户输入从列 2 开始，永不触碰。
+        for msg in drain_announce(&state.announce, &mut ann_processed) {
             // 尺寸变了就同步给 pty（shell 重排），并让右对齐用新宽度。
             let (r, c) = tty_size().unwrap_or(last_size);
             if (r, c) != last_size {
@@ -181,17 +240,29 @@ fn main() -> anyhow::Result<()> {
                 })?;
                 last_size = (r, c);
             }
-
-            // 填充：光标此刻在输入行（❯ 后，zle 刚渲染完占位），保存位置，
-            // 上移 HEADER_ROWS 行画内容，再恢复。zle 不等待，引擎异步完成
-            // （poll 间隔 ~5ms，早于用户输入）。
-            theme::fill_header(&mut stdout, c as usize, HEADER_ROWS, &info)?;
-            stdout.flush()?;
-            log("filled header");
+            match msg {
+                AnnMsg::Header(info) => {
+                    log(&format!(
+                        "h: exit={:?} cwd={:?}",
+                        info.exit_code, info.cwd
+                    ));
+                    theme::render_header(&mut stdout, c as usize, &info)?;
+                    stdout.flush()?;
+                    File::create(&state.ack)?; // 放行 precmd → zsh 输出占位符
+                    log("drew header, acked");
+                }
+                AnnMsg::Prompt => {
+                    log("p: draw prompt prefix");
+                    theme::render_prompt(&mut stdout)?;
+                    stdout.flush()?;
+                }
+            }
         }
     }
 
-    let _ = child.kill();
+    // 引擎退出：不显式 kill。reader/writer/master 随函数返回一起 drop，master
+    // fd 关闭 → slave 挂断 → 内部 shell（若仍活着）收 SIGHUP 退出。孤儿化后
+    // 即使引擎被 SIGKILL，内核也会关 master fd，内部 shell 同样收到 SIGHUP。
     Ok(())
 }
 
@@ -222,9 +293,17 @@ impl StateDir {
     }
 }
 
-/// 读 announce 文件的新行并解析为 prompt 信息。
-/// 行格式：`p\t<exit_code>\t<cwd>`。
-fn drain_announce(path: &Path, processed: &mut u64) -> Vec<HeaderInfo> {
+/// announce 消息：prompt 窗口的两笔绘制。
+enum AnnMsg {
+    /// `h\t<exit>\t<cwd>`：precmd 宣告（zsh 在等 ack），画 header 行。
+    Header(HeaderInfo),
+    /// `p`：zle-line-init 宣告（占位 prompt 已显示），画输入行前缀顶掉。
+    Prompt,
+}
+
+/// 读 announce 文件的新行并解析为 prompt 消息。
+/// 行格式：`h\t<exit_code>\t<cwd>`（precmd）或 `p`（zle-line-init）。
+fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
     let mut out = Vec::new();
     let Ok(mut f) = OpenOptions::new().read(true).open(path) else {
         return out;
@@ -248,19 +327,21 @@ fn drain_announce(path: &Path, processed: &mut u64) -> Vec<HeaderInfo> {
     let text = String::from_utf8_lossy(&buf);
     for line in text.lines() {
         let mut parts = line.split('\t');
-        // `f` = fill：zle 渲染完占位，请求填充 header。
-        if parts.next() != Some("f") {
-            continue;
+        match parts.next() {
+            Some("h") => {
+                let code = parts.next().and_then(|s| s.trim().parse::<i32>().ok());
+                let cwd = parts
+                    .next()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                out.push(AnnMsg::Header(HeaderInfo {
+                    exit_code: code,
+                    cwd,
+                }));
+            }
+            Some("p") => out.push(AnnMsg::Prompt),
+            _ => continue,
         }
-        let code = parts.next().and_then(|s| s.trim().parse::<i32>().ok());
-        let cwd = parts
-            .next()
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
-        out.push(HeaderInfo {
-            exit_code: code,
-            cwd,
-        });
     }
     out
 }
