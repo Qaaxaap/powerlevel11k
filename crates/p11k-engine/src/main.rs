@@ -485,6 +485,9 @@ fn main() -> anyhow::Result<()> {
     // 引擎在透传流里匹配 `aa` 画前缀顶掉。占位符前的内容累积到缓冲。
     let mut pending_placeholder = false;
     let mut placeholder_buf: Vec<u8> = Vec::new();
+    // fish resize：fish 的 aa 打印晚于引擎 redraw（时序竞态），所以 resize 后
+    // 等 fish 输出 aa 再 redraw（避免 ❯ 被 aa 覆盖）。
+    let mut pending_redraw = false;
 
     // instant header（对齐 p10k instant prompt）：不等内部 shell 加载完
     // oh-my-zsh，立即用引擎 cwd 画占位 header + ❯，开窗即见 prompt；内部
@@ -515,6 +518,93 @@ fn main() -> anyhow::Result<()> {
                 })?;
                 last_size = (r, c, xp, yp);
                 log(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
+            }
+        }
+
+        // prompt 窗口（announce 驱动）。**在 poll/透传之前处理**：fish 的
+        // resize 里 `r` 宣告和 `aa` 输出几乎同时，先 drain 让 pending 就位，
+        // 再透传 pty 时字节匹配 `aa`（否则 aa 先透传、pending 后设，漏匹配）。
+        // - `h`（precmd 宣告，shell 在等 ack）：画 header，touch ack 放行。
+        // - `p`（zle-line-init 宣告）：回行首画前缀顶掉占位符。
+        // - `r`（resize 宣告）：重画 prompt 窗口。
+        for msg in drain_announce(&state.announce, &mut ann_processed) {
+            // 尺寸变了就同步给 pty（shell 重排），并让右对齐用新宽度。
+            let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
+            if (r, c, xp, yp) != last_size {
+                pair.master.resize(PtySize {
+                    rows: r,
+                    cols: c,
+                    pixel_width: xp,
+                    pixel_height: yp,
+                })?;
+                last_size = (r, c, xp, yp);
+            }
+            match msg {
+                AnnMsg::Header(info) => {
+                    log(&format!(
+                        "h: exit={:?} cwd={:?}",
+                        info.exit_code, info.cwd
+                    ));
+                    at_prompt = false; // 新 prompt 周期：画 header 前光标不在输入行
+                    // 立即用缓存的旧状态画 header（不阻塞）；cwd 匹配才有，否则空。
+                    let vcs = last_vcs
+                        .as_ref()
+                        .filter(|(cwd, _)| cwd == &info.cwd)
+                        .and_then(|(_, s)| s.as_ref());
+                    if instant_drawn {
+                        // 第一次 precmd：清屏把 instant header 刷新成真正状态
+                        // （启动不久，屏幕上没有要保留的历史，清屏无害）。
+                        instant_drawn = false;
+                        theme::render_header_cleared(&mut stdout, c as usize, &info, vcs)?;
+                    } else {
+                        theme::render_header(&mut stdout, c as usize, &info, vcs)?;
+                    }
+                    stdout.flush()?;
+                    File::create(&state.ack)?; // 放行 precmd → shell 输出占位符
+                    // bash/fish 无 `p` 宣告：ack 后 shell 打印占位 prompt（aa），
+                    // 引擎在透传流里匹配它画前缀（zsh 靠 zle-line-init 的 `p`）。
+                    if shell != Shell::Zsh {
+                        pending_placeholder = true;
+                        placeholder_buf.clear();
+                    }
+                    // 后台算 git，算完异步重画 header 行 2。
+                    git_gen += 1;
+                    let _ = req_tx.send(GitRequest {
+                        generation: git_gen,
+                        cwd: info.cwd.clone(),
+                    });
+                    current_info = Some(info);
+                    log("drew header, acked");
+                }
+                AnnMsg::Prompt => {
+                    log("p: draw prompt prefix");
+                    theme::render_prompt(&mut stdout)?;
+                    stdout.flush()?;
+                    at_prompt = true; // 输入行就绪
+                }
+                AnnMsg::Resize => {
+                    // 尺寸检查在循环开头已 resize pty。zsh/bash 直接重画；
+                    // fish 的 aa 打印晚于引擎 redraw（时序竞态），所以只标记
+                    // pending，等 fish 输出 aa 再 redraw。
+                    if shell == Shell::Fish {
+                        pending_placeholder = true;
+                        placeholder_buf.clear();
+                        pending_redraw = true;
+                        log("r: fish resize, wait for aa");
+                    } else if at_prompt {
+                        log("r: redraw prompt window");
+                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                        theme::redraw_full(
+                            &mut stdout,
+                            last_size.1 as usize,
+                            current_info.as_ref(),
+                            vcs,
+                        )?;
+                        stdout.flush()?;
+                    } else {
+                        log("r: skip redraw (not at prompt)");
+                    }
+                }
             }
         }
 
@@ -574,7 +664,20 @@ fn main() -> anyhow::Result<()> {
                             let end = pos + PLACEHOLDER.len();
                             // 占位符（及之前的序列）先透传，再画前缀顶掉。
                             stdout.write_all(&placeholder_buf[..end])?;
-                            theme::render_prompt(&mut stdout)?;
+                            if pending_redraw {
+                                // fish resize：fish 已输出 aa，重画整个 prompt 窗口。
+                                pending_redraw = false;
+                                let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                                theme::redraw_full(
+                                    &mut stdout,
+                                    last_size.1 as usize,
+                                    current_info.as_ref(),
+                                    vcs,
+                                )?;
+                                log("fish resize: matched aa, redrawn");
+                            } else {
+                                theme::render_prompt(&mut stdout)?;
+                            }
                             stdout.write_all(&placeholder_buf[end..])?;
                             placeholder_buf.clear();
                             pending_placeholder = false;
@@ -592,91 +695,6 @@ fn main() -> anyhow::Result<()> {
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()),
-            }
-        }
-
-        // prompt 窗口（announce 驱动）：
-        // - `h`（precmd 宣告，zsh 在等 ack）：先画 header 行（占位 prompt 尚
-        //   未输出，"上面的行"按原来顺序渲染），touch ack 放行。
-        // - `p`（zle-line-init 宣告，占位 prompt 已显示、光标在占位符后）：
-        //   回行首画真实前缀顶掉占位符——输入行这一行延后绘制，只覆盖前
-        //   2 列，用户输入从列 2 开始，永不触碰。
-        for msg in drain_announce(&state.announce, &mut ann_processed) {
-            // 尺寸变了就同步给 pty（shell 重排），并让右对齐用新宽度。
-            // pixel 一并透传，否则 resize 后内部 pty 的 ws_xpixel 又归零
-            // （icat 等读 TIOCGWINSZ 的命令会失效）。
-            let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
-            if (r, c, xp, yp) != last_size {
-                pair.master.resize(PtySize {
-                    rows: r,
-                    cols: c,
-                    pixel_width: xp,
-                    pixel_height: yp,
-                })?;
-                last_size = (r, c, xp, yp);
-            }
-            match msg {
-                AnnMsg::Header(info) => {
-                    log(&format!(
-                        "h: exit={:?} cwd={:?}",
-                        info.exit_code, info.cwd
-                    ));
-                    at_prompt = false; // 新 prompt 周期：画 header 前光标不在输入行
-                    // 立即用缓存的旧状态画 header（不阻塞）；cwd 匹配才有，否则空。
-                    let vcs = last_vcs
-                        .as_ref()
-                        .filter(|(cwd, _)| cwd == &info.cwd)
-                        .and_then(|(_, s)| s.as_ref());
-                    if instant_drawn {
-                        // 第一次 precmd：清屏把 instant header 刷新成真正状态
-                        // （启动不久，屏幕上没有要保留的历史，清屏无害）。
-                        instant_drawn = false;
-                        theme::render_header_cleared(&mut stdout, c as usize, &info, vcs)?;
-                    } else {
-                        theme::render_header(&mut stdout, c as usize, &info, vcs)?;
-                    }
-                    stdout.flush()?;
-                    File::create(&state.ack)?; // 放行 precmd → zsh 输出占位符
-                    // bash/fish 无 `p` 宣告：ack 后 shell 打印占位 prompt（aa），
-                    // 引擎在透传流里匹配它画前缀（zsh 靠 zle-line-init 的 `p`）。
-                    if shell != Shell::Zsh {
-                        pending_placeholder = true;
-                        placeholder_buf.clear();
-                    }
-                    // 后台算 git，算完异步重画 header 行 2。
-                    git_gen += 1;
-                    let _ = req_tx.send(GitRequest {
-                        generation: git_gen,
-                        cwd: info.cwd.clone(),
-                    });
-                    current_info = Some(info);
-                    log("drew header, acked");
-                }
-                AnnMsg::Prompt => {
-                    log("p: draw prompt prefix");
-                    theme::render_prompt(&mut stdout)?;
-                    stdout.flush()?;
-                    at_prompt = true; // 输入行就绪
-                }
-                AnnMsg::Resize => {
-                    // zle 已清输入行并重画占位 prompt（尺寸检查在循环开头已
-                    // resize pty）。只在光标停在输入行时上移重画 header+前缀
-                    // （header 在输入行上方 2 行）；命令执行中 resize 不重画，
-                    // 等下一次 prompt 自然画，避免上移踩到命令输出。
-                    if at_prompt {
-                        log("r: redraw prompt window");
-                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                        theme::redraw_full(
-                            &mut stdout,
-                            last_size.1 as usize,
-                            current_info.as_ref(),
-                            vcs,
-                        )?;
-                        stdout.flush()?;
-                    } else {
-                        log("r: skip redraw (not at prompt)");
-                    }
-                }
             }
         }
 
