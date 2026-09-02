@@ -218,7 +218,20 @@ fn main() -> anyhow::Result<()> {
     let (req_tx, req_rx) = mpsc::channel::<GitRequest>();
     let (res_tx, res_rx) = mpsc::channel::<GitResult>();
     std::thread::spawn(move || {
-        let mut cache = RepoCache::new(&Options::default());
+        // 对齐 p10k 的 gitstatus 调用（-s -1 -u -1 -d -1 -c -1）：计数无上限，
+        // 由 prompt 层自行决定截断。默认的 cap=1 会把 nixpkgs 的 10 个
+        // untracked 显示成 ?1。
+        let mut opts = Options::default();
+        opts.max_num_staged = -1;
+        opts.max_num_unstaged = -1;
+        opts.max_num_conflicted = -1;
+        opts.max_num_untracked = -1;
+        // 扫描并行度：p10k 用 2*cpu（cap 32）。
+        opts.num_threads = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(32);
+        let mut cache = RepoCache::new(&opts);
         while let Ok(req) = req_rx.recv() {
             // 排空队列，只处理最新请求（丢弃积压的旧 cwd）。
             let mut latest = req;
