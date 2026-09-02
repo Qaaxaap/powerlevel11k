@@ -258,6 +258,54 @@ PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
 "#;
 
+/// fish 协议层（XDG_CONFIG_HOME 重定向注入）。fish_prompt 占位 + 宣告。
+///
+/// fish 没有 precmd/zle/PROMPT_COMMAND：宣告 h 放在 `fish_prompt`（渲染 prompt
+/// 时调用）里，等 ack 后返回占位 `aa`；引擎字节匹配 `aa` 画前缀顶掉（同
+/// bash，无 `p` 宣告）。resize 用 `--on-signal WINCH`。
+const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) —— 协议层 + 用户配置。
+
+# fish_prompt 在渲染主 prompt 时调用：保存退出码、宣告 `h`（画 header）后等
+# 引擎 ack 才返回。sleep 延迟 prompt 显示，正是 ack 机制需要的。
+function fish_prompt
+    set -l _st $status
+    printf 'h\t%s\t%s\n' $_st $PWD >> $P11K_ANNOUNCE
+    while not test -f $P11K_ACK
+        sleep 0.005
+    end
+    rm -f $P11K_ACK
+    # 占位 prompt（不带换行）：引擎在透传流里匹配 aa 画前缀顶掉。
+    printf 'aa'
+end
+
+# resize：SIGWINCH 后 fish 更新 COLUMNS/LINES，声明 r。
+function _p11k_winch --on-signal WINCH
+    if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
+        set -g _p11k_last_cols $COLUMNS
+        set -g _p11k_last_rows $LINES
+        printf 'r\n' >> $P11K_ANNOUNCE
+    end
+end
+
+# ===== 用户配置（可选）：先于协议不变量加载 =====
+if test -n "$P11K_USER_ZSHRC"; and test -r "$P11K_USER_ZSHRC"
+    source "$P11K_USER_ZSHRC"
+else if test -r "$HOME/.config/fish/config.fish"
+    source "$HOME/.config/fish/config.fish"
+end
+
+# ===== 协议不变量：source 后重申（用户配置可能重定义 fish_prompt）=====
+function fish_prompt
+    set -l _st $status
+    printf 'h\t%s\t%s\n' $_st $PWD >> $P11K_ANNOUNCE
+    while not test -f $P11K_ACK
+        sleep 0.005
+    end
+    rm -f $P11K_ACK
+    printf 'aa'
+end
+"#;
+
 fn main() -> anyhow::Result<()> {
     // 递归检测：P11K_ENGINE 已设 = 本引擎是被内部 shell 的 rc 引导再次调用的
     // 多余实例（用户 rc 里引导行忘了加判断，或写错）。不 panic、不加载用户
@@ -314,8 +362,8 @@ fn main() -> anyhow::Result<()> {
             cmd.arg(&state.rc);
         }
         Shell::Fish => {
-            // fish 协议层未实现，暂走 zsh 路径占位。
-            cmd.env("ZDOTDIR", &state.dir);
+            // fish 通过 XDG_CONFIG_HOME 重定向，读 $XDG_CONFIG_HOME/fish/config.fish。
+            cmd.env("XDG_CONFIG_HOME", &state.dir);
         }
     }
     cmd.env("P11K_ANNOUNCE", &state.announce);
@@ -574,9 +622,9 @@ fn main() -> anyhow::Result<()> {
                     }
                     stdout.flush()?;
                     File::create(&state.ack)?; // 放行 precmd → zsh 输出占位符
-                    // bash 无 `p` 宣告：ack 后 bash 打印 PS1 `aa`，引擎在透传
-                    // 流里匹配它画前缀（zsh 靠 zle-line-init 的 `p` 宣告）。
-                    if shell == Shell::Bash {
+                    // bash/fish 无 `p` 宣告：ack 后 shell 打印占位 prompt（aa），
+                    // 引擎在透传流里匹配它画前缀（zsh 靠 zle-line-init 的 `p`）。
+                    if shell != Shell::Zsh {
                         pending_placeholder = true;
                         placeholder_buf.clear();
                     }
@@ -660,23 +708,31 @@ impl StateDir {
 
         // 每 shell 一份协议层 rc。P11K_ZSHRC 可指向外部 .zshrc（zsh 专用，
         // 比如手动改过的用户配置副本），引擎原样使用。
-        let (rc_name, rc_content) = match shell {
-            Shell::Zsh => (
-                ".zshrc",
-                match std::env::var("P11K_ZSHRC") {
+        let rc = match shell {
+            Shell::Zsh => {
+                let rc = dir.join(".zshrc");
+                let content = match std::env::var("P11K_ZSHRC") {
                     Ok(path) => fs::read_to_string(&path)
                         .unwrap_or_else(|_| ZSHRC_TEMPLATE.to_string()),
                     Err(_) => ZSHRC_TEMPLATE.to_string(),
-                },
-            ),
-            Shell::Bash => (".bashrc", BASHRC_TEMPLATE.to_string()),
+                };
+                fs::write(&rc, content)?;
+                rc
+            }
+            Shell::Bash => {
+                let rc = dir.join(".bashrc");
+                fs::write(&rc, BASHRC_TEMPLATE)?;
+                rc
+            }
             Shell::Fish => {
-                // fish 尚未实现，先回退 zsh 协议（占位，避免编译未用告警）。
-                (".zshrc", ZSHRC_TEMPLATE.to_string())
+                // fish 通过 XDG_CONFIG_HOME 重定向，读 $XDG_CONFIG_HOME/fish/config.fish。
+                let fish_dir = dir.join("fish");
+                fs::create_dir_all(&fish_dir)?;
+                let rc = fish_dir.join("config.fish");
+                fs::write(&rc, FISH_TEMPLATE)?;
+                rc
             }
         };
-        let rc = dir.join(rc_name);
-        fs::write(&rc, rc_content)?;
         Ok(Self {
             announce: dir.join("announce"),
             ack: dir.join("ack"),
