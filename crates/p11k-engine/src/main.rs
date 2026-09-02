@@ -94,6 +94,10 @@ _p11k_line_init() {
     "$_p11k_user_line_init"   # 用户注册的 handler（如 autosuggestions）先跑
   fi
   print -r -- "p" >> "$P11K_ANNOUNCE"
+  # 正式 prompt 已就绪，防递归标记不再需要：清掉后用户手动 exec zsh 重载
+  # 配置时，新 zsh 无 P11K_ENGINE，引导行会重新 exec p11k 进引擎（主题恢复）。
+  # 若不清，P11K_ENGINE=1 会让引导行跳过、落到无主题的普通 zsh。
+  unset P11K_ENGINE
 }
 
 # ===== 用户配置（可选）：先于协议不变量加载 =====
