@@ -199,6 +199,49 @@ zstyle ':completion:*' list-colors ''
 zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
 "#;
 
+/// bash 协议层（`--rcfile` 注入）。占位 PS1 + PROMPT_COMMAND 宣告。
+///
+/// bash 没有 zle（没有 zle-line-init），所以没有 `p` 宣告：引擎 ack 后 bash
+/// 直接打印 PS1（`aa`），引擎靠字节匹配 `aa` 画前缀顶掉（见主循环）。resize
+/// 用 trap WINCH 检测尺寸变化宣告 `r`。
+const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) —— 协议层 + 用户配置。
+PS1='aa'
+
+# PROMPT_COMMAND 在 PS1 显示前执行：记录退出码、宣告 `h`（画 header）后等
+# 引擎 ack 才返回。bash 里 sleep 延迟 prompt 显示，正是 ack 机制需要的。
+_p11k_prompt_command() {
+  local _st=$?
+  printf 'h\t%s\t%s\n' "$_st" "$PWD" >> "$P11K_ANNOUNCE"
+  until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
+  rm -f "$P11K_ACK"
+}
+PROMPT_COMMAND=_p11k_prompt_command
+
+# resize：SIGWINCH 后 bash 更新 COLUMNS/LINES，trap 检测变化宣告 `r`。
+_p11k_last_cols=$COLUMNS
+_p11k_last_rows=$LINES
+_p11k_winch() {
+  if [[ $COLUMNS != $_p11k_last_cols || $LINES != $_p11k_last_rows ]]; then
+    _p11k_last_cols=$COLUMNS
+    _p11k_last_rows=$LINES
+    printf 'r\n' >> "$P11K_ANNOUNCE"
+  fi
+}
+trap '_p11k_winch' WINCH
+
+# ===== 用户配置（可选）：先于协议不变量加载 =====
+if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
+  source "$P11K_USER_ZSHRC"
+elif [[ -r "$HOME/.bashrc" ]]; then
+  source "$HOME/.bashrc"
+fi
+
+# ===== 协议不变量：source 后重申（用户配置可能改 PS1/PROMPT_COMMAND）=====
+PS1='aa'
+PROMPT_COMMAND=_p11k_prompt_command
+trap '_p11k_winch' WINCH
+"#;
+
 fn main() -> anyhow::Result<()> {
     // 递归检测：P11K_ENGINE 已设 = 本引擎是被内部 shell 的 rc 引导再次调用的
     // 多余实例（用户 rc 里引导行忘了加判断，或写错）。不 panic、不加载用户
@@ -217,14 +260,15 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
-    let state = StateDir::create()?;
+    let shell = detect_shell();
+    let state = StateDir::create(shell)?;
     log(&format!(
         "engine start: dir={} announce={} ack={} placeholder={:?} shell={:?}",
         state.dir.display(),
         state.announce.display(),
         state.ack.display(),
         PLACEHOLDER,
-        detect_shell()
+        shell
     ));
 
     // 真实终端（stdin 所在的 pty）必须设为 raw 模式：关掉 ISIG/ICANON/ECHO，
@@ -242,8 +286,22 @@ fn main() -> anyhow::Result<()> {
         pixel_height: ypix,
     })?;
 
-    let mut cmd = CommandBuilder::new("zsh");
-    cmd.env("ZDOTDIR", &state.dir);
+    let mut cmd = CommandBuilder::new(shell.name());
+    match shell {
+        // zsh：ZDOTDIR 指向引擎目录，读其中的 .zshrc。
+        Shell::Zsh => {
+            cmd.env("ZDOTDIR", &state.dir);
+        }
+        // bash：--rcfile 指定协议层（交互 bash 才读 rcfile）。
+        Shell::Bash => {
+            cmd.arg("--rcfile");
+            cmd.arg(&state.rc);
+        }
+        Shell::Fish => {
+            // fish 协议层未实现，暂走 zsh 路径占位。
+            cmd.env("ZDOTDIR", &state.dir);
+        }
+    }
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
     // portable-pty 的 spawn_command 默认把 current_dir 设成 HOME；这里显式
@@ -346,6 +404,10 @@ fn main() -> anyhow::Result<()> {
     // 光标是否停在输入行（p 宣告后、用户回车前）——异步结果只在此时重画，
     // 否则 redraw 的 \e[1A 会画到命令输出上。
     let mut at_prompt = false;
+    // bash 无 zle-line-init（无 `p` 宣告）：ack 后 bash 直接打印 PS1 `aa`，
+    // 引擎在透传流里匹配 `aa` 画前缀顶掉。占位符前的内容累积到缓冲。
+    let mut pending_placeholder = false;
+    let mut placeholder_buf: Vec<u8> = Vec::new();
 
     // instant header（对齐 p10k instant prompt）：不等内部 shell 加载完
     // oh-my-zsh，立即用引擎 cwd 画占位 header + ❯，开窗即见 prompt；内部
@@ -422,12 +484,31 @@ fn main() -> anyhow::Result<()> {
         // pty 输出 → 真实终端：纯透传。zsh 渲染什么（命令输出、zle、占位
         // prompt、补全菜单）引擎一概不管，真实终端照画；主题由 announce
         // 驱动的两笔绘制完成（h → header 行；p → 输入行前缀顶掉占位符）。
+        // bash 无 `p` 宣告：pending_placeholder 时在流里匹配占位符 `aa` 画前缀。
         if fds[1].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
             let mut buf = [0u8; 8192];
             match reader.read(&mut buf) {
                 Ok(0) => break, // shell 退出
                 Ok(n) => {
-                    stdout.write_all(&buf[..n])?;
+                    if pending_placeholder {
+                        placeholder_buf.extend_from_slice(&buf[..n]);
+                        if let Some(pos) = find_bytes(&placeholder_buf, PLACEHOLDER.as_bytes()) {
+                            let end = pos + PLACEHOLDER.len();
+                            // 占位符（及之前的序列）先透传，再画前缀顶掉。
+                            stdout.write_all(&placeholder_buf[..end])?;
+                            theme::render_prompt(&mut stdout)?;
+                            stdout.write_all(&placeholder_buf[end..])?;
+                            placeholder_buf.clear();
+                            pending_placeholder = false;
+                        } else if placeholder_buf.len() > 8192 {
+                            // 防御：占位符迟迟不出现（异常配置），别憋着输出。
+                            stdout.write_all(&placeholder_buf)?;
+                            placeholder_buf.clear();
+                            pending_placeholder = false;
+                        }
+                    } else {
+                        stdout.write_all(&buf[..n])?;
+                    }
                     stdout.flush()?;
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -477,6 +558,12 @@ fn main() -> anyhow::Result<()> {
                     }
                     stdout.flush()?;
                     File::create(&state.ack)?; // 放行 precmd → zsh 输出占位符
+                    // bash 无 `p` 宣告：ack 后 bash 打印 PS1 `aa`，引擎在透传
+                    // 流里匹配它画前缀（zsh 靠 zle-line-init 的 `p` 宣告）。
+                    if shell == Shell::Bash {
+                        pending_placeholder = true;
+                        placeholder_buf.clear();
+                    }
                     // 后台算 git，算完异步重画 header 行 2。
                     git_gen += 1;
                     let _ = req_tx.send(GitRequest {
@@ -541,29 +628,44 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 引擎的临时工作目录：ZDOTDIR（.zshrc）+ announce/ack 文件。
+/// 引擎的临时工作目录：rc 文件（按 shell）+ announce/ack 文件。
 struct StateDir {
     dir: PathBuf,
+    /// 协议层 rc 文件路径（zsh 用 ZDOTDIR 指向它；bash 用 --rcfile）。
+    rc: PathBuf,
     announce: PathBuf,
     ack: PathBuf,
 }
 
 impl StateDir {
-    fn create() -> io::Result<Self> {
+    fn create(shell: Shell) -> io::Result<Self> {
         let dir = std::env::temp_dir().join(format!("p11k-{}", process::id()));
         fs::create_dir_all(&dir)?;
-        // 默认用内置模板（无主题 + precmd 宣告）。P11K_ZSHRC 可指向外部
-        // .zshrc（比如手动改过的用户配置副本），引擎原样使用。
-        let zshrc = match std::env::var("P11K_ZSHRC") {
-            Ok(path) => fs::read_to_string(&path)
-                .unwrap_or_else(|_| ZSHRC_TEMPLATE.to_string()),
-            Err(_) => ZSHRC_TEMPLATE.to_string(),
+
+        // 每 shell 一份协议层 rc。P11K_ZSHRC 可指向外部 .zshrc（zsh 专用，
+        // 比如手动改过的用户配置副本），引擎原样使用。
+        let (rc_name, rc_content) = match shell {
+            Shell::Zsh => (
+                ".zshrc",
+                match std::env::var("P11K_ZSHRC") {
+                    Ok(path) => fs::read_to_string(&path)
+                        .unwrap_or_else(|_| ZSHRC_TEMPLATE.to_string()),
+                    Err(_) => ZSHRC_TEMPLATE.to_string(),
+                },
+            ),
+            Shell::Bash => (".bashrc", BASHRC_TEMPLATE.to_string()),
+            Shell::Fish => {
+                // fish 尚未实现，先回退 zsh 协议（占位，避免编译未用告警）。
+                (".zshrc", ZSHRC_TEMPLATE.to_string())
+            }
         };
-        fs::write(dir.join(".zshrc"), zshrc)?;
+        let rc = dir.join(rc_name);
+        fs::write(&rc, rc_content)?;
         Ok(Self {
             announce: dir.join("announce"),
             ack: dir.join("ack"),
             dir,
+            rc,
         })
     }
 }
@@ -645,6 +747,14 @@ fn log(msg: &str) {
     {
         let _ = writeln!(f, "{msg}");
     }
+}
+
+/// 在 `haystack` 里找子切片 `needle` 的首位置（字节匹配）。
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// 用 p11k-gitstatus 计算当前目录的 git 状态（非 repo 返回 None）。
