@@ -574,17 +574,21 @@ fn main() -> anyhow::Result<()> {
                             // 占位符（及之前的序列）先透传，再画前缀顶掉。
                             stdout.write_all(&placeholder_buf[..end])?;
                             if pending_redraw {
-                                // fish resize：fish 重绘已输出 aa（旧 header 冲掉
-                                // 或旧宽度残留），重画整个 prompt 窗口。
+                                // fish resize：fish 重绘会滚动屏幕（buffer 折行
+                                // 变化），\e[2A 相对定位失效，直接清屏重画整个
+                                // prompt 窗口（历史已被 fish 重排打乱）。
                                 pending_redraw = false;
                                 let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                                theme::redraw_full(
-                                    &mut stdout,
-                                    last_size.1 as usize,
-                                    current_info.as_ref(),
-                                    vcs,
-                                )?;
-                                log("fish resize: matched aa, redrawn full");
+                                if let Some(info) = &current_info {
+                                    theme::render_header_cleared(
+                                        &mut stdout,
+                                        last_size.1 as usize,
+                                        info,
+                                        vcs,
+                                    )?;
+                                    theme::render_prompt(&mut stdout)?;
+                                }
+                                log("fish resize: matched aa, cleared+redrawn");
                             } else {
                                 theme::render_prompt(&mut stdout)?;
                             }
