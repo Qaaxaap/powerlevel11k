@@ -68,7 +68,7 @@ fn read_until(
 #[test]
 fn initial_prompt_shows_header_and_input_line() {
     let (master, _child, mut reader, _writer) = spawn_engine();
-    let out = read_until(&master, &mut reader, "❯", Duration::from_secs(10));
+    let out = read_until(&master, &mut reader, "@", Duration::from_secs(10));
     assert!(
         out.contains('@'),
         "header 应含 user@host，实际输出：{out:?}"

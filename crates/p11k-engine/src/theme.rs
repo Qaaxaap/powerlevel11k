@@ -16,13 +16,18 @@ const C_GREEN: &str = "\x1b[32m";
 const C_RED: &str = "\x1b[31m";
 const C_RESET: &str = "\x1b[0m";
 
-/// prompt 窗口需要的信息，由宣告行（`p\t<exit>\t<cwd>`）解析而来。
+/// prompt 窗口需要的信息，由宣告行（`f\t<exit>\t<cwd>`）解析而来。
 pub struct HeaderInfo {
     pub exit_code: Option<i32>,
     pub cwd: String,
 }
 
-/// 画 header 到 `out`（真实终端 stdout）。
+/// 填充 header 到 `out`（真实终端 stdout）。
+///
+/// 前置条件：zle 刚渲染完占位 PROMPT（`HEADER_ROWS` 个空行 + ❯），
+/// 真实光标在输入行（❯ 后）。本函数保存光标位置、上移 `rows` 行画
+/// header 内容（覆盖空占位行），再恢复光标——zle 的几何认知
+/// （占位行数）与真实终端保持一致，补全菜单/重绘不再错位。
 ///
 /// 布局（M0 内置主题）：
 /// ```text
@@ -30,27 +35,41 @@ pub struct HeaderInfo {
 /// ~/some/dir             ✓ | ✘ 1
 /// ❯ _
 /// ```
-/// 画完最后一行 `\r\n`，光标停在输入行行首，等 zle 渲染输入行。
-pub fn draw_header(out: &mut dyn Write, cols: usize, info: &HeaderInfo) -> io::Result<()> {
+pub fn fill_header(
+    out: &mut dyn Write,
+    cols: usize,
+    rows: usize,
+    info: &HeaderInfo,
+) -> io::Result<()> {
+    // 保存光标（❯ 后）并上移 rows 行到 header 起点。
+    write!(out, "\x1b[s\x1b[{}A", rows)?;
+
     let user = std::env::var("USER").unwrap_or_else(|_| "?".into());
     let host = hostname();
     let time = now_hhmm();
 
+    // header 行 1：user@host + 时间（右对齐）。
+    write!(out, "\r")?;
     let l1 = format!("{C_CYAN}{user}@{host}{C_RESET}");
     let r1 = format!("{C_GRAY}{time}{C_RESET}");
-    write_row(out, cols, &l1, &r1, true)?;
+    write_row(out, cols, &l1, &r1)?;
 
-    let cwd = tilde(&info.cwd);
-    let l2 = format!("{C_BLUE}{cwd}{C_RESET}");
-    let r2 = exit_status(info.exit_code);
-    write_row(out, cols, &l2, &r2, true)?; // 最后一行也换行，进入输入行
+    // header 行 2（如果有）：目录 + 退出码。
+    if rows >= 2 {
+        write!(out, "\r\n")?;
+        let cwd = tilde(&info.cwd);
+        let l2 = format!("{C_BLUE}{cwd}{C_RESET}");
+        let r2 = exit_status(info.exit_code);
+        write_row(out, cols, &l2, &r2)?;
+    }
 
+    // 恢复光标到 ❯ 后（输入位置）。
+    write!(out, "\x1b[u")?;
     Ok(())
 }
 
-/// 画一行：左段 + 右段右对齐（绝对列定位，不依赖游标跟踪）。
-/// `newline` 为 true 时行末输出 `\r\n`。
-fn write_row(out: &mut dyn Write, cols: usize, left: &str, right: &str, newline: bool) -> io::Result<()> {
+/// 画一行：左段 + 右段右对齐（绝对列定位，不依赖游标跟踪）。不换行。
+fn write_row(out: &mut dyn Write, cols: usize, left: &str, right: &str) -> io::Result<()> {
     out.write_all(left.as_bytes())?;
 
     // 宽度按纯文本算（ANSI 序列不计入显示宽度）。
@@ -62,9 +81,6 @@ fn write_row(out: &mut dyn Write, cols: usize, left: &str, right: &str, newline:
         write!(out, "\x1b[{}G", start)?;
     }
     out.write_all(right.as_bytes())?;
-    if newline {
-        out.write_all(b"\r\n")?;
-    }
     Ok(())
 }
 

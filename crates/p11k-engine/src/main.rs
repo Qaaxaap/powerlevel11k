@@ -26,26 +26,45 @@ use std::process;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use theme::{Cursor, HeaderInfo};
 
+/// 引擎画 header 的行数。必须与下面 PROMPT 占位的空行数一致。
+const HEADER_ROWS: usize = 2;
+
 /// 生成给 shell 的 bootstrap .zshrc。
-/// 输入行 PROMPT 由 zle 画（ANSI 绿色粗体 ❯），header 由引擎画。
+///
+/// 几何协议：PROMPT 渲染「占位」——HEADER_ROWS 个空行 + 输入行 ❯，让
+/// zle 认为 prompt 占 HEADER_ROWS+1 行，与真实终端（引擎画 header 后）一致。
+/// 顺序：precmd 记录状态 → zle 渲染占位（几何建立）→ zle-line-init 宣告 →
+/// 引擎把 header 内容填进占位行 → ack 放行输入。
 const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap —— 无主题 shell。
-# 输入行（含 ❯）由 zle 画；上方 header 由引擎画。
-PROMPT=$'\e[1;32m❯\e[0m '
+# 几何：PROMPT 是占位（header 空行 + ❯ 输入行），zle 认为 prompt 占
+# HEADER_ROWS+1 行，与真实终端一致；引擎在 zle-line-init 后填充 header。
+PROMPT=$'\n\n\e[1;32m❯\e[0m '
 RPROMPT=''
 
-# prompt 时刻宣告：追加一行到 announce 文件，然后轮询 ack 文件。
-# 引擎画完 header 才 touch ack；超时（引擎死了）则放行，shell 照常用。
+_p11k_status=0
+_p11k_pwd=$PWD
+
+# precmd：只记录退出码和目录（$? 只有这里还是命令的退出码）。
 _p11k_precmd() {
-  print -r -- "p"$'\t'"$?"$'\t'"$PWD" >> "$P11K_ANNOUNCE"
-  rm -f "$P11K_ACK"
-  local i
-  for (( i = 0; i < 200; i++ )); do
-    [[ -f $P11K_ACK ]] && break
-    sleep 0.01
-  done
-  rm -f "$P11K_ACK"
+  _p11k_status=$?
+  _p11k_pwd=$PWD
 }
 precmd_functions=(_p11k_precmd $precmd_functions)
+
+# zle 渲染完占位（几何已建立，光标在 ❯ 后）后宣告。注意：不能在 zle hook
+# 里跑外部命令（sleep 等会挂掉 zle），所以只写文件，引擎异步填充 header
+# （引擎 poll 间隔 ~5ms，通常早于用户输入）。
+_p11k_line_init() {
+  print -r -- "f"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd" >> "$P11K_ANNOUNCE"
+}
+zle -N zle-line-init _p11k_line_init
+
+# 补全：默认流式 list 菜单重绘时不把光标移回输入行（zsh 固有错位，
+# 裸 zsh -f 也复现）；oh-my-zsh 的 menu select 模式带光标管理
+# （\e[A 移回 + 重绘），必须显式启用。
+zstyle ':completion:*:*:*:*:*' menu select
+zstyle ':completion:*' special-dirs true
+zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
 "#;
 
 fn main() -> anyhow::Result<()> {
@@ -145,11 +164,11 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        // prompt 时刻：画 header。
+        // prompt 时刻：zle 渲染完占位（几何建立），引擎填充 header 内容。
         for info in drain_announce(&state.announce, &mut ann_processed) {
             log(&format!(
-                "got announce: exit={:?} cwd={:?} cursor.col={}",
-                info.exit_code, info.cwd, cursor.col
+                "got announce: exit={:?} cwd={:?}",
+                info.exit_code, info.cwd
             ));
             // 尺寸变了就同步给 pty（shell 重排），并让右对齐用新宽度。
             let (r, c) = tty_size().unwrap_or(last_size);
@@ -163,17 +182,12 @@ fn main() -> anyhow::Result<()> {
                 last_size = (r, c);
             }
 
-            // 上一命令输出未换行结尾则先换行，再画 header。
-            if cursor.col > 0 {
-                stdout.write_all(b"\r\n")?;
-            }
-            theme::draw_header(&mut stdout, c as usize, &info)?;
+            // 填充：光标此刻在输入行（❯ 后，zle 刚渲染完占位），保存位置，
+            // 上移 HEADER_ROWS 行画内容，再恢复。zle 不等待，引擎异步完成
+            // （poll 间隔 ~5ms，早于用户输入）。
+            theme::fill_header(&mut stdout, c as usize, HEADER_ROWS, &info)?;
             stdout.flush()?;
-            cursor.col = 0; // header 画完以 \r\n 收尾，光标在输入行行首
-
-            // 放行：zle 现在渲染输入行。
-            File::create(&state.ack)?;
-            log(&format!("touched ack: {}", state.ack.display()));
+            log("filled header");
         }
     }
 
@@ -234,7 +248,8 @@ fn drain_announce(path: &Path, processed: &mut u64) -> Vec<HeaderInfo> {
     let text = String::from_utf8_lossy(&buf);
     for line in text.lines() {
         let mut parts = line.split('\t');
-        if parts.next() != Some("p") {
+        // `f` = fill：zle 渲染完占位，请求填充 header。
+        if parts.next() != Some("f") {
             continue;
         }
         let code = parts.next().and_then(|s| s.trim().parse::<i32>().ok());
