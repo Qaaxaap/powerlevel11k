@@ -89,9 +89,13 @@ cargo build -p p11k-engine
 # ~/.zshrc (make sure ZSH_THEME is commented out there).
 P11K_USER_ZSHRC=/tmp/p11k-usertest.zshrc target/debug/p11k
 
-# or, as a "theme": add one line to ~/.zshrc and open a shell
-#   [[ -z "$P11K_ENGINE" ]] && exec /path/to/target/debug/p11k
-exec /path/to/target/debug/p11k
+# or, as a "theme": add one line to the shell's rc and open a shell.
+# The engine cannot auto-detect the launching shell after exec (version vars
+# are not exported, parent is the terminal), so pass it explicitly:
+#   zsh:  [[ -z "$P11K_ENGINE" ]] && exec /path/to/p11k --shell zsh
+#   bash: [[ -z "$P11K_ENGINE" ]] && exec /path/to/p11k --shell bash
+#   fish: if not set -q P11K_ENGINE; exec /path/to/p11k --shell fish; end
+exec /path/to/target/debug/p11k --shell zsh
 ```
 
 Known limits (M0, tracked): full-screen zle redraws on resize can clobber the

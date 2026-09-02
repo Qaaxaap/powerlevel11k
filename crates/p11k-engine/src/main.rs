@@ -19,7 +19,7 @@
 //! 保证 header 先画、占位 prompt 后输出。
 //!
 //! 部署（主题形态，exec 引导）：用户 rc 里放一行
-//! `[[ -z "$P11K_ENGINE" ]] && exec p11k`（见 README）。引擎入口据此：
+//! `[[ -z "$P11K_ENGINE" ]] && exec p11k --shell zsh`（见 README）。引擎入口据此：
 //! - 正常（P11K_ENGINE 未设）：spawn 内部 shell 时设 `P11K_ENGINE=1`；
 //! - 递归（P11K_ENGINE 已设）：用户 rc 的引导行漏了判断 → 降级 exec 干净
 //!   shell 并打印修复提示，不 panic、不加载用户 rc，内部 shell（父）照常。
@@ -91,9 +91,25 @@ impl Shell {
     }
 }
 
-/// 识别当前 shell：逐个检查特征环境变量，非空即命中；全不中回退 `$SHELL`
-/// 的 basename（登录 shell）。
+/// 从命令行参数解析 `--shell <name>`（引导行显式标明 shell，exec 后唯一
+/// 可靠信号：版本变量不 export、父进程是终端、$SHELL 是登录 shell）。
+fn shell_from_args() -> Option<Shell> {
+    let args: Vec<String> = std::env::args().collect();
+    let pos = args.iter().position(|a| a == "--shell")?;
+    match args.get(pos + 1).map(|s| s.as_str()) {
+        Some("zsh") => Some(Shell::Zsh),
+        Some("bash") => Some(Shell::Bash),
+        Some("fish") => Some(Shell::Fish),
+        _ => None,
+    }
+}
+
+/// 识别当前 shell：优先 `--shell` 参数；否则逐个检查特征环境变量（exec 后
+/// 通常不可靠，仅作兜底）；全不中回退 `$SHELL` 的 basename（登录 shell）。
 fn detect_shell() -> Shell {
+    if let Some(s) = shell_from_args() {
+        return s;
+    }
     for &shell in Shell::all() {
         if std::env::var_os(shell.marker()).is_some() {
             return shell;
@@ -251,7 +267,7 @@ fn main() -> anyhow::Result<()> {
         eprintln!(
             "p11k: 检测到递归加载（已在 p11k 会话内又启动了 p11k）。\n\
              p11k: 请确认 ~/.zshrc 里的引导行带判断，例如：\n\
-             p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k"
+             p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k --shell zsh"
         );
         use std::os::unix::process::CommandExt;
         // exec 替换本进程为干净 shell（-f = 不读任何 rc，避免再次触发引导）。
