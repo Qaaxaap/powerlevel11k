@@ -265,10 +265,23 @@ trap '_p11k_winch' WINCH
 /// bash，无 `p` 宣告）。resize 用 `--on-signal WINCH`。
 const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) —— 协议层 + 用户配置。
 
-# fish_prompt 在渲染主 prompt 时调用：保存退出码、宣告 `h`（画 header）后等
-# 引擎 ack 才返回。sleep 延迟 prompt 显示，正是 ack 机制需要的。
+set -g _p11k_last_cols $COLUMNS
+set -g _p11k_last_rows $LINES
+
+# fish_prompt 在渲染主 prompt 时调用（含 resize 重绘时重新调用，见 fish 的
+# repaint 机制）。两种情形：
+# - 尺寸变化（resize 重绘）：宣告 `r`（引擎重画 header+前缀），不宣告 h、
+#   不等 ack（这不是新 prompt）。
+# - 正常 prompt：宣告 `h`（画 header）后等引擎 ack 才返回。
 function fish_prompt
     set -l _st $status
+    if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
+        set -g _p11k_last_cols $COLUMNS
+        set -g _p11k_last_rows $LINES
+        printf 'r\n' >> $P11K_ANNOUNCE
+        printf 'aa'
+        return
+    end
     printf 'h\t%s\t%s\n' $_st $PWD >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
@@ -276,17 +289,6 @@ function fish_prompt
     rm -f $P11K_ACK
     # 占位 prompt（不带换行）：引擎在透传流里匹配 aa 画前缀顶掉。
     printf 'aa'
-end
-
-# resize：SIGWINCH 后 fish 更新 COLUMNS/LINES，声明 r。
-set -g _p11k_last_cols $COLUMNS
-set -g _p11k_last_rows $LINES
-function _p11k_winch --on-signal WINCH
-    if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
-        set -g _p11k_last_cols $COLUMNS
-        set -g _p11k_last_rows $LINES
-        printf 'r\n' >> $P11K_ANNOUNCE
-    end
 end
 
 # ===== 用户配置（可选）：先于协议不变量加载 =====
@@ -297,8 +299,17 @@ else if test -r "$HOME/.config/fish/config.fish"
 end
 
 # ===== 协议不变量：source 后重申（用户配置可能重定义 fish_prompt）=====
+set -g _p11k_last_cols $COLUMNS
+set -g _p11k_last_rows $LINES
 function fish_prompt
     set -l _st $status
+    if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
+        set -g _p11k_last_cols $COLUMNS
+        set -g _p11k_last_rows $LINES
+        printf 'r\n' >> $P11K_ANNOUNCE
+        printf 'aa'
+        return
+    end
     printf 'h\t%s\t%s\n' $_st $PWD >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
@@ -474,9 +485,6 @@ fn main() -> anyhow::Result<()> {
     // 引擎在透传流里匹配 `aa` 画前缀顶掉。占位符前的内容累积到缓冲。
     let mut pending_placeholder = false;
     let mut placeholder_buf: Vec<u8> = Vec::new();
-    // fish resize：引擎 resize pty 后等 fish 重绘输出 `aa`，匹配后重画整个
-    // prompt 窗口（header 被 fish 重绘冲掉/旧宽度残留），而不是只画 ❯。
-    let mut pending_redraw = false;
 
     // instant header（对齐 p10k instant prompt）：不等内部 shell 加载完
     // oh-my-zsh，立即用引擎 cwd 画占位 header + ❯，开窗即见 prompt；内部
@@ -507,13 +515,6 @@ fn main() -> anyhow::Result<()> {
                 })?;
                 last_size = (r, c, xp, yp);
                 log(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
-                if shell == Shell::Fish {
-                    // fish 不立即 redraw：resize pty 后 fish 会重绘输出 `aa`，
-                    // 引擎匹配它后再重画（避免早于 fish 重绘被覆盖）。
-                    pending_placeholder = true;
-                    placeholder_buf.clear();
-                    pending_redraw = true;
-                }
             }
         }
 
@@ -573,25 +574,7 @@ fn main() -> anyhow::Result<()> {
                             let end = pos + PLACEHOLDER.len();
                             // 占位符（及之前的序列）先透传，再画前缀顶掉。
                             stdout.write_all(&placeholder_buf[..end])?;
-                            if pending_redraw {
-                                // fish resize：fish 重绘会滚动屏幕（buffer 折行
-                                // 变化），\e[2A 相对定位失效，直接清屏重画整个
-                                // prompt 窗口（历史已被 fish 重排打乱）。
-                                pending_redraw = false;
-                                let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                                if let Some(info) = &current_info {
-                                    theme::render_header_cleared(
-                                        &mut stdout,
-                                        last_size.1 as usize,
-                                        info,
-                                        vcs,
-                                    )?;
-                                    theme::render_prompt(&mut stdout)?;
-                                }
-                                log("fish resize: matched aa, cleared+redrawn");
-                            } else {
-                                theme::render_prompt(&mut stdout)?;
-                            }
+                            theme::render_prompt(&mut stdout)?;
                             stdout.write_all(&placeholder_buf[end..])?;
                             placeholder_buf.clear();
                             pending_placeholder = false;
