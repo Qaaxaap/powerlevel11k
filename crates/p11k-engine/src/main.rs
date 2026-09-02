@@ -41,6 +41,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::mpsc;
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
@@ -210,9 +211,41 @@ fn main() -> anyhow::Result<()> {
     let mut last_size = (rows, cols);
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
-    // git 状态后端：同进程复用 p11k-gitstatus 的 RepoCache（缓存 repo，避免
-    // 每次 prompt 重扫）。首次扫描较慢，后续命中缓存。
-    let mut repo_cache = RepoCache::new(&Options::default());
+
+    // 异步 git 状态（对齐 p10k：从不阻塞等 git，先画缓存的旧状态，算完刷新）。
+    // worker 线程独占 RepoCache，主循环经 channel 发请求/收结果——大仓库
+    // （nixpkgs）首次扫描 1~2s 也不会卡住 prompt 显示。
+    let (req_tx, req_rx) = mpsc::channel::<GitRequest>();
+    let (res_tx, res_rx) = mpsc::channel::<GitResult>();
+    std::thread::spawn(move || {
+        let mut cache = RepoCache::new(&Options::default());
+        while let Ok(req) = req_rx.recv() {
+            // 排空队列，只处理最新请求（丢弃积压的旧 cwd）。
+            let mut latest = req;
+            while let Ok(newer) = req_rx.try_recv() {
+                latest = newer;
+            }
+            let status = git_status(&mut cache, &latest.cwd);
+            if res_tx
+                .send(GitResult {
+                    generation: latest.generation,
+                    status,
+                })
+                .is_err()
+            {
+                break; // 主循环退出，channel 关闭
+            }
+        }
+    });
+
+    let mut git_gen: u64 = 0; // 发起请求的序号，只认最新结果
+    // 当前 cwd 的上次 git 状态（跨 prompt 复用：先画旧的，异步刷新）。
+    let mut last_vcs: Option<(String, Option<GitStatus>)> = None;
+    // 当前 prompt 的 info（异步结果回来时用它重画 header 行 2）。
+    let mut current_info: Option<HeaderInfo> = None;
+    // 光标是否停在输入行（p 宣告后、用户回车前）——异步结果只在此时重画，
+    // 否则 redraw 的 \e[1A 会画到命令输出上。
+    let mut at_prompt = false;
 
     loop {
         let mut fds = [
@@ -243,7 +276,14 @@ fn main() -> anyhow::Result<()> {
             let mut buf = [0u8; 4096];
             match stdin.read(&mut buf) {
                 Ok(0) => break, // 真实终端关闭
-                Ok(n) => writer.write_all(&buf[..n])?,
+                Ok(n) => {
+                    // 用户回车（提交命令）→ 光标离开输入行，异步 git 结果
+                    // 不再重画 header（否则 \e[1A 会画错行）。
+                    if buf[..n].iter().any(|&b| b == b'\r' || b == b'\n') {
+                        at_prompt = false;
+                    }
+                    writer.write_all(&buf[..n])?;
+                }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()),
             }
@@ -289,15 +329,48 @@ fn main() -> anyhow::Result<()> {
                         "h: exit={:?} cwd={:?}",
                         info.exit_code, info.cwd
                     ));
-                    let vcs = git_status(&mut repo_cache, &info.cwd);
-                    theme::render_header(&mut stdout, c as usize, &info, vcs.as_ref())?;
+                    at_prompt = false; // 新 prompt 周期：画 header 前光标不在输入行
+                    // 立即用缓存的旧状态画 header（不阻塞）；cwd 匹配才有，否则空。
+                    let vcs = last_vcs
+                        .as_ref()
+                        .filter(|(cwd, _)| cwd == &info.cwd)
+                        .and_then(|(_, s)| s.as_ref());
+                    theme::render_header(&mut stdout, c as usize, &info, vcs)?;
                     stdout.flush()?;
                     File::create(&state.ack)?; // 放行 precmd → zsh 输出占位符
+                    // 后台算 git，算完异步重画 header 行 2。
+                    git_gen += 1;
+                    let _ = req_tx.send(GitRequest {
+                        generation: git_gen,
+                        cwd: info.cwd.clone(),
+                    });
+                    current_info = Some(info);
                     log("drew header, acked");
                 }
                 AnnMsg::Prompt => {
                     log("p: draw prompt prefix");
                     theme::render_prompt(&mut stdout)?;
+                    stdout.flush()?;
+                    at_prompt = true; // 输入行就绪
+                }
+            }
+        }
+
+        // 异步 git 结果：只认最新 generation；且只在光标停在输入行时重画
+        // header 行 2（否则 redraw 的上移会踩到命令输出）。
+        while let Ok(res) = res_rx.try_recv() {
+            if res.generation != git_gen {
+                continue; // 过期结果（期间又出了新 prompt）
+            }
+            let cwd = current_info
+                .as_ref()
+                .map(|i| i.cwd.clone())
+                .unwrap_or_default();
+            last_vcs = Some((cwd, res.status.clone()));
+            if at_prompt {
+                if let Some(info) = &current_info {
+                    let vcs = res.status.as_ref();
+                    theme::redraw_vcs(&mut stdout, last_size.1 as usize, info, vcs)?;
                     stdout.flush()?;
                 }
             }
@@ -343,6 +416,18 @@ enum AnnMsg {
     Header(HeaderInfo),
     /// `p`：zle-line-init 宣告（占位 prompt 已显示），画输入行前缀顶掉。
     Prompt,
+}
+
+/// 异步 git 请求（主循环 → worker 线程）。
+struct GitRequest {
+    generation: u64,
+    cwd: String,
+}
+
+/// 异步 git 结果（worker 线程 → 主循环）。
+struct GitResult {
+    generation: u64,
+    status: Option<GitStatus>,
 }
 
 /// 读 announce 文件的新行并解析为 prompt 消息。

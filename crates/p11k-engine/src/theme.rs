@@ -31,6 +31,7 @@ pub struct HeaderInfo {
 }
 
 /// 当前目录的 git 状态（由 p11k-gitstatus 的 API 计算，随 header 一起画）。
+#[derive(Clone)]
 pub struct GitStatus {
     /// 本地分支名（detached HEAD 时为空）。
     pub branch: String,
@@ -50,44 +51,63 @@ pub struct GitStatus {
 /// header 行，最后 `\r\n` 让光标停在输入行行首——随后 zsh 输出的占位 prompt
 /// 会出现在这一行，由 `render_prompt` 在透传后顶掉。
 ///
-/// 布局（M0 内置主题）：
-/// ```text
-/// user@host              HH:MM
-/// ~/some/dir main +1     ✓ | ✘ 1
-/// ```
+/// `vcs` 是**缓存**的 git 状态（可能为 None，也可能是上次的旧值）：p10k 从不
+/// 阻塞等 git——先画旧状态，daemon 算完再刷新（本引擎对应 `redraw_vcs`）。
 pub fn render_header(
     out: &mut dyn Write,
     cols: usize,
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
 ) -> io::Result<()> {
-    // OSC 133 A：prompt 开始标记。kitty 的关窗确认靠 screen.cursor_at_prompt()
-    // 判断 shell 是否"停在 prompt"，它依赖这些标记识别 prompt 边界——缺标记时
-    // kitty 认为有程序一直在运行而弹确认框（对齐 p10k _p9k_prompt_prefix）。
+    // OSC 133 A：prompt 开始标记（见模块注释）。
     write!(out, "\x1b]133;A\x07")?;
     // 回行首（常规情况命令输出以换行结尾，光标已在行首；\r 保底无害）。
     write!(out, "\r")?;
+    header_row1(out, cols)?;
+    write!(out, "\r\n")?;
+    header_row2(out, cols, info, vcs)?;
+    write!(out, "\r\n")?;
+    Ok(())
+}
 
+/// 异步 git 状态回来后重画 header 行 2（vcs 段）：保存输入行光标、上移到
+/// header 行 2、清行重画、再恢复——不碰输入行（用户可能已在打字）。
+pub fn redraw_vcs(
+    out: &mut dyn Write,
+    cols: usize,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+) -> io::Result<()> {
+    write!(out, "\x1b[s\x1b[1A\r\x1b[K")?;
+    header_row2(out, cols, info, vcs)?;
+    write!(out, "\x1b[u")?;
+    Ok(())
+}
+
+/// header 行 1：user@host + 时间（右对齐）。不换行。
+fn header_row1(out: &mut dyn Write, cols: usize) -> io::Result<()> {
     let user = std::env::var("USER").unwrap_or_else(|_| "?".into());
     let host = hostname();
     let time = now_hhmm();
-
-    // header 行 1：user@host + 时间（右对齐）。
     let l1 = format!("{C_CYAN}{user}@{host}{C_RESET}");
     let r1 = format!("{C_GRAY}{time}{C_RESET}");
-    write_row(out, cols, &l1, &r1)?;
-    write!(out, "\r\n")?;
+    write_row(out, cols, &l1, &r1)
+}
 
-    // header 行 2：目录 + git 状态 + 退出码（右对齐）。
+/// header 行 2：目录 + git 状态 + 退出码（右对齐）。不换行。
+fn header_row2(
+    out: &mut dyn Write,
+    cols: usize,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+) -> io::Result<()> {
     let cwd = tilde(&info.cwd);
     let mut l2 = format!("{C_BLUE}{cwd}{C_RESET}");
     if let Some(v) = vcs {
         l2.push_str(&format!(" {C_GREEN}{}{C_RESET}", vcs_text(v)));
     }
     let r2 = exit_status(info.exit_code);
-    write_row(out, cols, &l2, &r2)?;
-    write!(out, "\r\n")?;
-    Ok(())
+    write_row(out, cols, &l2, &r2)
 }
 
 /// 把 git 状态拼成紧凑文本（M0 简版，后续对齐 p10k 的图标/颜色）。
