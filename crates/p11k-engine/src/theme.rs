@@ -84,6 +84,25 @@ pub fn redraw_vcs(
     Ok(())
 }
 
+/// resize 后全量重画整个 prompt 窗口：清屏 + header + 前缀。
+///
+/// zle 收到 SIGWINCH 会清屏重画占位 prompt（冲掉引擎画的 header）；`r` 宣告
+/// 发生在 zle 重绘前，引擎 poll 处理后（晚于 zle 重绘完成）再清屏重画，
+/// 画面才不被冲掉。`info` 为 None（还没有任何 prompt）时只清屏。
+pub fn redraw_full(
+    out: &mut dyn Write,
+    cols: usize,
+    info: Option<&HeaderInfo>,
+    vcs: Option<&GitStatus>,
+) -> io::Result<()> {
+    write!(out, "\x1b[2J\x1b[H")?;
+    if let Some(info) = info {
+        render_header(out, cols, info, vcs)?;
+        render_prompt(out)?;
+    }
+    Ok(())
+}
+
 /// header 行 1：user@host + 时间（右对齐）。不换行。
 fn header_row1(out: &mut dyn Write, cols: usize) -> io::Result<()> {
     let user = std::env::var("USER").unwrap_or_else(|_| "?".into());

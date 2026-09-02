@@ -42,6 +42,16 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 真实终端 SIGWINCH（resize）标志：handler 只置位（signal-safe），主循环
+/// 检查后同步内部 pty 尺寸 → 内部 zsh 收 SIGWINCH → zle pre-redraw 宣告 r →
+/// 引擎清屏重画 prompt 窗口。
+static RESIZE_FLAG: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn handle_sigwinch(_sig: libc::c_int) {
+    RESIZE_FLAG.store(true, Ordering::Relaxed);
+}
 
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
@@ -108,6 +118,19 @@ if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p
   _p11k_user_line_init=${widgets[zle-line-init]#user:}
 fi
 zle -N zle-line-init _p11k_line_init
+# resize 宣告：SIGWINCH → zsh 延迟执行 TRAPWINCH（此时 COLUMNS/LINES 已更新），
+# 检测到变化宣告 `r`，引擎清屏重画 prompt 窗口（zle 的 resize 重绘会冲掉
+# header；引擎 poll ~5ms 后处理，晚于 zle 重绘完成，重画不被冲掉）。
+# 注意：zle-line-pre-redraw 在 SIGWINCH 重绘时不触发，不能用它。
+_p11k_last_cols=$COLUMNS
+_p11k_last_rows=$LINES
+TRAPWINCH() {
+  if (( COLUMNS != _p11k_last_cols || LINES != _p11k_last_rows )); then
+    _p11k_last_cols=$COLUMNS
+    _p11k_last_rows=$LINES
+    print -r -- "r" >> "$P11K_ANNOUNCE"
+  fi
+}
 
 # 补全：compinit 激活 + complist/menu select（对齐 oh-my-zsh 的 completion.zsh，
 # 菜单行为正常）。占位符宽度 = 前缀宽度，菜单/重绘列偏移由 zle 精确计算。
@@ -207,6 +230,15 @@ fn main() -> anyhow::Result<()> {
     // 预创建 announce 文件，保证 shell 的 >> 追加不报错。
     File::create(&state.announce)?;
 
+    // 捕获真实终端的 SIGWINCH：prompt 显示期间 resize 也能被引擎感知（同步
+    // 内部 pty → zle pre-redraw 宣告 r → 清屏重画），不必等下一次 prompt。
+    unsafe {
+        libc::signal(
+            libc::SIGWINCH,
+            handle_sigwinch as extern "C" fn(libc::c_int) as usize,
+        );
+    }
+
     let mut ann_processed: u64 = 0; // announce 文件已消费字节数
     let mut last_size = (rows, cols, xpix, ypix);
     let mut stdin = io::stdin();
@@ -261,6 +293,22 @@ fn main() -> anyhow::Result<()> {
     let mut at_prompt = false;
 
     loop {
+        // resize 信号：同步内部 pty 尺寸（含 pixel）。内部 zsh 收 SIGWINCH →
+        // zle 重绘前 pre-redraw 检测尺寸变化宣告 r → 引擎清屏重画 prompt 窗口。
+        if RESIZE_FLAG.swap(false, Ordering::Relaxed) {
+            let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
+            if (r, c, xp, yp) != last_size {
+                pair.master.resize(PtySize {
+                    rows: r,
+                    cols: c,
+                    pixel_width: xp,
+                    pixel_height: yp,
+                })?;
+                last_size = (r, c, xp, yp);
+                log(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
+            }
+        }
+
         let mut fds = [
             libc::pollfd {
                 fd: libc::STDIN_FILENO,
@@ -368,6 +416,19 @@ fn main() -> anyhow::Result<()> {
                     stdout.flush()?;
                     at_prompt = true; // 输入行就绪
                 }
+                AnnMsg::Resize => {
+                    // zle 已清屏重画占位 prompt（尺寸检查在循环开头已 resize
+                    // pty），这里清屏重画整个 prompt 窗口（header + 前缀）。
+                    log("r: redraw full");
+                    let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                    theme::redraw_full(
+                        &mut stdout,
+                        last_size.1 as usize,
+                        current_info.as_ref(),
+                        vcs,
+                    )?;
+                    stdout.flush()?;
+                }
             }
         }
 
@@ -425,12 +486,14 @@ impl StateDir {
     }
 }
 
-/// announce 消息：prompt 窗口的两笔绘制。
+/// announce 消息：prompt 窗口的绘制与 resize。
 enum AnnMsg {
     /// `h\t<exit>\t<cwd>`：precmd 宣告（zsh 在等 ack），画 header 行。
     Header(HeaderInfo),
     /// `p`：zle-line-init 宣告（占位 prompt 已显示），画输入行前缀顶掉。
     Prompt,
+    /// `r`：zle-line-pre-redraw 宣告（尺寸变化），resize pty + 清屏重画。
+    Resize,
 }
 
 /// 异步 git 请求（主循环 → worker 线程）。
@@ -484,6 +547,7 @@ fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
                 }));
             }
             Some("p") => out.push(AnnMsg::Prompt),
+            Some("r") => out.push(AnnMsg::Resize),
             _ => continue,
         }
     }
