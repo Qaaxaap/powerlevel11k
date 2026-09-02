@@ -26,7 +26,10 @@ fn spawn_engine() -> (
             pixel_height: 0,
         })
         .unwrap();
-    let cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_p11k"));
+    let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_p11k"));
+    // 隔离：不依赖测试机上的真实 ~/.zshrc（有 oh-my-zsh/p10k，慢且干扰断言）。
+    // 指向空文件，让内部 shell 只跑引擎协议层。
+    cmd.env("P11K_USER_ZSHRC", "/dev/null");
     let child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
     let reader = pair.master.try_clone_reader().unwrap();

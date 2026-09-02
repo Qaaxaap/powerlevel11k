@@ -65,13 +65,39 @@ draws the input line, so completion/history/vi-mode geometry stays self-consiste
 
 Verified in M0: byte passthrough (output, vim fullscreen/editing/exit), prompt
 window takeover (header + right-aligned exit status), Ctrl-C → `✘ 130`,
-Tab completion, history, resize re-alignment, clean `exit`. Real terminal is
-put in raw mode like any pty host (tmux), so ^C reaches the shell, not the engine.
+Tab completion (redraw column offset converges to the placeholder width — no
+input-line concatenation), history, clean `exit`. Real terminal is put in raw
+mode like any pty host (tmux), so ^C reaches the shell, not the engine.
 
-Known limits (M0, tracked): engine death kills the shell (SIGHUP on pty EOF —
-a keepalive holder process is the planned fix); full-screen zle redraws on
-resize can clobber the header; user shell configs are not yet loaded (shell
-runs from an engine-generated ZDOTDIR).
+Deployment model: the engine execs over the shell, so it inherits the launching
+shell's environment and user config is re-sourced inside the pty shell. Recursion
+is broken by `P11K_ENGINE` — the engine sets it for the inner shell, and a
+misconfigured re-entry degrades to a clean shell with a fix-it message instead
+of hanging. The inner shell is double-forked (orphaned) out of the engine's
+process tree, and the engine emits OSC 133 A/B prompt markers so kitty's
+close-window confirmation sees the shell sitting at a prompt (no more "it is
+running" dialog).
+
+### Try it (engine, main branch)
+
+```zsh
+# build
+cargo build -p p11k-engine
+
+# user config: theme must be disabled (the engine is the theme). A filtered
+# copy is used during development; omit P11K_USER_ZSHRC to fall back to
+# ~/.zshrc (make sure ZSH_THEME is commented out there).
+P11K_USER_ZSHRC=/tmp/p11k-usertest.zshrc target/debug/p11k
+
+# or, as a "theme": add one line to ~/.zshrc and open a shell
+#   [[ -z "$P11K_ENGINE" ]] && exec /path/to/target/debug/p11k
+exec /path/to/target/debug/p11k
+```
+
+Known limits (M0, tracked): full-screen zle redraws on resize can clobber the
+header; a previous command that does not end with a newline leaves the header
+painted over residual text; user shell configs are re-sourced but a theme set
+via `ZSH_THEME` still fights the engine (documented, not auto-filtered).
 
 **`compat/p10k` = the p10k-compatible line (maintained).** p10k's zsh
 rendering is a decade of polish and must not be rewritten; that branch

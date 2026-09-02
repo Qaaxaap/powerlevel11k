@@ -1,14 +1,14 @@
 //! p11k 引擎（B 架构）：pty 宿主 + 终端渲染层。
 //!
 //! 职责链：
-//! 1. 用 portable-pty 起一个无主题 zsh（ZDOTDIR 指向引擎生成的临时目录，
+//! 1. 用 portable-pty 起一个无主题 shell（ZDOTDIR 指向引擎生成的临时目录，
 //!    .zshrc 里只设占位 PROMPT 和宣告钩子）。
 //! 2. 透传：pty 输出 → 真实终端 stdout；真实终端 stdin → pty。引擎不解析
-//!    pty 输出的 ANSI（不交给库、不写状态机），zsh 渲染什么（命令输出、
+//!    pty 输出的 ANSI（不交给库、不写状态机），shell 渲染什么（命令输出、
 //!    zle、占位 prompt、补全菜单）引擎一概不管，vim 等原样透传。
 //! 3. prompt 窗口由 announce 驱动的两笔绘制（不碰 pty 输出流）：
 //!    - `h`（precmd 宣告）：画多行 header（"上面的行"按原来顺序渲染），
-//!      touch ack 放行 zsh 输出占位 prompt。
+//!      touch ack 放行 shell 输出占位 prompt。
 //!    - `p`（zle-line-init 宣告，zle 已渲染完占位 prompt）：回行首画真实
 //!      前缀顶掉占位符（输入行这一行延后绘制）。前缀只覆盖输入行前 2 列
 //!      （占位符所在列），即使引擎稍慢、用户已开始输入也不受影响。
@@ -18,13 +18,22 @@
 //! 的前提。precmd 写 announce 后轮询 ack（precmd 不是 zle hook，阻塞安全），
 //! 保证 header 先画、占位 prompt 后输出。
 //!
+//! 部署（主题形态，exec 引导）：用户 rc 里放一行
+//! `[[ -z "$P11K_ENGINE" ]] && exec p11k`（见 README）。引擎入口据此：
+//! - 正常（P11K_ENGINE 未设）：spawn 内部 shell 时设 `P11K_ENGINE=1`；
+//! - 递归（P11K_ENGINE 已设）：用户 rc 的引导行漏了判断 → 降级 exec 干净
+//!   shell 并打印修复提示，不 panic、不加载用户 rc，内部 shell（父）照常。
+//!
+//! 内部 shell 经 double-fork 孤儿化（脱离引擎进程树），引擎退出时 master
+//! 关闭 → slave 挂断 → 内部 shell 收 SIGHUP 退出。header/前缀绘制时发 OSC
+//! 133 A/B prompt markers，kitty 关窗确认据此判断光标停在 prompt、不再弹框。
+//!
 //! 已知局限（M0 记录，后续处理）：
-//! - 引擎退出即 pty master 关闭，shell 收到 SIGHUP 一起退出（透传架构固有，
-//!   后续可用 keepalive 子进程接管 pty）。
 //! - resize / Ctrl-L 全屏重绘时 zle 重画占位 prompt，但没有 `p` 宣告跟随，
 //!   header 会被冲掉、占位符残留（zle 不知道 header 存在）。
 //! - 上一个命令未换行（echo -n）时光标在行中，header 会接在残留后。
-//!   后续处理。
+//! - 用户 rc 里的主题（ZSH_THEME=p10k）未经处理会抢渲染，靠文档/安装器
+//!   引导用户移除（现阶段测试用 P11K_USER_ZSHRC 过滤副本）。
 
 mod theme;
 
@@ -76,8 +85,14 @@ _p11k_line_init() {
 }
 
 # ===== 用户配置（可选）：先于协议不变量加载 =====
+# 优先 $P11K_USER_ZSHRC（开发/测试用的过滤副本），否则默认 $HOME/.zshrc。
+# 注意：真实 rc 里若加载主题（ZSH_THEME=p10k），主题 hook 会抢渲染——见
+# README，迁移到 p11k 后应注释掉 ZSH_THEME。下面的"协议不变量"只压回占位
+# PROMPT 并链式保留 precmd/zle hook，无法关掉主题自身的渲染逻辑。
 if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
   source "$P11K_USER_ZSHRC"
+elif [[ -r "$HOME/.zshrc" ]]; then
+  source "$HOME/.zshrc"
 fi
 
 # ===== 协议不变量：source 后重申（用户配置可能设 PROMPT/precmd/hooks）=====
@@ -106,6 +121,23 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 "#;
 
 fn main() -> anyhow::Result<()> {
+    // 递归检测：P11K_ENGINE 已设 = 本引擎是被内部 shell 的 rc 引导再次调用的
+    // 多余实例（用户 rc 里引导行忘了加判断，或写错）。不 panic、不加载用户
+    // rc，降级为 exec 一个干净 shell（不读 rc，不触发引导），并提示用户修。
+    // 内部 shell 是父进程，本实例 exec 干净 shell 后它照常继续。
+    if std::env::var_os("P11K_ENGINE").is_some() {
+        eprintln!(
+            "p11k: 检测到递归加载（已在 p11k 会话内又启动了 p11k）。\n\
+             p11k: 请确认 ~/.zshrc 里的引导行带判断，例如：\n\
+             p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k"
+        );
+        use std::os::unix::process::CommandExt;
+        // exec 替换本进程为干净 shell（-f = 不读任何 rc，避免再次触发引导）。
+        let err = std::process::Command::new("zsh").arg("-f").exec();
+        eprintln!("p11k: exec zsh -f 失败: {err}");
+        std::process::exit(1);
+    }
+
     let state = StateDir::create()?;
     log(&format!(
         "engine start: dir={} announce={} ack={} placeholder={:?}",
@@ -134,6 +166,9 @@ fn main() -> anyhow::Result<()> {
     cmd.env("ZDOTDIR", &state.dir);
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
+    // 递归标志：内部 shell 及其子进程若再 exec p11k，入口检测到即降级，
+    // 不会无限套娃（引导行 `[[ -z $P11K_ENGINE ]] && exec p11k` 也因此跳过）。
+    cmd.env("P11K_ENGINE", "1");
 
     // double-fork 孤儿化：内部 shell 脱离引擎进程树（父变 init）。kitty 关闭
     // 窗口时检测的是它 child 的子孙进程，孤儿不在树里 → 不弹"确认关闭"。
