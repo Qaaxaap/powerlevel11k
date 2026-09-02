@@ -292,6 +292,20 @@ fn main() -> anyhow::Result<()> {
     // 否则 redraw 的 \e[1A 会画到命令输出上。
     let mut at_prompt = false;
 
+    // instant header（对齐 p10k instant prompt）：不等内部 shell 加载完
+    // oh-my-zsh，立即用引擎 cwd 画占位 header + ❯，开窗即见 prompt；内部
+    // shell 第一次 precmd 后再清屏刷新成真正状态（exit/git）。
+    let instant_info = HeaderInfo {
+        exit_code: None,
+        cwd: std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| "~".into()),
+    };
+    theme::render_header(&mut stdout, cols as usize, &instant_info, None)?;
+    theme::render_prompt(&mut stdout)?;
+    stdout.flush()?;
+    let mut instant_drawn = true;
+
     loop {
         // resize 信号：同步内部 pty 尺寸（含 pixel）。内部 zsh 收 SIGWINCH →
         // zle 重绘前 pre-redraw 检测尺寸变化宣告 r → 引擎清屏重画 prompt 窗口。
@@ -398,7 +412,14 @@ fn main() -> anyhow::Result<()> {
                         .as_ref()
                         .filter(|(cwd, _)| cwd == &info.cwd)
                         .and_then(|(_, s)| s.as_ref());
-                    theme::render_header(&mut stdout, c as usize, &info, vcs)?;
+                    if instant_drawn {
+                        // 第一次 precmd：清屏把 instant header 刷新成真正状态
+                        // （启动不久，屏幕上没有要保留的历史，清屏无害）。
+                        instant_drawn = false;
+                        theme::render_header_cleared(&mut stdout, c as usize, &info, vcs)?;
+                    } else {
+                        theme::render_header(&mut stdout, c as usize, &info, vcs)?;
+                    }
                     stdout.flush()?;
                     File::create(&state.ack)?; // 放行 precmd → zsh 输出占位符
                     // 后台算 git，算完异步重画 header 行 2。

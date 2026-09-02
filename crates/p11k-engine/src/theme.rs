@@ -104,6 +104,22 @@ pub fn redraw_full(
     Ok(())
 }
 
+/// instant header 后的真 header：清屏 + 重画 header（末尾 `\r\n` 到输入行）。
+///
+/// 引擎启动立即画了 instant header（占位），内部 shell 加载完第一次 precmd
+/// 时用真正状态（exit/git）替换——此时启动不久、屏幕上没有需要保留的历史，
+/// 清屏无害；render_prompt 不在这里画（zsh 随后画占位 aa，再由 `p` 顶掉）。
+pub fn render_header_cleared(
+    out: &mut dyn Write,
+    cols: usize,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+) -> io::Result<()> {
+    write!(out, "\x1b[2J\x1b[H")?;
+    render_header(out, cols, info, vcs)?;
+    Ok(())
+}
+
 /// header 行 1：user@host + 时间（右对齐）。不换行。
 fn header_row1(out: &mut dyn Write, cols: usize) -> io::Result<()> {
     let user = std::env::var("USER").unwrap_or_else(|_| "?".into());

@@ -70,15 +70,24 @@ fn read_until(
     acc
 }
 
+/// 等真正的第一个 prompt 就绪：instant header 没有退出码状态（无 ✓），只有
+/// 内部 shell 加载完、第一次 precmd 后清屏重画的真 header 才带 ✓。
+fn wait_ready(master: &Box<dyn MasterPty + Send>, reader: &mut Box<dyn Read + Send>) -> String {
+    read_until(master, reader, "✓", Duration::from_secs(10))
+}
+
 #[test]
 fn initial_prompt_shows_header_and_input_line() {
     let (master, _child, mut reader, _writer) = spawn_engine();
-    let out = read_until(&master, &mut reader, "\x1b[1;32m❯", Duration::from_secs(10));
+    let out = wait_ready(&master, &mut reader);
     assert!(
         out.contains('@'),
         "header 应含 user@host，实际输出：{out:?}"
     );
-    assert!(out.contains('❯'), "输入行应含 ❯，实际输出：{out:?}");
+    assert!(out.contains('✓'), "真正 header 应含 ✓ 退出码状态");
+    // 等输入行前缀 ❯（占位 aa 之后、zle-line-init 宣告 p 后画）。
+    let out2 = read_until(&master, &mut reader, "❯", Duration::from_secs(5));
+    assert!(out2.contains('❯'), "输入行应含 ❯，实际输出：{out2:?}");
     // 时间 HH:MM 右对齐存在（用 \e[..G 定位过）。
     assert!(out.contains('\x1b'), "header 应含 ANSI 颜色/定位序列");
 }
@@ -88,7 +97,9 @@ fn initial_prompt_shows_header_and_input_line() {
 #[test]
 fn placeholder_overwritten_by_prefix() {
     let (master, _child, mut reader, _writer) = spawn_engine();
-    let out = read_until(&master, &mut reader, "\x1b[1;32m❯", Duration::from_secs(10));
+    wait_ready(&master, &mut reader);
+    // 真正 prompt：aa 先透传，随后 \r + 前缀顶掉。
+    let out = read_until(&master, &mut reader, "\x1b[1;32m❯", Duration::from_secs(5));
     assert!(
         out.contains("aa"),
         "占位符应原样透传，实际输出：{out:?}"
@@ -106,23 +117,23 @@ fn placeholder_overwritten_by_prefix() {
 #[test]
 fn command_output_passthrough_and_next_prompt() {
     let (master, _child, mut reader, mut writer) = spawn_engine();
-    // 等初始 prompt 就绪。
-    read_until(&master, &mut reader, "❯", Duration::from_secs(10));
+    // 等真正的 prompt 就绪（instant 不算，内部 shell 还没起）。
+    wait_ready(&master, &mut reader);
 
     writer.write_all(b"echo hello-from-shell\n").unwrap();
     writer.flush().unwrap();
     let out = read_until(&master, &mut reader, "hello-from-shell", Duration::from_secs(5));
     assert!(out.contains("hello-from-shell"), "命令输出应透传");
 
-    // 下一个 prompt 也该出现（precmd 宣告 + header 重画）。
-    let out2 = read_until(&master, &mut reader, "❯", Duration::from_secs(5));
-    assert!(out2.contains("hello-from-shell"));
+    // 下一个 prompt 也该出现（命令执行完 → precmd → header 重画带 ✓）。
+    let out2 = read_until(&master, &mut reader, "✓", Duration::from_secs(5));
+    assert!(out2.contains('✓'), "命令后应出新 prompt，实际：{out2:?}");
 }
 
 #[test]
 fn exit_code_shows_in_status() {
     let (master, _child, mut reader, mut writer) = spawn_engine();
-    read_until(&master, &mut reader, "❯", Duration::from_secs(10));
+    wait_ready(&master, &mut reader);
 
     // 失败命令 → header 右段显示红色 ✘ n。
     writer.write_all(b"false\n").unwrap();
@@ -134,7 +145,7 @@ fn exit_code_shows_in_status() {
 #[test]
 fn ctrl_c_interrupts_running_command() {
     let (master, _child, mut reader, mut writer) = spawn_engine();
-    read_until(&master, &mut reader, "❯", Duration::from_secs(10));
+    wait_ready(&master, &mut reader);
 
     // sleep 前台运行，Ctrl-C 打断，然后出新 prompt。
     writer.write_all(b"sleep 5\n").unwrap();
