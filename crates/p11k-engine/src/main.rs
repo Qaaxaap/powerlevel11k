@@ -58,6 +58,7 @@ extern "C" fn handle_sigwinch(_sig: libc::c_int) {
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
 use theme::{GitStatus, HeaderInfo};
+use config::Config;
 
 /// 支持的 shell 类型。识别靠特征环境变量（引擎 exec 继承的原始环境）：逐个
 /// 检查该 shell 的特征变量，非空即命中。数据驱动，加 shell = 加一个枚举
@@ -103,6 +104,30 @@ fn shell_from_args() -> Option<Shell> {
         Some("bash") => Some(Shell::Bash),
         Some("fish") => Some(Shell::Fish),
         _ => None,
+    }
+}
+
+/// 从 `--config <path>` 读取 KDL 主题配置;缺省用内置 lean。
+fn config_from_args() -> Option<PathBuf> {
+    let args: Vec<String> = std::env::args().collect();
+    let pos = args.iter().position(|a| a == "--config")?;
+    args.get(pos + 1).map(PathBuf::from)
+}
+
+/// 加载主题配置:--config 文件成功则用,失败/无则回退内置 lean 并打日志。
+fn load_config() -> Config {
+    let Some(path) = config_from_args() else {
+        return Config::default_lean().expect("内置 lean 配置应合法");
+    };
+    match std::fs::read_to_string(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|src| Config::parse(&src))
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("p11k: 读取配置 {path:?} 失败({e});回退内置 lean 主题");
+            Config::default_lean().expect("内置 lean 配置应合法")
+        }
     }
 }
 
@@ -491,6 +516,9 @@ fn main() -> anyhow::Result<()> {
     let mut pending_placeholder = false;
     let mut placeholder_buf: Vec<u8> = Vec::new();
 
+    // 主题配置(--config 或内置 lean):传给 header 渲染。
+    let config = load_config();
+
     // instant header（对齐 p10k instant prompt）：不等内部 shell 加载完
     // oh-my-zsh，立即用引擎 cwd 画占位 header + ❯，开窗即见 prompt；内部
     // shell 第一次 precmd 后再清屏刷新成真正状态（exit/git）。
@@ -500,7 +528,7 @@ fn main() -> anyhow::Result<()> {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "~".into()),
     };
-    theme::render_header(&mut stdout, cols as usize, &instant_info, None)?;
+    theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
     theme::render_prompt(&mut stdout)?;
     stdout.flush()?;
     let mut instant_drawn = true;
@@ -557,9 +585,9 @@ fn main() -> anyhow::Result<()> {
                         // 第一次 precmd：清屏把 instant header 刷新成真正状态
                         // （启动不久，屏幕上没有要保留的历史，清屏无害）。
                         instant_drawn = false;
-                        theme::render_header_cleared(&mut stdout, c as usize, &info, vcs)?;
+                        theme::render_header_cleared_cfg(&mut stdout, c as usize, &config, &info, vcs)?;
                     } else {
-                        theme::render_header(&mut stdout, c as usize, &info, vcs)?;
+                        theme::render_header_cfg(&mut stdout, c as usize, &config, &info, vcs)?;
                     }
                     stdout.flush()?;
                     File::create(&state.ack)?; // 放行 precmd → shell 输出占位符

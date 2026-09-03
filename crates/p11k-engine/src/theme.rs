@@ -72,6 +72,37 @@ pub fn render_header(
     Ok(())
 }
 
+/// 用 KDL 配置渲染 header(多行,行数由配置决定)。逐行清屏 + OSC133A;
+/// 最后 `\r\n` 把光标送到输入行(跟随占位符,由 render_prompt 替换)。
+pub fn render_header_cfg(
+    out: &mut dyn Write,
+    cols: usize,
+    config: &crate::config::Config,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+) -> io::Result<()> {
+    write!(out, "\x1b]133;A\x07")?;
+    let lines = crate::render::render_header_lines(config, info, vcs, cols);
+    for line in lines {
+        write!(out, "\r\x1b[K")?;
+        out.write_all(line.as_bytes())?;
+        write!(out, "\r\n")?;
+    }
+    Ok(())
+}
+
+/// 配置渲染 + 清屏(首次 precmd 用,把 instant header 刷新成真正状态)。
+pub fn render_header_cleared_cfg(
+    out: &mut dyn Write,
+    cols: usize,
+    config: &crate::config::Config,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+) -> io::Result<()> {
+    write!(out, "\x1b[2J\x1b[H")?;
+    render_header_cfg(out, cols, config, info, vcs)
+}
+
 /// 异步 git 状态回来后重画 header 行 2（vcs 段）：保存输入行光标、上移到
 /// header 行 2、清行重画、再恢复——不碰输入行（用户可能已在打字）。
 pub fn redraw_vcs(

@@ -81,8 +81,8 @@ fn initial_prompt_shows_header_and_input_line() {
     let (master, _child, mut reader, _writer) = spawn_engine();
     let out = wait_ready(&master, &mut reader);
     assert!(
-        out.contains('@'),
-        "header 应含 user@host，实际输出：{out:?}"
+        out.contains('/') || out.contains('~'),
+        "header 应含目录(~ 缩写或路径)，实际输出：{out:?}"
     );
     assert!(out.contains('✓'), "真正 header 应含 ✓ 退出码状态");
     // 等输入行前缀 ❯（占位 aa 之后、zle-line-init 宣告 p 后画）。
@@ -101,7 +101,7 @@ fn placeholder_overwritten_by_prefix() {
     // 真正 prompt：aa 先透传，随后 \r + 前缀顶掉。
     let out = read_until(&master, &mut reader, "\x1b[1;32m❯", Duration::from_secs(5));
     assert!(
-        out.contains("aa"),
+        out.contains("__"),
         "占位符应原样透传，实际输出：{out:?}"
     );
     assert!(
@@ -109,7 +109,7 @@ fn placeholder_overwritten_by_prefix() {
         "透传后应回行首画前缀顶掉占位符，实际输出：{out:?}"
     );
     // 占位符出现在前缀之前：先透传后顶掉。
-    let ph = out.find("aa").expect("占位符存在");
+    let ph = out.find("__").expect("占位符存在");
     let px = out.find("\r\x1b[1;32m❯").expect("前缀存在");
     assert!(ph < px, "占位符应先透传再被顶掉，实际输出：{out:?}");
 }

@@ -18,23 +18,25 @@ struct SegmentText {
     style: Style,
 }
 
-/// 渲染整个 header(多行),返回 ANSI 字符串(每行不含结尾换行符除外,
-/// 行间以 `\r\n` 分隔,最后一行结尾无换行——由调用方决定)。
+/// 渲染整个 header(多行),返回 ANSI 字符串(行间以 `\r\n` 分隔,最后一行结尾无换行)。
 pub fn render_header(config: &Config, info: &HeaderInfo, vcs: Option<&GitStatus>, cols: usize) -> String {
+    render_header_lines(config, info, vcs, cols).join("\r\n")
+}
+
+/// 渲染 header 为**逐行内容**(每行=左段串+右段右对齐,不含光标/清屏/换行)。
+/// 供 theme 层逐行 `\r\e[K` + 内容 + `\r\n` 画到终端。
+pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitStatus>, cols: usize) -> Vec<String> {
     let layout = &config.layout;
     let left = &layout.left;
     let right = &layout.right;
     let lines = left.len().max(right.len());
-    let mut out = String::new();
-    for i in 0..lines {
-        let l = left.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
-        let r = right.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
-        out.push_str(&assemble_row(&l, &r, cols));
-        if i + 1 < lines {
-            out.push_str("\r\n");
-        }
-    }
-    out
+    (0..lines)
+        .map(|i| {
+            let l = left.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
+            let r = right.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
+            assemble_row(&l, &r, cols)
+        })
+        .collect()
 }
 
 /// 渲染一行:左段串(依次拼接)、右段右对齐。
