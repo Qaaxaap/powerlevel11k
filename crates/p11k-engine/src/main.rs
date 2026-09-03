@@ -509,6 +509,8 @@ fn main() -> anyhow::Result<()> {
     // 光标是否停在输入行（p 宣告后、用户回车前）——异步结果只在此时重画，
     // 否则 redraw 的 \e[1A 会画到命令输出上。
     let mut at_prompt = false;
+    // git 结果早于输入行就绪到达时(last_vcs 已更新但未 redraw),p 就绪时补重画。
+    let mut vcs_dirty = false;
     // resize 后延迟补画 ❯：等 zle 重绘 aa+buffer 透传完（约 60ms）再画前缀，
     // 避免画 ❯ 早于 zle 重绘被 aa 覆盖、或光标停在 buffer 前。
     let mut resize_prompt_at: Option<std::time::Instant> = None;
@@ -609,6 +611,20 @@ fn main() -> anyhow::Result<()> {
                 }
                 AnnMsg::Prompt => {
                     log("p: draw prompt prefix");
+                    // git 结果早于输入行就绪到达 → last_vcs 已更新但 header 未含 vcs;
+                    // 这里先补重画 header(含 vcs),再画 ❯。
+                    if vcs_dirty {
+                        vcs_dirty = false;
+                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                        theme::redraw_header_cfg(
+                            &mut stdout,
+                            last_size.1 as usize,
+                            &config,
+                            current_info.as_ref().unwrap_or(&instant_info),
+                            vcs,
+                        )?;
+                        stdout.flush()?;
+                    }
                     theme::render_prompt(&mut stdout)?;
                     stdout.flush()?;
                     at_prompt = true; // 输入行就绪
@@ -732,6 +748,8 @@ fn main() -> anyhow::Result<()> {
                     theme::redraw_header_cfg(&mut stdout, last_size.1 as usize, &config, info, vcs)?;
                     stdout.flush()?;
                 }
+            } else {
+                vcs_dirty = true; // 结果先到(输入行未就绪):p 就绪时补重画 header
             }
         }
 
