@@ -366,13 +366,17 @@ fn main() -> anyhow::Result<()> {
     }
 
     let shell = detect_shell();
-    let state = StateDir::create(shell)?;
+    // 先加载配置以算输入行前缀宽度,再据此生成等宽占位符(几何自洽)。
+    let config = load_config();
+    let prefix = crate::render::input_prefix(&config);
+    let placeholder = "_".repeat(prefix.width.max(1));
+    let state = StateDir::create(shell, &placeholder)?;
     log(&format!(
         "engine start: dir={} announce={} ack={} placeholder={:?} shell={:?}",
         state.dir.display(),
         state.announce.display(),
         state.ack.display(),
-        PLACEHOLDER,
+        placeholder,
         shell
     ));
 
@@ -519,9 +523,7 @@ fn main() -> anyhow::Result<()> {
     let mut pending_placeholder = false;
     let mut placeholder_buf: Vec<u8> = Vec::new();
 
-    // 主题配置(--config 或内置 lean):传给 header 渲染。
-    let config = load_config();
-
+    // 主题配置(config 已在前面加载);instant header 用它渲染。
     // instant header（对齐 p10k instant prompt）：不等内部 shell 加载完
     // oh-my-zsh，立即用引擎 cwd 画占位 header + ❯，开窗即见 prompt；内部
     // shell 第一次 precmd 后再清屏刷新成真正状态（exit/git）。
@@ -532,7 +534,7 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|_| "~".into()),
     };
     theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
-    theme::render_prompt(&mut stdout)?;
+    theme::render_prompt(&mut stdout, &prefix.text)?;
     stdout.flush()?;
     let mut instant_drawn = true;
 
@@ -625,7 +627,7 @@ fn main() -> anyhow::Result<()> {
                         )?;
                         stdout.flush()?;
                     }
-                    theme::render_prompt(&mut stdout)?;
+                    theme::render_prompt(&mut stdout, &prefix.text)?;
                     stdout.flush()?;
                     at_prompt = true; // 输入行就绪
                 }
@@ -706,11 +708,11 @@ fn main() -> anyhow::Result<()> {
                 Ok(n) => {
                     if pending_placeholder {
                         placeholder_buf.extend_from_slice(&buf[..n]);
-                        if let Some(pos) = find_bytes(&placeholder_buf, PLACEHOLDER.as_bytes()) {
-                            let end = pos + PLACEHOLDER.len();
+                        if let Some(pos) = find_bytes(&placeholder_buf, placeholder.as_bytes()) {
+                            let end = pos + placeholder.len();
                             // 占位符（及之前的序列）先透传，再画前缀顶掉。
                             stdout.write_all(&placeholder_buf[..end])?;
-                            theme::render_prompt(&mut stdout)?;
+                            theme::render_prompt(&mut stdout, &prefix.text)?;
                             stdout.write_all(&placeholder_buf[end..])?;
                             placeholder_buf.clear();
                             pending_placeholder = false;
@@ -757,7 +759,7 @@ fn main() -> anyhow::Result<()> {
         if let Some(deadline) = resize_prompt_at {
             if std::time::Instant::now() >= deadline {
                 resize_prompt_at = None;
-                theme::render_prompt(&mut stdout)?;
+                theme::render_prompt(&mut stdout, &prefix.text)?;
                 stdout.flush()?;
                 log("deferred prompt drawn");
             }
@@ -780,7 +782,7 @@ struct StateDir {
 }
 
 impl StateDir {
-    fn create(shell: Shell) -> io::Result<Self> {
+    fn create(shell: Shell, placeholder: &str) -> io::Result<Self> {
         let dir = std::env::temp_dir().join(format!("p11k-{}", process::id()));
         fs::create_dir_all(&dir)?;
 
@@ -794,12 +796,12 @@ impl StateDir {
                         .unwrap_or_else(|_| ZSHRC_TEMPLATE.to_string()),
                     Err(_) => ZSHRC_TEMPLATE.to_string(),
                 };
-                fs::write(&rc, content)?;
+                fs::write(&rc, content.replace("__", placeholder))?;
                 rc
             }
             Shell::Bash => {
                 let rc = dir.join(".bashrc");
-                fs::write(&rc, BASHRC_TEMPLATE)?;
+                fs::write(&rc, BASHRC_TEMPLATE.replace("__", placeholder))?;
                 rc
             }
             Shell::Fish => {
@@ -807,7 +809,7 @@ impl StateDir {
                 let fish_dir = dir.join("fish");
                 fs::create_dir_all(&fish_dir)?;
                 let rc = fish_dir.join("config.fish");
-                fs::write(&rc, FISH_TEMPLATE)?;
+                fs::write(&rc, FISH_TEMPLATE.replace("__", placeholder))?;
                 rc
             }
         };

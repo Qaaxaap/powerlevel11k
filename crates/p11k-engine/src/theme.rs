@@ -240,8 +240,8 @@ fn vcs_text(v: &GitStatus) -> String {
 /// 字符、`\e[u` 恢复光标到原位。前缀只覆盖输入行前 `PLACEHOLDER.len()` 列；
 /// buffer 非空时（resize 后补画）光标被恢复到 buffer 末尾，不与 zle 的光标
 /// 模型冲突。
-pub fn render_prompt(out: &mut dyn Write) -> io::Result<()> {
-    write!(out, "\x1b[s\r{PROMPT_PREFIX}\x1b[u")?;
+pub fn render_prompt(out: &mut dyn Write, prefix: &str) -> io::Result<()> {
+    write!(out, "\x1b[s\r{prefix}\x1b[u")?;
     // OSC 133 B：prompt 结束标记，告诉 kitty 光标已停在输入位置（prompt 就绪），
     // 关窗不再弹"有程序在运行"的确认框（对齐 p10k _p9k_prompt_suffix）。
     write!(out, "\x1b]133;B\x07")?;
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn render_prompt_starts_with_cr() {
         let mut out = Vec::new();
-        render_prompt(&mut out).unwrap();
+        render_prompt(&mut out, PROMPT_PREFIX).unwrap();
         let s = String::from_utf8_lossy(&out);
         assert!(
             s.starts_with("\x1b[s\r\x1b[1;32m❯"),

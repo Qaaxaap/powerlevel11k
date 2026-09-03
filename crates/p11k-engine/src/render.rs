@@ -12,6 +12,28 @@ use std::fmt::Write as _;
 use crate::config::{Color, Config, Element, Style};
 use crate::theme::{GitStatus, HeaderInfo};
 
+/// 输入行前缀(配置驱动):`frame.last_prefix` + `prompt_char` 内容;`width` 是它的
+/// 显示宽度,engine 用它生成等宽占位符(占位符宽度 = 前缀宽度,几何自洽)。
+pub struct InputPrefix {
+    pub text: String,
+    pub width: usize,
+}
+
+/// 计算输入行前缀(如 `╰─❯`)。`last_prefix`/`text` 已上色;`width` 为去 ANSI 显示宽。
+pub fn input_prefix(config: &Config) -> InputPrefix {
+    let fg = Style { fg: config.defaults.fg.clone(), ..Default::default() };
+    let mut text = String::new();
+    if !config.frame.last_prefix.is_empty() {
+        text.push_str(&paint(&config.frame.last_prefix, &fg));
+    }
+    let pc = config.segment("prompt_char");
+    let st = pc.effective_style(None, &config.defaults);
+    text.push_str(&paint("❯", &st));
+    text.push(' '); // 前缀后空格(无色),对齐原 `❯ ` 几何
+    let width = display_width(&text);
+    InputPrefix { text, width }
+}
+
 /// 一段渲染结果:文本 + 它的样式(渲染期才装配 ANSI)。
 struct SegmentText {
     text: String,

@@ -98,19 +98,19 @@ fn initial_prompt_shows_header_and_input_line() {
 fn placeholder_overwritten_by_prefix() {
     let (master, _child, mut reader, _writer) = spawn_engine();
     wait_ready(&master, &mut reader);
-    // 真正 prompt：aa 先透传，随后 \r + 前缀顶掉。
-    let out = read_until(&master, &mut reader, "\x1b[1;32m❯", Duration::from_secs(5));
+    // 真正 prompt：占位符先透传，随后 \r + 输入前缀(❯)顶掉。
+    let out = read_until(&master, &mut reader, "❯", Duration::from_secs(5));
     assert!(
         out.contains("__"),
         "占位符应原样透传，实际输出：{out:?}"
     );
     assert!(
-        out.contains("\r\x1b[1;32m❯"),
+        out.contains('\r') && out.contains('❯'),
         "透传后应回行首画前缀顶掉占位符，实际输出：{out:?}"
     );
     // 占位符出现在前缀之前：先透传后顶掉。
     let ph = out.find("__").expect("占位符存在");
-    let px = out.find("\r\x1b[1;32m❯").expect("前缀存在");
+    let px = out.find('❯').expect("前缀存在");
     assert!(ph < px, "占位符应先透传再被顶掉，实际输出：{out:?}");
 }
 
