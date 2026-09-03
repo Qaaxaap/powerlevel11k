@@ -1,0 +1,459 @@
+//! 主题配置:KDL 解析 + 内置 lean 主题。
+//!
+//! 用成品 crate [`kdl`](kdl-rs,KDL 官方参考实现)解析;**KDL v2**,布尔字面量 =
+//! [`#true`/`#false`](v2 规范),数字/字符串/颜色原生。
+//!
+//! # 泛用配置模型(对齐 p10k 抽象,用 KDL 表达)
+//!
+//! 配置项是**有限、类型化**的:
+//! - **布局**:`layout { left "dir" "vcs" "newline" "prompt_char" … }`。
+//!   元素可为普通段名、`<seg>_joined`(同底贴合)或 `newline`(切行);
+//!   `add-newline #true` 是 prompt 上方空行开关(p10k `LEFT/RIGHT_PROMPT_ELEMENTS`)。
+//! - **段**:`segments { dir foreground=39 bold=#true shorten-strategy="t" … }`。
+//!   段节点带**属性**:`foreground|fg`、`background|bg`(颜色)、`bold`(布尔)、
+//!   `content`/`icon`/`prefix`/`suffix`(文本)、`disabled`(显隐);其余进
+//!   [`Segment::props`](行为,段渲染函数按需读)。
+//! - **state 覆盖**:段节点下 `state <NAME> foreground=…` 子节点;其样式覆盖段默认,
+//!   即 p10k `SEG[_STATE]_ATTR` 三段回退(段STATE → 段 → [`Config::defaults`] 全局兜底)。
+//! - **默认**:顶层 `defaults { … }`(属性)是全局回退样式。
+//!
+//! 段功能由代码实现,外观/布局全由配置驱动——换配置即换主题,不硬编码视觉。
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use kdl::{KdlDocument, KdlNode, KdlValue};
+
+/// 颜色:数字=256 调色板、`#rrggbb`=24 位、`"default"`/缺省=继承终端。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Color {
+    Default,
+    Xterm(u8),
+    Rgb(u8, u8, u8),
+    Named(String),
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Color::Default
+    }
+}
+
+impl Color {
+    fn from_str(s: &str) -> Color {
+        if let Some(hex) = s.strip_prefix('#') {
+            if hex.len() == 6 {
+                if let (Ok(r), Ok(g), Ok(b)) = (
+                    u8::from_str_radix(&hex[0..2], 16),
+                    u8::from_str_radix(&hex[2..4], 16),
+                    u8::from_str_radix(&hex[4..6], 16),
+                ) {
+                    return Color::Rgb(r, g, b);
+                }
+            }
+            Color::Named(s.to_string())
+        } else if s == "default" {
+            Color::Default
+        } else {
+            Color::Named(s.to_string())
+        }
+    }
+
+    fn from_value(v: &KdlValue) -> Color {
+        match v {
+            KdlValue::String(s) => Color::from_str(s),
+            KdlValue::Integer(n) => Color::Xterm((*n).clamp(0, 255) as u8),
+            _ => Color::Default,
+        }
+    }
+}
+
+impl fmt::Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Color::Default => write!(f, "default"),
+            Color::Xterm(n) => write!(f, "{n}"),
+            Color::Rgb(r, g, b) => write!(f, "#{r:02x}{g:02x}{b:02x}"),
+            Color::Named(n) => write!(f, "{n}"),
+        }
+    }
+}
+
+/// 一段的视觉样式(颜色 + 粗体)。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Style {
+    pub fg: Color,
+    pub bg: Color,
+    pub bold: bool,
+}
+
+impl Style {
+    /// 从一组 KDL 属性读样式键(`foreground`/`fg`、`background`/`bg`、`bold`)。
+    fn from_entries(entries: &[kdl::KdlEntry]) -> Style {
+        let mut s = Style::default();
+        for e in entries {
+            let Some(name) = e.name() else { continue };
+            match name.value() {
+                "foreground" | "fg" => s.fg = Color::from_value(e.value()),
+                "background" | "bg" => s.bg = Color::from_value(e.value()),
+                "bold" => s.bold = bool_val(e.value()),
+                _ => {}
+            }
+        }
+        s
+    }
+}
+
+/// 布局元素。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Element {
+    /// 普通段。
+    Seg(String),
+    /// 与相邻段同底贴合(p10k 的 `<seg>_joined` 尾缀)。
+    Joined(String),
+    /// 在该处切行。
+    Newline,
+}
+
+/// 布局:左右元素序列 + prompt 上方空行开关。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Layout {
+    pub left: Vec<Element>,
+    pub right: Vec<Element>,
+    pub add_newline: bool,
+}
+
+/// 行为属性值(类型化,非字符串)。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Prop {
+    Str(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+}
+
+/// 单个段的配置。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Segment {
+    /// 段默认样式。
+    pub style: Style,
+    /// state 情境覆盖(名字 -> 样式,如 `SHORTENED`/`ANCHOR`/`MODIFIED`)。
+    pub states: BTreeMap<String, Style>,
+    /// 内容文本(可选;缺省由段渲染函数生成)。
+    pub content: Option<String>,
+    /// 图标字符(可选)。
+    pub icon: Option<String>,
+    pub prefix: Option<String>,
+    pub suffix: Option<String>,
+    /// 是否显示(`disabled` 置 false)。
+    pub shown: bool,
+    /// 其它行为属性(shorten-strategy、threshold-seconds、clean-foreground …)。
+    pub props: BTreeMap<String, Prop>,
+}
+
+impl Segment {
+    /// 取某 state(或段默认)的样式,走 段STATE → 段 → 全局 三段回退。
+    pub fn effective_style(&self, state: Option<&str>, globals: &Style) -> Style {
+        if let Some(st) = state {
+            if let Some(s) = self.states.get(st) {
+                return merge_style(s, &self.style);
+            }
+        }
+        merge_style(&self.style, globals)
+    }
+
+    /// 读一个行为属性(按名)。
+    pub fn prop(&self, name: &str) -> Option<&Prop> {
+        self.props.get(name)
+    }
+}
+
+/// 顶层配置。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Config {
+    pub layout: Layout,
+    pub segments: BTreeMap<String, Segment>,
+    /// 全局回退样式。
+    pub defaults: Style,
+}
+
+impl Config {
+    /// 解析 KDL 文本为配置(用 kdl crate)。
+    pub fn parse(src: &str) -> Result<Config, String> {
+        let doc = KdlDocument::parse(src).map_err(|e| format!("KDL 解析失败: {e}"))?;
+        Self::parse_doc(&doc)
+    }
+
+    /// 内置 lean 主题。
+    pub fn default_lean() -> Result<Config, String> {
+        Self::parse(DEFAULT_LEAN)
+    }
+
+    /// 取某段配置(缺省返回默认空段)。
+    pub fn segment(&self, name: &str) -> &Segment {
+        self.segments.get(name).unwrap_or(&EMPTY_SEG)
+    }
+
+    fn parse_doc(doc: &KdlDocument) -> Result<Config, String> {
+        let mut layout = Layout::default();
+        let mut segments: BTreeMap<String, Segment> = BTreeMap::new();
+        let mut defaults = Style::default();
+
+        for node in doc.nodes() {
+            match node.name().value() {
+                "layout" => layout = parse_layout(node)?,
+                "segments" => {
+                    if let Some(ch) = node.children() {
+                        for seg in ch.nodes() {
+                            let name = seg.name().value().to_string();
+                            segments.insert(name, parse_segment(seg)?);
+                        }
+                    }
+                }
+                "defaults" => defaults = Style::from_entries(node.entries()),
+                _ => {} // 未知顶层忽略(向前兼容)
+            }
+        }
+        Ok(Config { layout, segments, defaults })
+    }
+}
+
+/// 解析 `layout`:{ `left`/`right` 子节点(元素序列)、`add-newline` }。
+fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
+    let mut layout = Layout::default();
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            match child.name().value() {
+                "left" => layout.left = parse_elements(child),
+                "right" => layout.right = parse_elements(child),
+                "add-newline" | "add_newline" => {
+                    layout.add_newline = first_value(child).map(bool_val).unwrap_or(false);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(layout)
+}
+
+/// 解析一段元素序列(位置字符串;`newline` 与 `<seg>_joined` 特判)。
+fn parse_elements(node: &KdlNode) -> Vec<Element> {
+    let mut out = Vec::new();
+    for e in node.entries() {
+        if e.name().is_some() {
+            continue;
+        }
+        if let KdlValue::String(s) = e.value() {
+            match s.as_str() {
+                "newline" => out.push(Element::Newline),
+                _ => {
+                    if let Some(base) = s.strip_suffix("_joined") {
+                        out.push(Element::Joined(base.to_string()));
+                    } else {
+                        out.push(Element::Seg(s.clone()));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 解析一个段节点:属性(样式/文本/显隐/行为)+ `state <NAME> …` 子节点覆盖。
+fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
+    let mut seg = Segment {
+        style: Style::from_entries(node.entries()),
+        shown: true,
+        ..Default::default()
+    };
+    for e in node.entries() {
+        let Some(name) = e.name() else { continue };
+        match name.value() {
+            "foreground" | "fg" | "background" | "bg" | "bold" => {}
+            "content" => seg.content = str_val(e.value()),
+            "icon" => seg.icon = str_val(e.value()),
+            "prefix" => seg.prefix = str_val(e.value()),
+            "suffix" => seg.suffix = str_val(e.value()),
+            "disabled" => seg.shown = !bool_val(e.value()),
+            _ => {
+                seg.props.insert(name.value().to_string(), prop_val(e.value()));
+            }
+        }
+    }
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            if child.name().value() != "state" {
+                continue;
+            }
+            let Some(nm) = first_state_name(child) else {
+                return Err("state 需要名字(位置字符串)".into());
+            };
+            let st = Style::from_entries(child.entries());
+            seg.states.insert(nm, st);
+        }
+    }
+    Ok(seg)
+}
+
+/// 节点的首个位置参数值(条目无 name 的那个)。
+fn first_value(node: &KdlNode) -> Option<&KdlValue> {
+    node.entries().iter().find(|e| e.name().is_none()).map(|e| e.value())
+}
+
+/// state 节点的名字 = 首个位置参数(字符串)。
+fn first_state_name(node: &KdlNode) -> Option<String> {
+    match first_value(node) {
+        Some(KdlValue::String(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// 内置 lean 主题(KDL v2)。放在仓库里,不硬编码进渲染逻辑。
+pub const DEFAULT_LEAN: &str = r#"
+// p11k 内置 lean 主题(默认)。改这里或换文件即换主题。
+layout {
+    left "dir" "vcs" "newline" "prompt_char"
+    right "status" "command_execution_time" "background_jobs"
+    add-newline #true
+}
+
+segments {
+    dir foreground=39 shorten-strategy="truncate_to_unique" shorten-dir-length=1 {
+        state SHORTENED foreground=103
+        state ANCHOR foreground=39 bold=#true
+    }
+    vcs clean-foreground=76 modified-foreground=178 untracked-foreground=39
+    status ok-foreground=70 error-foreground=160 verbose=#true
+    command_execution_time threshold-seconds=3 precision=0 foreground=101
+    background_jobs foreground=70 verbose=#false
+    prompt_char foreground=76 error-foreground=196
+}
+"#;
+
+static EMPTY_SEG: Segment = Segment {
+    style: Style { fg: Color::Default, bg: Color::Default, bold: false },
+    states: BTreeMap::new(),
+    content: None,
+    icon: None,
+    prefix: None,
+    suffix: None,
+    shown: true,
+    props: BTreeMap::new(),
+};
+
+/// 合并:上层非 Default 字段覆盖下层(三段回退末端)。
+fn merge_style(over: &Style, base: &Style) -> Style {
+    Style {
+        fg: if over.fg == Color::Default { base.fg.clone() } else { over.fg.clone() },
+        bg: if over.bg == Color::Default { base.bg.clone() } else { over.bg.clone() },
+        bold: over.bold || base.bold,
+    }
+}
+
+fn bool_val(v: &KdlValue) -> bool {
+    matches!(v, KdlValue::Bool(true))
+}
+fn str_val(v: &KdlValue) -> Option<String> {
+    match v {
+        KdlValue::String(s) => Some(s.clone()),
+        KdlValue::Integer(n) => Some(n.to_string()),
+        KdlValue::Float(f) => Some(f.to_string()),
+        KdlValue::Bool(b) => Some(b.to_string()),
+        KdlValue::Null => None,
+    }
+}
+fn prop_val(v: &KdlValue) -> Prop {
+    match v {
+        KdlValue::String(s) => Prop::Str(s.clone()),
+        KdlValue::Integer(n) => Prop::Int((*n) as i64),
+        KdlValue::Float(f) => Prop::Float(*f),
+        KdlValue::Bool(b) => Prop::Bool(*b),
+        KdlValue::Null => Prop::Str(String::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_layout_elements_and_newline() {
+        let c = Config::parse(
+            "layout {\n  left \"dir\" \"vcs\" \"newline\" \"prompt_char\"\n  right \"status\"\n  add-newline #true\n}",
+        )
+        .unwrap();
+        assert_eq!(
+            c.layout.left,
+            vec![
+                Element::Seg("dir".into()),
+                Element::Seg("vcs".into()),
+                Element::Newline,
+                Element::Seg("prompt_char".into()),
+            ]
+        );
+        assert_eq!(c.layout.right, vec![Element::Seg("status".into())]);
+        assert!(c.layout.add_newline);
+    }
+
+    #[test]
+    fn parses_joined_element() {
+        let c = Config::parse(r#"layout { left "dir_joined" "vcs" }"#).unwrap();
+        assert_eq!(c.layout.left[0], Element::Joined("dir".into()));
+    }
+
+    #[test]
+    fn parses_segment_attrs_states_and_props() {
+        let c = Config::parse(
+            r#"layout {}
+               segments { dir foreground=39 shorten-strategy="truncate_to_unique" {
+                   state SHORTENED foreground=103
+                   state ANCHOR foreground=39 bold=#true
+               } }"#,
+        )
+        .unwrap();
+        let d = c.segment("dir");
+        assert_eq!(d.style.fg, Color::Xterm(39));
+        assert_eq!(d.props["shorten-strategy"], Prop::Str("truncate_to_unique".into()));
+        assert_eq!(d.states["SHORTENED"].fg, Color::Xterm(103));
+        assert!(d.states["ANCHOR"].bold);
+    }
+
+    #[test]
+    fn effective_style_three_way_fallback() {
+        let c = Config::parse(
+            r#"layout {}
+               defaults foreground=200
+               segments { dir foreground=39 { state SHORTENED foreground=103 } }"#,
+        )
+        .unwrap();
+        assert_eq!(c.segment("dir").effective_style(Some("SHORTENED"), &c.defaults).fg, Color::Xterm(103));
+        assert_eq!(c.segment("dir").effective_style(None, &c.defaults).fg, Color::Xterm(39));
+        assert_eq!(c.segment("nope").effective_style(None, &c.defaults).fg, Color::Xterm(200));
+    }
+
+    #[test]
+    fn default_lean_parses() {
+        let c = Config::default_lean().unwrap();
+        assert!(!c.segments.is_empty());
+        assert_eq!(c.layout.left.len(), 4);
+        assert!(c.segment("dir").props.contains_key("shorten-strategy"));
+        assert_eq!(c.segment("prompt_char").style.fg, Color::Xterm(76));
+        assert!(c.segment("dir").states.contains_key("ANCHOR"));
+        assert!(c.layout.add_newline);
+    }
+
+    #[test]
+    fn bool_and_hex() {
+        let c = Config::parse(
+            r##"layout {}
+defaults foreground="#ffffff"
+segments {
+  a bold=#true x=3
+}"##,
+        )
+        .unwrap();
+        assert_eq!(c.defaults.fg, Color::Rgb(255, 255, 255));
+        assert!(c.segment("a").style.bold);
+        assert_eq!(c.segment("a").props["x"], Prop::Int(3));
+    }
+}

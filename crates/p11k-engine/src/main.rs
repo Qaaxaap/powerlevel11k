@@ -35,6 +35,7 @@
 //! - 用户 rc 里的主题（ZSH_THEME=p10k）未经处理会抢渲染，靠文档/安装器
 //!   引导用户移除（现阶段测试用 P11K_USER_ZSHRC 过滤副本）。
 
+mod config;
 mod theme;
 
 use std::fs::{self, File, OpenOptions};

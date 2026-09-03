@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+kdl = "6.5.0"
 libc = { workspace = true }
 p11k-gitstatus = { path = "../p11k-gitstatus" }
 portable-pty = { workspace = true }
