@@ -115,13 +115,16 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 ```
 
 Config, look, status, vcs — everything stays identical to p10k, except
-the git-status backend is a maintained Rust binary.
+the git-status backend is a maintained Rust binary. Hot git-status
+requests run ~100ms on a nixpkgs-scale repo (54k files / 38k dirs, 22
+cores) vs ~65ms for the C++ original (was ~320ms before the
+parallel-scan fix).
 
 ### Kernel roadmap (shared)
 
 - [x] M1: byte-compatible gitstatusd replacement (v1.5.5 protocol)
-- [x] Performance core: index parsing, `fstatat` scanning, parallel
-      shards, untracked cache, RAII directory fds
+- [x] Performance core: index parsing, `fstatat` scanning (root-fd path
+      stat, no per-dir opens), parallel shards, untracked cache
 - [ ] Long-term maintenance & hardening of the daemon (the point of p11k)
 
 ## License
@@ -215,13 +218,14 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 ```
 
 配置、外观、status、vcs —— 一切与 p10k 完全一致，唯一区别是 git
-状态后端换成了有人维护的 Rust 二进制。
+状态后端换成了有人维护的 Rust 二进制。nixpkgs 级仓库（54k 文件 / 38k
+目录，22 核）热请求 ~100ms，C++ 原版 ~65ms（并行扫描修复前 ~320ms）。
 
 ### 内核路线图（两条线共用）
 
 - [x] M1：字节兼容的 gitstatusd 替代（v1.5.5 协议）
-- [x] 性能核心：index 解析、`fstatat` 扫描、并行分片、untracked
-      缓存、RAII 目录 fd
+- [x] 性能核心：index 解析、`fstatat` 扫描（root-fd 路径 stat，无逐
+      目录 open）、并行分片、untracked 缓存
 - [ ] daemon 的长期维护与加固（p11k 的真正价值）
 
 ## 许可证
