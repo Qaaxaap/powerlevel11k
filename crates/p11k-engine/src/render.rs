@@ -55,13 +55,13 @@ fn render_row(config: &Config, elements: &[Element], info: &HeaderInfo, vcs: Opt
                         Color::Xterm(0)
                     };
                 }
-                SegmentText { text: expand_env(t), style }
+                SegmentText { text: paint(&expand_env(t), &style), style }
             }
         })
         .collect()
 }
 
-/// 渲染单个段(纯文本,当前仅 dir/vcs/status/prompt_char;未知段返回空)。
+/// 渲染单个段。返回的 `text` 已是**上色后的 ANSI**;`style` 供段间分隔符/块背景。
 fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&GitStatus>) -> SegmentText {
     let seg = config.segment(name);
     let mut style = seg.effective_style(None, &config.defaults);
@@ -74,13 +74,55 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
         };
     }
     let text = match name {
-        "dir" => value_of(seg.content.as_deref(), dir_text(info, shorten_len(seg))),
-        "vcs" => vcs_text(vcs),
-        "status" => status_text(info),
-        "prompt_char" => "❯".to_string(),
-        _ => value_of(seg.content.as_deref(), String::new()),
+        "dir" => dir_seg_text(config, info, seg, &style),
+        "vcs" => if seg.content.is_some() { paint(&value_of(seg.content.as_deref(), vcs_text(vcs)), &style) } else { paint(&vcs_text(vcs), &style) },
+        "status" => paint(&status_text(info), &style),
+        "prompt_char" => paint("❯", &style),
+        _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
     SegmentText { text, style }
+}
+
+/// `dir` 段文本:折叠(truncate_to_unique)+ 逐部件按类别上色。
+/// - 锚(`~`/当前目录/marker 祖先):`ANCHOR` state(39 粗体)
+/// - 缩短: `SHORTENED` state(103)
+/// - 普通:段默认;`/` 分隔符本色(不随部件)。
+fn dir_seg_text(config: &Config, info: &HeaderInfo, seg: &crate::config::Segment, default: &Style) -> String {
+    let shorten = shorten_len(seg);
+    let cwd = std::path::Path::new(&info.cwd);
+    let home = std::env::var("HOME").ok();
+    let home = home.as_deref().map(std::path::Path::new);
+    let parts = crate::dir_shorten::truncate_to_unique(cwd, shorten, home);
+    let mut s = String::new();
+    let is_home = home.map(|h| cwd.starts_with(h)).unwrap_or(false);
+    if is_home {
+        // home 前缀 `~`(anchor)。
+        let st = seg.effective_style(Some("ANCHOR"), &config.defaults);
+        s.push_str(&paint("~", &st));
+        if !parts.is_empty() {
+            s.push_str(&paint("/", default));
+        }
+    } else if !parts.is_empty() {
+        // 绝对路径起始 `/`。
+        s.push_str(&paint("/", default));
+    }
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            s.push_str(&paint("/", default)); // 分隔符本色
+        }
+        let state = match part.class {
+            crate::dir_shorten::Class::Anchor => Some("ANCHOR"),
+            crate::dir_shorten::Class::Shortened => Some("SHORTENED"),
+            crate::dir_shorten::Class::Normal => None,
+        };
+        let st = seg.effective_style(state, &config.defaults);
+        s.push_str(&paint(&part.text, &st));
+    }
+    if seg.content.is_some() {
+        value_of(seg.content.as_deref(), s)
+    } else {
+        s
+    }
 }
 
 /// 读 dir 段的 `shorten-dir-length`(保留末 N 级,默认 1=p10k)。
@@ -122,13 +164,6 @@ fn expand_env(s: &str) -> String {
         i += 1;
     }
     out
-}
-
-/// 目录文本:`~` + `truncate_to_unique` 折叠(每级唯一前缀,锚点不缩)。
-fn dir_text(info: &HeaderInfo, shorten: usize) -> String {
-    let cwd = std::path::Path::new(&info.cwd);
-    let home = std::env::var("HOME").ok();
-    crate::dir_shorten::truncate_to_unique(cwd, shorten, home.as_deref().map(|h| std::path::Path::new(h)))
 }
 
 /// git 文本:分支 + 计数(最简,图标/分色留给后续单元)。
@@ -210,7 +245,7 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
                 out.push(' ');
             }
         }
-        out.push_str(&paint(&s.text, &s.style));
+        out.push_str(&s.text); // text 已上色,不再二次上色
         prev_bg = s.style.bg.clone();
         has_left = true;
     }
@@ -231,7 +266,7 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
     }
     if !right_str.is_empty() {
         let lw = display_width(&out);
-        let rw = right_str.chars().count();
+        let rw = display_width(&right_str);
         // 右对齐:右段起点列(1-based),p10k 用 COLUMNS - 右宽。
         if cols > rw {
             let start = cols - rw;
@@ -346,7 +381,7 @@ mod tests {
         let cfg = Config::default_lean().unwrap();
         let h = render_header(&cfg, &info("/tmp", Some(0)), None, 80);
         // header 只一行行:含目录 + ✓;prompt_char(❯)不在 header(由 render_prompt 画)。
-        assert!(h.contains("/tmp") || h.contains('~'));
+        assert!(h.contains("tmp"), "header 应含目录,实际：{h:?}");
         assert!(h.contains("✓"));
         assert!(!h.contains('❯'), "输入行前缀 ❯ 由 render_prompt 画，不应在 header");
         assert_eq!(h.split("\r\n").count(), 1, "lean header 一行");
@@ -384,18 +419,6 @@ mod tests {
     }
 
     #[test]
-    fn dir_truncates_to_unique() {
-        // 非 home 绝对路径折叠:至少保留当前目录全名。
-        let s = dir_text(&info("/a/b/c", None), 1);
-        assert!(s.ends_with("c"), "当前目录应保留,got {s}");
-        // home 内路径带 ~ 前缀。
-        let home = std::env::var("HOME").unwrap_or_default();
-        if home.len() > 1 {
-            let s = dir_text(&info(&format!("{home}/x/y"), None), 1);
-            assert!(s.starts_with("~/"), "home 内应以 ~ 开头,got {s}");
-        }
-    }
-
     #[test]
     fn vcs_counts_appear() {
         let cfg = Config::default_lean().unwrap();

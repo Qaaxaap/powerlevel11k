@@ -4,10 +4,12 @@
 //! 锚点(home `~`/根、末尾 `shortenlen` 级、含 marker 文件的祖先)不缩;缩短后无省略符
 //! (lean 置空 SHORTEN_DELIMITER)。
 //!
+//! 返回按类别标记的部件([`DirPart`]),render 据此逐部件上色:
+//! 缩短=103、锚=39(粗体)、普通=31,`/` 分隔符本色。
+//!
 //! # 性能(对齐 p10k 的 mtime 缓存)
 //!
-//! 每级按 `(绝对目录, 父目录 mtime_ns)` 缓存缩短结果:目录不变(父 mtime 不变)直接复用,
-//! 不加 `readdir`;只有该目录增删兄弟(父 mtime 变)才重算这一级。锚点级根本不 `readdir`。
+//! 每级按 `(绝对目录, 父目录 mtime_ns)` 缓存缩短结果:目录不变直接复用,不加 `readdir`。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -18,21 +20,35 @@ thread_local! {
     static CACHE: RefCell<HashMap<(PathBuf, i64), String>> = RefCell::new(HashMap::new());
 }
 
-/// 折叠绝对路径 `cwd`。`home` 提供时,若 cwd 在 home 下,首部用 `~` 且 home 不缩。
-pub fn truncate_to_unique(cwd: &Path, shortenlen: usize, home: Option<&Path>) -> String {
+/// 部件类别(决定上色)。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Class {
+    /// 锚(首 `~`/根/当前目录/marker 祖先),不缩,varies 颜色。
+    Anchor,
+    /// 被缩短(唯一前缀)。
+    Shortened,
+    /// 普通(未缩但非锚)。
+    Normal,
+}
+
+/// 折叠后的一个部件。
+#[derive(Clone)]
+pub struct DirPart {
+    pub text: String,
+    pub class: Class,
+}
+
+/// 折叠绝对路径 `cwd`,返回部件序列(不含 `~`/`/`;调用方拼装并加前缀)。
+pub fn truncate_to_unique(cwd: &Path, shortenlen: usize, home: Option<&Path>) -> Vec<DirPart> {
     let shortenlen = shortenlen.max(1);
     if let Some(home) = home {
         if let Ok(rel) = cwd.strip_prefix(home) {
-            if rel.as_os_str().is_empty() {
-                return "~".to_string();
-            }
             let parts: Vec<String> = rel
                 .components()
                 .filter(|c| matches!(c, Component::Normal(_)))
                 .map(|c| c.as_os_str().to_string_lossy().into_owned())
                 .collect();
-            let folded = fold(&parts, shortenlen, home);
-            return format!("~/{folded}");
+            return fold(&parts, shortenlen, home);
         }
     }
     let parts: Vec<String> = cwd
@@ -40,27 +56,28 @@ pub fn truncate_to_unique(cwd: &Path, shortenlen: usize, home: Option<&Path>) ->
         .filter(|c| matches!(c, Component::Normal(_)))
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
-    if parts.is_empty() {
-        return "/".to_string();
-    }
-    format!("/{}", fold(&parts, shortenlen, Path::new("/")))
+    fold(&parts, shortenlen, Path::new("/"))
 }
 
-/// 折叠一组相对路径部件(相对 `base`),返回相对串(不含前导 `/` 或 `~`)。
-fn fold(parts: &[String], shortenlen: usize, base: &Path) -> String {
+/// 折叠一组相对部件(相对 `base`),返回带类别的部件序列。
+/// 首部件(若绝对路径是根后第一个、或 home 后的第一个)与末 `shortenlen` 个、
+/// marker 祖先为 Anchor;其余缩到唯一前缀 → Shortened。
+fn fold(parts: &[String], shortenlen: usize, base: &Path) -> Vec<DirPart> {
     let n = parts.len();
     let anchor_tail = shortenlen.min(n);
-    let mut out: Vec<String> = Vec::with_capacity(n);
+    let mut out: Vec<DirPart> = Vec::with_capacity(n);
     for i in 0..n {
         let abs = join(base, &parts[..=i]);
         let is_anchor = i >= n - anchor_tail || has_marker_in(&abs);
         if is_anchor {
-            out.push(parts[i].clone());
+            out.push(DirPart { text: parts[i].clone(), class: Class::Anchor });
         } else {
-            out.push(shorten_component(&abs, &parts[i]));
+            let text = shorten_component(&abs, &parts[i]);
+            let class = if text != parts[i] { Class::Shortened } else { Class::Normal };
+            out.push(DirPart { text, class });
         }
     }
-    out.join("/")
+    out
 }
 
 fn join(base: &Path, parts: &[String]) -> PathBuf {
@@ -120,24 +137,22 @@ fn file_mtime(path: &Path) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
-    fn home_prefix_is_tilde() {
+    fn home_prefix_is_tilde_and_last_is_anchor() {
         let home = std::env::temp_dir().join("p11k-shorten-home");
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join("Projects").join("p11k")).unwrap();
         std::fs::create_dir_all(home.join("Templates")).unwrap();
         let cwd = home.join("Projects").join("p11k");
-        let s = truncate_to_unique(&cwd, 1, Some(&home));
-        assert!(s.starts_with("~/"), "home 前缀应为 ~,got {s}");
-        assert!(s.ends_with("p11k"), "当前目录应保留,got {s}");
+        let parts = truncate_to_unique(&cwd, 1, Some(&home));
+        assert!(parts.last().map(|p| p.text.as_str()) == Some("p11k"));
+        assert!(parts.last().map(|p| p.class) == Some(Class::Anchor));
     }
 
     #[test]
-    fn non_home_absolute_has_leading_slash() {
-        let s = truncate_to_unique(Path::new("/a/b/c"), 1, None);
-        assert!(s.starts_with('/'));
-        assert!(s.ends_with("/c"));
+    fn non_home_produces_parts() {
+        let parts = truncate_to_unique(Path::new("/a/b/c"), 1, None);
+        assert_eq!(parts.last().map(|p| p.text.as_str()), Some("c"));
     }
 }
