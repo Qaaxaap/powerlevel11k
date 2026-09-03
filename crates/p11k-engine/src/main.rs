@@ -36,6 +36,7 @@
 //!   引导用户移除（现阶段测试用 P11K_USER_ZSHRC 过滤副本）。
 
 mod config;
+mod render;
 mod theme;
 
 use std::fs::{self, File, OpenOptions};
@@ -127,7 +128,7 @@ fn detect_shell() -> Shell {
 /// 占位 prompt（shell 侧 PROMPT 就是这个字符串）：宽 2 列的纯 ASCII。
 /// 必须与 `theme::PROMPT_PREFIX`（输入行前缀 `❯ `）的可见宽度严格一致，
 /// 否则 zle 重绘输入行的列偏移对不齐。字符内容不重要，宽度是协议。
-const PLACEHOLDER: &str = "aa";
+const PLACEHOLDER: &str = "__";
 
 /// 生成给 shell 的 bootstrap .zshrc。
 ///
@@ -181,7 +182,7 @@ fi
 # ===== 协议不变量：source 后重申（用户配置可能设 PROMPT/precmd/hooks）=====
 # PROMPT 是纯 ASCII 占位（宽 2 列，与引擎前缀 ❯ 同宽），zle 的几何
 # （prompt 宽度、输入行列偏移）由此自洽；真实 prompt 由引擎绘制。
-PROMPT='aa'
+PROMPT='__'
 RPROMPT=''
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
 # zle-line-init 单 handler：保留用户注册的（链式调用），再注册我们的宣告。
@@ -222,7 +223,7 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 /// 直接打印 PS1（`aa`），引擎靠字节匹配 `aa` 画前缀顶掉（见主循环）。resize
 /// 用 trap WINCH 检测尺寸变化宣告 `r`。
 const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) —— 协议层 + 用户配置。
-PS1='aa'
+PS1='__'
 
 # PROMPT_COMMAND 在 PS1 显示前执行：记录退出码、宣告 `h`（画 header）后等
 # 引擎 ack 才返回。bash 里 sleep 延迟 prompt 显示，正是 ack 机制需要的。
@@ -254,7 +255,7 @@ elif [[ -r "$HOME/.bashrc" ]]; then
 fi
 
 # ===== 协议不变量：source 后重申（用户配置可能改 PS1/PROMPT_COMMAND）=====
-PS1='aa'
+PS1='__'
 PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
 "#;
@@ -280,7 +281,7 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
-        printf 'aa'
+        printf '__'
         return
     end
     printf 'h\t%s\t%s\n' $_st $PWD >> $P11K_ANNOUNCE
@@ -289,7 +290,7 @@ function fish_prompt
     end
     rm -f $P11K_ACK
     # 占位 prompt（不带换行）：引擎在透传流里匹配 aa 画前缀顶掉。
-    printf 'aa'
+    printf '__'
 end
 
 # ===== 用户配置（可选）：先于协议不变量加载 =====
@@ -308,7 +309,7 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
-        printf 'aa'
+        printf '__'
         return
     end
     printf 'h\t%s\t%s\n' $_st $PWD >> $P11K_ANNOUNCE
@@ -316,7 +317,7 @@ function fish_prompt
         sleep 0.005
     end
     rm -f $P11K_ACK
-    printf 'aa'
+    printf '__'
 end
 "#;
 
