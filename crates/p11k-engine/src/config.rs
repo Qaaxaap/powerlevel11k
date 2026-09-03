@@ -236,23 +236,24 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     Ok(layout)
 }
 
-/// 解析一段元素序列(位置字符串;`newline` 与 `<seg>_joined` 特判)。
+/// 解析一段元素序列(块内每个子节点=段,值为布尔:列出的 `#true` 启用、`#false`
+/// 或不列出则禁用)。`newline` 切行,`<seg>_joined` 同底贴合。
 fn parse_elements(node: &KdlNode) -> Vec<Element> {
     let mut out = Vec::new();
-    for e in node.entries() {
-        if e.name().is_some() {
-            continue;
-        }
-        if let KdlValue::String(s) = e.value() {
-            match s.as_str() {
-                "newline" => out.push(Element::Newline),
-                _ => {
-                    if let Some(base) = s.strip_suffix("_joined") {
-                        out.push(Element::Joined(base.to_string()));
-                    } else {
-                        out.push(Element::Seg(s.clone()));
-                    }
-                }
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            let name = child.name().value();
+            // 值缺省视为启用;显式 #false 禁用。
+            let enabled = first_value(child).map(bool_val).unwrap_or(true);
+            if !enabled {
+                continue;
+            }
+            if name == "newline" {
+                out.push(Element::Newline);
+            } else if let Some(base) = name.strip_suffix("_joined") {
+                out.push(Element::Joined(base.to_string()));
+            } else {
+                out.push(Element::Seg(name.to_string()));
             }
         }
     }
@@ -312,8 +313,17 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
 pub const DEFAULT_LEAN: &str = r#"
 // p11k 内置 lean 主题(默认)。改这里或换文件即换主题。
 layout {
-    left "dir" "vcs" "newline" "prompt_char"
-    right "status" "command_execution_time" "background_jobs"
+    left {
+        dir #true
+        vcs #true
+        newline #true
+        prompt_char #true
+    }
+    right {
+        status #true
+        command_execution_time #true
+        background_jobs #true
+    }
     add-newline #true
 }
 
@@ -379,7 +389,7 @@ mod tests {
     #[test]
     fn parses_layout_elements_and_newline() {
         let c = Config::parse(
-            "layout {\n  left \"dir\" \"vcs\" \"newline\" \"prompt_char\"\n  right \"status\"\n  add-newline #true\n}",
+            "layout {\n  left {\n    dir #true\n    vcs #true\n    newline #true\n    prompt_char #true\n  }\n  right {\n    status #true\n  }\n  add-newline #true\n}",
         )
         .unwrap();
         assert_eq!(
@@ -396,9 +406,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_joined_element() {
-        let c = Config::parse(r#"layout { left "dir_joined" "vcs" }"#).unwrap();
+    fn parses_joined_element_and_disabled() {
+        // "dir_joined" 同底贴合; 显式 #false 的段被跳过。
+        let c = Config::parse("layout {\n  left {\n    dir_joined #true\n    vcs #true\n    time #false\n  }\n}").unwrap();
         assert_eq!(c.layout.left[0], Element::Joined("dir".into()));
+        assert_eq!(c.layout.left.len(), 2, "#false 的 time 应被跳过");
     }
 
     #[test]
