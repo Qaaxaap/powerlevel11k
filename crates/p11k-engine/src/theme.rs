@@ -185,14 +185,15 @@ fn vcs_text(v: &GitStatus) -> String {
     s
 }
 
-/// 顶掉占位 prompt：`\r` 回输入行行首，画 `PROMPT_PREFIX`（宽 = 占位符宽）。
+/// 顶掉占位 prompt：保存光标、`\r` 回输入行行首画 `PROMPT_PREFIX`、恢复光标。
 ///
 /// 触发时机：`p` 宣告（zle-line-init）——zle 已渲染完占位 prompt，光标停在
-/// 占位符之后（列 = 占位符宽）。此时输出 `\r` 回到列 0，前缀逐列覆盖占位符
-/// 字符，光标停在前缀后（输入位置）。前缀只覆盖输入行前 `PLACEHOLDER.len()`
-/// 列，因此即使引擎稍慢、用户已开始输入，也不会碰到输入内容。
+/// 占位符之后（列 = 占位符宽）。`\e[s` 保存光标、`\r` 回列 0 逐列覆盖占位符
+/// 字符、`\e[u` 恢复光标到原位。前缀只覆盖输入行前 `PLACEHOLDER.len()` 列；
+/// buffer 非空时（resize 后补画）光标被恢复到 buffer 末尾，不与 zle 的光标
+/// 模型冲突。
 pub fn render_prompt(out: &mut dyn Write) -> io::Result<()> {
-    write!(out, "\r{PROMPT_PREFIX}")?;
+    write!(out, "\x1b[s\r{PROMPT_PREFIX}\x1b[u")?;
     // OSC 133 B：prompt 结束标记，告诉 kitty 光标已停在输入位置（prompt 就绪），
     // 关窗不再弹"有程序在运行"的确认框（对齐 p10k _p9k_prompt_suffix）。
     write!(out, "\x1b]133;B\x07")?;
@@ -312,7 +313,10 @@ mod tests {
         let mut out = Vec::new();
         render_prompt(&mut out).unwrap();
         let s = String::from_utf8_lossy(&out);
-        assert!(s.starts_with("\r\x1b[1;32m❯"), "应回行首并画前缀顶掉占位符");
+        assert!(
+            s.starts_with("\x1b[s\r\x1b[1;32m❯"),
+            "应保存光标、回行首画前缀顶掉占位符、再恢复光标"
+        );
         assert!(
             s.ends_with("\x1b]133;B\x07"),
             "应以 OSC 133 B 标记结尾（告知 kitty prompt 就绪）"

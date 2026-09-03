@@ -481,6 +481,9 @@ fn main() -> anyhow::Result<()> {
     // 光标是否停在输入行（p 宣告后、用户回车前）——异步结果只在此时重画，
     // 否则 redraw 的 \e[1A 会画到命令输出上。
     let mut at_prompt = false;
+    // resize 后延迟补画 ❯：等 zle 重绘 aa+buffer 透传完（约 60ms）再画前缀，
+    // 避免画 ❯ 早于 zle 重绘被 aa 覆盖、或光标停在 buffer 前。
+    let mut resize_prompt_at: Option<std::time::Instant> = None;
     // bash 无 zle-line-init（无 `p` 宣告）：ack 后 bash 直接打印 PS1 `aa`，
     // 引擎在透传流里匹配 `aa` 画前缀顶掉。占位符前的内容累积到缓冲。
     let mut pending_placeholder = false;
@@ -580,12 +583,10 @@ fn main() -> anyhow::Result<()> {
                     at_prompt = true; // 输入行就绪
                 }
                 AnnMsg::Resize => {
-                    // 尺寸检查在循环开头已 resize pty。只更新 header（新宽度，
-                    // \e[s 保存光标后上移画、\e[u 恢复），**不画 ❯、不匹配
-                    // 占位符**——zle/readline 的重绘与输入回显由 shell 自己
-                    // 管理（裸 zsh resize 后输入正常），引擎介入反而干扰光标。
+                    // 尺寸检查在循环开头已 resize pty。先更新 header（新宽度），
+                    // 延迟 ~60ms 再补画 ❯（等 zle 重绘 aa+buffer 透传完）。
                     if at_prompt {
-                        log("r: redraw header only");
+                        log("r: redraw header, defer prompt");
                         let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
                         theme::redraw_header(
                             &mut stdout,
@@ -594,6 +595,10 @@ fn main() -> anyhow::Result<()> {
                             vcs,
                         )?;
                         stdout.flush()?;
+                        resize_prompt_at = Some(
+                            std::time::Instant::now()
+                                + std::time::Duration::from_millis(60),
+                        );
                     } else {
                         log("r: skip redraw (not at prompt)");
                     }
@@ -695,6 +700,16 @@ fn main() -> anyhow::Result<()> {
                     theme::redraw_vcs(&mut stdout, last_size.1 as usize, info, vcs)?;
                     stdout.flush()?;
                 }
+            }
+        }
+
+        // resize 后延迟补画 ❯（等 zle 重绘 aa+buffer 透传完，避免被覆盖）。
+        if let Some(deadline) = resize_prompt_at {
+            if std::time::Instant::now() >= deadline {
+                resize_prompt_at = None;
+                theme::render_prompt(&mut stdout)?;
+                stdout.flush()?;
+                log("deferred prompt drawn");
             }
         }
     }
