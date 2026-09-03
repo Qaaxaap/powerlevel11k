@@ -13,7 +13,7 @@
 //! | [`daemon`] | Process lifecycle: FIFO, pgid handshake, liveness, main loop |
 //! | [`repo`] | Repo handle and LRU cache |
 //! | [`index`] | git index parsing and dirty-candidate scan (performance core) |
-//! | [`scan`] | Worktree traversal (openat/fstatat, directory stack) |
+//! | [`scan`] | Worktree traversal (root-fd fstatat, untracked-cache pruning) |
 //! | [`untracked_cache`] | CheckDirMtime probe and untracked cache |
 //!
 //! # Performance

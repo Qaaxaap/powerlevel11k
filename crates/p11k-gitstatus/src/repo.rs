@@ -14,9 +14,13 @@
 //! **Computed per request**:
 //! - field assembly (branch/remote/action/ahead-behind; libgit2 caches
 //!   internally)
-//! - unstaged/untracked worktree traversal (index tree rebuilt each time;
-//!   candidates confirmed via `Diff::index_to_workdir`;
-//!   TODO(perf): reuse the tree when the index is unchanged)
+//! - unstaged/untracked worktree pass: the p11k index tree is reused while
+//!   `.git/index` is unchanged ([`Repo::index_tree_or_rebuild`]), then one
+//!   `fstatat` per tracked file (stat refresh) plus one per directory
+//!   (untracked-cache mtime check); readdir only on an untracked-cache miss.
+//!   Candidates are classified without a git diff ([`Repo::compute_dirty`]).
+//!   Measured ~95ms on a 54k-file nixpkgs clone (22 cores) vs ~80ms for the
+//!   original gitstatusd.
 //!
 //! # Known simplifications vs the original
 //!

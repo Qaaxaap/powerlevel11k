@@ -10,9 +10,10 @@
 //!    512, split by directory weight (InitSplits). Each shard is scanned by
 //!    one scoped thread via [`Index::get_dirty_candidates`]; shards never
 //!    overlap directories (each gets its own `&mut [IndexDir]`).
-//! 3. **Dirty detection calls no git**: `fstatat(dir_fd, basename,
+//! 3. **Dirty detection calls no git**: `fstatat(root_fd, rel_path,
 //!    AT_SYMLINK_NOFOLLOW)` compares the on-disk stat against the index
-//!    record ([`is_modified`]).
+//!    record ([`is_modified`]); no directory opens on the hot path (see
+//!    scan.rs).
 //! 4. **Candidates**: modified / deleted / new (untracked) / unreadable.
 //!    Collected fully, sorted, deduped, then handed to the repo layer for
 //!    the precise diff (the original also collects first, then runs
@@ -202,18 +203,21 @@ impl Index {
         let entries = &self.entries;
         let mut results: Vec<Vec<Vec<u8>>> = Vec::new();
         // Shards don't overlap: carve &mut slices from the front of dirs.
+        // All shards are spawned first, then joined (spawn-then-join in the
+        // same loop would serialize the scan).
         std::thread::scope(|scope| {
             let mut rest: &mut [IndexDir] = &mut self.dirs;
+            let mut handles = Vec::with_capacity(self.splits.len() - 1);
             for pair in self.splits.windows(2) {
                 let (from, to) = (pair[0], pair[1]);
                 let (shard, tail) = std::mem::take(&mut rest).split_at_mut(to - from);
-                results.push(
-                    scope
-                        .spawn(move || scan::scan_dirs(shard, entries, root_fd, caps, opts))
-                        .join()
-                        .expect("scan thread panicked"),
-                );
+                handles.push(scope.spawn(move || {
+                    scan::scan_dirs(shard, entries, root_fd, caps, opts)
+                }));
                 rest = tail;
+            }
+            for h in handles {
+                results.push(h.join().expect("scan thread panicked"));
             }
         });
         let mut out: Vec<Vec<u8>> = results.into_iter().flatten().collect();
