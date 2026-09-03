@@ -5,10 +5,10 @@
 //!
 //! # 泛用配置模型(对齐 p10k 抽象,用 KDL 表达)
 //!
-//! 配置项是**有限、类型化**的:
-//! - **布局**:`layout { left "dir" "vcs" "newline" "prompt_char" … }`。
-//!   元素可为普通段名、`<seg>_joined`(同底贴合)或 `newline`(切行);
-//!   `add-newline #true` 是 prompt 上方空行开关(p10k `LEFT/RIGHT_PROMPT_ELEMENTS`)。
+//! 布局用**行结构**表达多行(不是 p10k 元素序列里插 `newline` 标记):
+//! - **布局**:`layout { left { line {…} line {…} } right { line {…} } }`。
+//!   `left`/`right` 下每个 `line` 节点即一行;行内是段节点(`dir #true` 等,布尔原生,
+//!   `#false`/未列出则不启用,顺序=children 顺序);行与行之间就是换行。
 //! - **段**:`segments { dir foreground=39 bold=#true shorten-strategy="t" … }`。
 //!   段节点带**属性**:`foreground|fg`、`background|bg`(颜色)、`bold`(布尔)、
 //!   `content`/`icon`/`prefix`/`suffix`(文本)、`disabled`(显隐);其余进
@@ -104,22 +104,20 @@ impl Style {
     }
 }
 
-/// 布局元素。
+/// 一个布局元素(行内的一个段)。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Element {
     /// 普通段。
     Seg(String),
     /// 与相邻段同底贴合(p10k 的 `<seg>_joined` 尾缀)。
     Joined(String),
-    /// 在该处切行。
-    Newline,
 }
 
-/// 布局:左右元素序列 + prompt 上方空行开关。
+/// 布局:左右各是一组行;每行一组元素(顺序即显示顺序),行与行=换行。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Layout {
-    pub left: Vec<Element>,
-    pub right: Vec<Element>,
+    pub left: Vec<Vec<Element>>,
+    pub right: Vec<Vec<Element>>,
     pub add_newline: bool,
 }
 
@@ -218,14 +216,14 @@ impl Config {
     }
 }
 
-/// 解析 `layout`:{ `left`/`right` 子节点(元素序列)、`add-newline` }。
+/// 解析 `layout`:{ `left`/`right`(行组)、`add-newline` }。
 fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     let mut layout = Layout::default();
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
             match child.name().value() {
-                "left" => layout.left = parse_elements(child),
-                "right" => layout.right = parse_elements(child),
+                "left" => layout.left = parse_lines(child),
+                "right" => layout.right = parse_lines(child),
                 "add-newline" | "add_newline" => {
                     layout.add_newline = first_value(child).map(bool_val).unwrap_or(false);
                 }
@@ -236,9 +234,19 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     Ok(layout)
 }
 
-/// 解析一段元素序列(块内每个子节点=段,值为布尔:列出的 `#true` 启用、`#false`
-/// 或不列出则禁用)。`newline` 切行,`<seg>_joined` 同底贴合。
-fn parse_elements(node: &KdlNode) -> Vec<Element> {
+/// 解析一个侧(row 组):每个子节点是一行。
+fn parse_lines(node: &KdlNode) -> Vec<Vec<Element>> {
+    let mut rows = Vec::new();
+    if let Some(ch) = node.children() {
+        for row in ch.nodes() {
+            rows.push(parse_line(row));
+        }
+    }
+    rows
+}
+
+/// 解析一行:行内每个子节点是一个段(布尔启用);顺序 = children 顺序。
+fn parse_line(node: &KdlNode) -> Vec<Element> {
     let mut out = Vec::new();
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
@@ -248,9 +256,7 @@ fn parse_elements(node: &KdlNode) -> Vec<Element> {
             if !enabled {
                 continue;
             }
-            if name == "newline" {
-                out.push(Element::Newline);
-            } else if let Some(base) = name.strip_suffix("_joined") {
+            if let Some(base) = name.strip_suffix("_joined") {
                 out.push(Element::Joined(base.to_string()));
             } else {
                 out.push(Element::Seg(name.to_string()));
@@ -311,18 +317,14 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
 
 /// 内置 lean 主题(KDL v2)。放在仓库里,不硬编码进渲染逻辑。
 pub const DEFAULT_LEAN: &str = r#"
-// p11k 内置 lean 主题(默认)。改这里或换文件即换主题。
+// p11k 内置 lean 主题(默认)。换文件即换主题。
 layout {
     left {
-        dir #true
-        vcs #true
-        newline #true
-        prompt_char #true
+        line { dir #true; vcs #true }
+        line { prompt_char #true }
     }
     right {
-        status #true
-        command_execution_time #true
-        background_jobs #true
+        line { status #true; command_execution_time #true; background_jobs #true }
     }
     add-newline #true
 }
@@ -387,30 +389,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_layout_elements_and_newline() {
+    fn parses_layout_lines() {
         let c = Config::parse(
-            "layout {\n  left {\n    dir #true\n    vcs #true\n    newline #true\n    prompt_char #true\n  }\n  right {\n    status #true\n  }\n  add-newline #true\n}",
+            "layout {\n  left {\n    line { dir #true; vcs #true }\n    line { prompt_char #true }\n  }\n  right {\n    line { status #true }\n  }\n  add-newline #true\n}",
         )
         .unwrap();
+        // 左:两行
         assert_eq!(
             c.layout.left,
             vec![
-                Element::Seg("dir".into()),
-                Element::Seg("vcs".into()),
-                Element::Newline,
-                Element::Seg("prompt_char".into()),
+                vec![Element::Seg("dir".into()), Element::Seg("vcs".into())],
+                vec![Element::Seg("prompt_char".into())],
             ]
         );
-        assert_eq!(c.layout.right, vec![Element::Seg("status".into())]);
+        // 右:一行
+        assert_eq!(c.layout.right, vec![vec![Element::Seg("status".into())]]);
         assert!(c.layout.add_newline);
     }
 
     #[test]
     fn parses_joined_element_and_disabled() {
         // "dir_joined" 同底贴合; 显式 #false 的段被跳过。
-        let c = Config::parse("layout {\n  left {\n    dir_joined #true\n    vcs #true\n    time #false\n  }\n}").unwrap();
-        assert_eq!(c.layout.left[0], Element::Joined("dir".into()));
-        assert_eq!(c.layout.left.len(), 2, "#false 的 time 应被跳过");
+        let c = Config::parse("layout {\n  left {\n    line { dir_joined #true; vcs #true; time #false }\n  }\n}").unwrap();
+        assert_eq!(c.layout.left[0][0], Element::Joined("dir".into()));
+        assert_eq!(c.layout.left[0].len(), 2, "#false 的 time 应被跳过");
     }
 
     #[test]
@@ -447,7 +449,9 @@ mod tests {
     fn default_lean_parses() {
         let c = Config::default_lean().unwrap();
         assert!(!c.segments.is_empty());
-        assert_eq!(c.layout.left.len(), 4);
+        assert_eq!(c.layout.left.len(), 2, "lean 左侧应为两行");
+        assert_eq!(c.layout.left[0], vec![Element::Seg("dir".into()), Element::Seg("vcs".into())]);
+        assert_eq!(c.layout.left[1], vec![Element::Seg("prompt_char".into())]);
         assert!(c.segment("dir").props.contains_key("shorten-strategy"));
         assert_eq!(c.segment("prompt_char").style.fg, Color::Xterm(76));
         assert!(c.segment("dir").states.contains_key("ANCHOR"));
