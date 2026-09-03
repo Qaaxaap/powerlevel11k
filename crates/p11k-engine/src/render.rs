@@ -46,10 +46,17 @@ fn render_row(config: &Config, elements: &[Element], info: &HeaderInfo, vcs: Opt
         .map(|el| match el {
             Element::Seg(name) => render_segment(config, name, info, vcs),
             Element::Joined(name) => render_segment(config, name, info, vcs),
-            Element::Text(t) => SegmentText {
-                text: expand_env(t),
-                style: config.segment("text").effective_style(None, &config.defaults),
-            },
+            Element::Text(t) => {
+                let mut style = config.segment("text").effective_style(None, &config.defaults);
+                if style.bg == Color::Default {
+                    style.bg = if config.defaults.bg != Color::Default {
+                        config.defaults.bg.clone()
+                    } else {
+                        Color::Xterm(0)
+                    };
+                }
+                SegmentText { text: expand_env(t), style }
+            }
         })
         .collect()
 }
@@ -57,7 +64,15 @@ fn render_row(config: &Config, elements: &[Element], info: &HeaderInfo, vcs: Opt
 /// 渲染单个段(纯文本,当前仅 dir/vcs/status/prompt_char;未知段返回空)。
 fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&GitStatus>) -> SegmentText {
     let seg = config.segment(name);
-    let style = seg.effective_style(None, &config.defaults);
+    let mut style = seg.effective_style(None, &config.defaults);
+    // 保证段都有背景(哪怕默认色):无显式 bg → defaults.bg → 内置默认背景。
+    if style.bg == Color::Default {
+        style.bg = if config.defaults.bg != Color::Default {
+            config.defaults.bg.clone()
+        } else {
+            Color::Xterm(0) // 内置默认背景(黑)
+        };
+    }
     let text = match name {
         "dir" => value_of(seg.content.as_deref(), dir_text(info)),
         "vcs" => vcs_text(vcs),
@@ -175,17 +190,21 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
         if s.text.is_empty() {
             continue;
         }
-        // 段间分隔:异底 → segment,同底/无块 → sub;配置为空则纯空格。
+        // 段间分隔(p10k 决策):前段有背景 → 画分隔符(同底 → sub,异色/当前无底 → segment);
+        // 前段无背景 → 纯空格。
         if has_left {
-            let diff_bg = prev_bg != Color::Default
-                && s.style.bg != Color::Default
-                && s.style.bg != prev_bg;
-            let ch = if diff_bg { &seps.segment } else { &seps.sub };
-            if !ch.is_empty() {
-                if diff_bg {
-                    out.push_str(&arrow(ch, prev_bg.clone(), s.style.bg.clone()));
+            let prev_has = prev_bg != Color::Default;
+            if prev_has {
+                let same = s.style.bg != Color::Default && s.style.bg == prev_bg;
+                let ch = if same { &seps.sub } else { &seps.segment };
+                if !ch.is_empty() {
+                    if same {
+                        out.push_str(&paint(ch, &s.style));
+                    } else {
+                        out.push_str(&arrow(ch, prev_bg.clone(), s.style.bg.clone()));
+                    }
                 } else {
-                    out.push_str(&paint(ch, &s.style)); // 同底细线用本段样式
+                    out.push(' ');
                 }
             } else {
                 out.push(' ');
