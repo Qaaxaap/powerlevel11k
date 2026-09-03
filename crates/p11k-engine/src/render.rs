@@ -34,7 +34,7 @@ pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitS
         .map(|i| {
             let l = left.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
             let r = right.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
-            assemble_row(&l, &r, cols)
+            assemble_row(&l, &r, cols, &config.separators)
         })
         .collect()
 }
@@ -131,24 +131,38 @@ fn value_of<'a>(content: Option<&'a str>, default: impl Into<String>) -> String 
     content.map(String::from).unwrap_or(default.into())
 }
 
-/// 把一行拼成 ANSI:左段串(段间空格或 `` 分隔符)+ 右段右对齐到 `cols`。
-fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize) -> String {
+/// 把一行拼成 ANSI:左段串(段间 `sub`/`segment` 分隔、末段 `end` 端符)+ 右段右对齐。
+fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: &crate::config::Separators) -> String {
     let mut out = String::new();
-    let mut prev_bg = Color::Default; // 前一段的背景色(用于段间 `` 箭头)
+    let mut prev_bg = Color::Default;
+    let mut has_left = false;
     for s in left {
         if s.text.is_empty() {
             continue;
         }
-        // 段间分隔:前后段都有背景且不同 → powerline 箭头 ``(fg=前段bg, bg=后段bg);
-        // 否则纯空格。
-        if prev_bg != Color::Default && s.style.bg != Color::Default && s.style.bg != prev_bg {
-            out.push_str(&stylecodes(s.style.bg.clone(), prev_bg.clone()));
-            out.push('');
-        } else {
-            out.push(' ');
+        // 段间分隔:异底 → segment,同底/无块 → sub;配置为空则纯空格。
+        if has_left {
+            let diff_bg = prev_bg != Color::Default
+                && s.style.bg != Color::Default
+                && s.style.bg != prev_bg;
+            let ch = if diff_bg { &seps.segment } else { &seps.sub };
+            if !ch.is_empty() {
+                if diff_bg {
+                    out.push_str(&arrow(ch, prev_bg.clone(), s.style.bg.clone()));
+                } else {
+                    out.push_str(&paint(ch, &s.style)); // 同底细线用本段样式
+                }
+            } else {
+                out.push(' ');
+            }
         }
         out.push_str(&paint(&s.text, &s.style));
         prev_bg = s.style.bg.clone();
+        has_left = true;
+    }
+    // 左栏末尾端符(最后一段后,用它自己的背景指向行尾)。
+    if has_left && !seps.end.is_empty() && prev_bg != Color::Default {
+        out.push_str(&arrow(&seps.end, prev_bg.clone(), Color::Default));
     }
     let mut right_str = String::new();
     let mut right_style: Option<&Style> = None;
@@ -176,9 +190,8 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize) -> Str
     out
 }
 
-/// 生成一段"背景色"ANSI 前缀(用于 `` 箭头:前景=前段背景,背景=后段背景)。
-fn stylecodes(bg: Color, fg: Color) -> String {
-    // 注:这里 fg/bg 参数顺序与语义是"箭头的 fg=前段背景、bg=后段背景"。
+/// 画一个分隔符箭头:`fg` 为它的前景色(连接前一片背景),`bg` 为背景色。
+fn arrow(ch: &str, fg: Color, bg: Color) -> String {
     let mut s = String::new();
     match fg {
         Color::Default => {}
@@ -192,6 +205,8 @@ fn stylecodes(bg: Color, fg: Color) -> String {
         Color::Rgb(r, g, b) => write!(s, "\x1b[48;2;{r};{g};{b}m").unwrap(),
         Color::Named(n) => write!(s, "\x1b[48;5;{}m", named_256(&n)).unwrap(),
     }
+    s.push_str(ch);
+    s.push_str("\x1b[0m");
     s
 }
 
@@ -340,9 +355,11 @@ mod tests {
             behind: 0,
             stashes: 0,
         };
+        // 设置异底段间用 powerline 箭头,末尾端符。
+        cfg.separators.segment = "\u{e0b0}".into();
         let h = render_header(&cfg, &info("/tmp", None), Some(&v), 80);
         assert!(h.contains("\x1b[48;5;39m"), "dir 应有背景块 39");
         assert!(h.contains("\x1b[48;5;76m"), "vcs 应有背景块 76");
-        assert!(h.contains('\u{e0b0}'), "异底段间应画 powerline 箭头 ");
+        assert!(h.contains('\u{e0b0}'), "异底段间应画可配置的 segment 分隔符()");
     }
 }

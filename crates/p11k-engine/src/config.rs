@@ -121,6 +121,24 @@ pub struct Layout {
     pub add_newline: bool,
 }
 
+/// 分隔符/端符族(可配置字符,powerline 风格)。
+///
+/// - `segment`:异底段间箭头(如 powerline ``)。空=不画(纯文本空格)。
+/// - `sub`:同底段间细线(如 ``)。
+/// - `end`:左栏末尾端符(右三角 ``,指向前方/行尾)。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Separators {
+    pub segment: String,
+    pub sub: String,
+    pub end: String,
+}
+
+impl Default for Separators {
+    fn default() -> Self {
+        Separators { segment: String::new(), sub: String::new(), end: String::new() }
+    }
+}
+
 /// 行为属性值(类型化,非字符串)。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prop {
@@ -173,6 +191,8 @@ pub struct Config {
     pub segments: BTreeMap<String, Segment>,
     /// 全局回退样式。
     pub defaults: Style,
+    /// 分隔符/端符族。
+    pub separators: Separators,
 }
 
 impl Config {
@@ -196,6 +216,7 @@ impl Config {
         let mut layout = Layout::default();
         let mut segments: BTreeMap<String, Segment> = BTreeMap::new();
         let mut defaults = Style::default();
+        let mut separators = Separators::default();
 
         for node in doc.nodes() {
             match node.name().value() {
@@ -209,10 +230,11 @@ impl Config {
                     }
                 }
                 "defaults" => defaults = Style::from_entries(node.entries()),
+                "separators" => separators = parse_separators(node),
                 _ => {} // 未知顶层忽略(向前兼容)
             }
         }
-        Ok(Config { layout, segments, defaults })
+        Ok(Config { layout, segments, defaults, separators })
     }
 }
 
@@ -313,6 +335,24 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
         Some(KdlValue::String(s)) => Some(s.clone()),
         _ => None,
     }
+}
+
+/// 解析 `separators` 节点:`segment`/`sub`/`end` 子节点,值=字符串(首字符)。
+fn parse_separators(node: &KdlNode) -> Separators {
+    let mut s = Separators::default();
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            let Some(v) = first_value(child) else { continue };
+            let Some(ch) = str_val(v) else { continue };
+            match child.name().value() {
+                "segment" => s.segment = ch,
+                "sub" => s.sub = ch,
+                "end" => s.end = ch,
+                _ => {}
+            }
+        }
+    }
+    s
 }
 
 /// 内置 lean 主题(KDL v2)。放在仓库里,不硬编码进渲染逻辑。
