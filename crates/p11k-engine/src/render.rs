@@ -30,11 +30,29 @@ pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitS
     let left = &layout.left;
     let right = &layout.right;
     let lines = left.len().max(right.len());
+    let frame = &config.frame;
     (0..lines)
         .map(|i| {
             let l = left.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
             let r = right.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
-            assemble_row(&l, &r, cols, &config.separators)
+            // 每行帧:首行 first,其余 header 行 newline。
+            let (prefix, suffix) = if i == 0 {
+                (&frame.first_prefix, &frame.first_suffix)
+            } else {
+                (&frame.newline_prefix, &frame.newline_suffix)
+            };
+            let fg = Style { fg: config.defaults.fg.clone(), ..Default::default() };
+            let suf_w = display_width(suffix);
+            let mut row = String::new();
+            if !prefix.is_empty() {
+                row.push_str(&paint(prefix, &fg));
+            }
+            let body = assemble_row(&l, &r, cols.saturating_sub(suf_w), &config.separators);
+            row.push_str(&body);
+            if !suffix.is_empty() {
+                row.push_str(&paint(suffix, &fg));
+            }
+            row
         })
         .collect()
 }
@@ -419,6 +437,17 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn first_header_line_gets_frame() {
+        let cfg = Config::parse(
+            "layout { left { line { dir #true } } }\nframe {\n  first-prefix \"╭─\"\n  first-suffix \"─╮\"\n}",
+        )
+        .unwrap();
+        let h = render_header(&cfg, &info("/tmp", None), None, 80);
+        assert!(h.contains("╭─"), "首行应有 first-prefix 帧，实际：{h:?}");
+        assert!(h.contains("─╮"), "首行应有 first-suffix 帧");
+    }
+
     #[test]
     fn vcs_counts_appear() {
         let cfg = Config::default_lean().unwrap();

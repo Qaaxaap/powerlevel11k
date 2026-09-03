@@ -141,6 +141,33 @@ impl Default for Separators {
     }
 }
 
+/// 多行帧(行首/行尾装饰,可配字符)。见 p10k MULTILINE_*_PROMPT_PREFIX/SUFFIX。
+/// - `first_*`:第一个 header 行(`╭─`/`─╮`);`newline_*`:中间 header 行(`├─`/`─┤`);
+///   `last_*`:输入行(`╰─`/`─╯`)。空 = 不画。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Frame {
+    pub first_prefix: String,
+    pub first_suffix: String,
+    pub newline_prefix: String,
+    pub newline_suffix: String,
+    pub last_prefix: String,
+    pub last_suffix: String,
+}
+
+impl Default for Frame {
+    fn default() -> Self {
+        // 默认无帧(纯文本 lean)。经典帧(╭─/╰─)由配置 frame 块开启。
+        Frame {
+            first_prefix: String::new(),
+            first_suffix: String::new(),
+            newline_prefix: String::new(),
+            newline_suffix: String::new(),
+            last_prefix: String::new(),
+            last_suffix: String::new(),
+        }
+    }
+}
+
 /// 行为属性值(类型化,非字符串)。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prop {
@@ -195,6 +222,8 @@ pub struct Config {
     pub defaults: Style,
     /// 分隔符/端符族。
     pub separators: Separators,
+    /// 多行帧。
+    pub frame: Frame,
 }
 
 impl Config {
@@ -219,6 +248,7 @@ impl Config {
         let mut segments: BTreeMap<String, Segment> = BTreeMap::new();
         let mut defaults = Style::default();
         let mut separators = Separators::default();
+        let mut frame = Frame::default();
 
         for node in doc.nodes() {
             match node.name().value() {
@@ -233,11 +263,33 @@ impl Config {
                 }
                 "defaults" => defaults = Style::from_entries(node.entries()),
                 "separators" => separators = parse_separators(node),
+                "frame" => frame = parse_frame(node),
                 _ => {} // 未知顶层忽略(向前兼容)
             }
         }
-        Ok(Config { layout, segments, defaults, separators })
+        Ok(Config { layout, segments, defaults, separators, frame })
     }
+}
+
+/// 解析 `frame` 节点:first/newline/last 的 prefix/suffix(值字符串)。
+fn parse_frame(node: &KdlNode) -> Frame {
+    let mut f = Frame::default();
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            let Some(v) = first_value(child) else { continue };
+            let Some(chstr) = str_val(v) else { continue };
+            match child.name().value() {
+                "first-prefix" => f.first_prefix = chstr,
+                "first-suffix" => f.first_suffix = chstr,
+                "newline-prefix" => f.newline_prefix = chstr,
+                "newline-suffix" => f.newline_suffix = chstr,
+                "last-prefix" => f.last_prefix = chstr,
+                "last-suffix" => f.last_suffix = chstr,
+                _ => {}
+            }
+        }
+    }
+    f
 }
 
 /// 解析 `layout`:{ `left`/`right`(行组)、`add-newline` }。
