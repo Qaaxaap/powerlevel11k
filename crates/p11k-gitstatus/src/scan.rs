@@ -1,62 +1,24 @@
 //! Worktree traversal (mirrors `index.cc` ScanDirs and `dir.cc` ListDir).
 //!
-//! - Walk from a parent directory fd: `openat(fd, name)` + `fstatat(fd,
-//!   name, AT_SYMLINK_NOFOLLOW)`, avoiding absolute-path lookups.
-//! - Directory stack: `fds[d-1]` is the fd of depth d; a pre-order visit
-//!   keeps the parent fd on top, so `truncate(depth)` + push needs the same
-//!   number of openat calls as the original's rotate.
+//! - All stat calls go through a single root directory fd:
+//!   `fstatat(root_fd, rel_path, AT_SYMLINK_NOFOLLOW)` with the full
+//!   repository-relative path (index paths are NUL-terminated, so no
+//!   allocation). No per-directory open is needed on the hot path — one
+//!   syscall per file or dir stat, like the original's path-based stat.
 //! - StatFiles: index files are fstatat'ed + is_modified one by one
 //!   (always done, regardless of the untracked cache).
+//! - Untracked-cache pruning: when a dir's mtime is unchanged (checked with
+//!   one fstatat on the dir), skip readdir and reuse the stored unmatched
+//!   entries.
+//! - readdir happens only on an untracked-cache miss: a single openat from
+//!   root_fd, fdopendir, readdir, close.
 //! - Merge join of sorted readdir entries against index files and
 //!   subdirectories yields modified / deleted / new (untracked) candidates.
-//! - Untracked-cache pruning: when a dir's mtime is unchanged, skip readdir
-//!   and reuse the stored unmatched entries.
 //! - d_type is trusted as-is (DT_DIR); DT_UNKNOWN is treated as a regular
 //!   file (no fallback stat), like the original.
 
 use crate::index::{IndexDir, IndexEntry, RepoCaps, is_modified};
 use std::os::fd::RawFd;
-
-/// RAII directory-fd stack: fds opened during a scan are closed on
-/// truncate, clear, and drop. Without this, a nixpkgs-scale scan leaks
-/// thousands of directory fds per pass; once the process fd limit is hit,
-/// openat fails and untracked scanning degrades to 0.
-struct DirStack {
-    fds: Vec<RawFd>,
-}
-
-impl DirStack {
-    fn new() -> Self {
-        Self { fds: Vec::new() }
-    }
-    fn push(&mut self, fd: RawFd) {
-        self.fds.push(fd);
-    }
-    fn get(&self, i: usize) -> Option<&RawFd> {
-        self.fds.get(i)
-    }
-    fn last(&self) -> Option<&RawFd> {
-        self.fds.last()
-    }
-    fn truncate(&mut self, n: usize) {
-        for fd in self.fds.drain(n..) {
-            // SAFETY: fd was pushed here, from openat/dup.
-            unsafe { libc::close(fd) };
-        }
-    }
-    fn close_all(&mut self) {
-        for fd in self.fds.drain(..) {
-            // SAFETY: as above.
-            unsafe { libc::close(fd) };
-        }
-    }
-}
-
-impl Drop for DirStack {
-    fn drop(&mut self) {
-        self.close_all();
-    }
-}
 
 pub struct ScanOpts {
     /// Collect untracked candidates (`-d` cap > 0).
@@ -74,6 +36,11 @@ struct Dirent {
 
 /// Scan dirs[from..to] and return candidate paths (relative to the repo
 /// root, no NUL).
+///
+/// Hot path (dirs unchanged since the last scan): one fstatat per tracked
+/// file (StatFiles) plus one fstatat per directory (untracked-cache mtime
+/// check), no directory opens, no readdir. Directory fds are opened only
+/// when the untracked cache misses and the dir must be listed.
 pub fn scan_dirs(
     dirs: &mut [IndexDir],
     entries: &[IndexEntry],
@@ -82,33 +49,20 @@ pub fn scan_dirs(
     opts: &ScanOpts,
 ) -> Vec<Vec<u8>> {
     let mut candidates: Vec<Vec<u8>> = Vec::new();
-    // fds[d-1] = fd of depth d.
-    let mut fds = DirStack::new();
 
     for idx in 0..dirs.len() {
-        // Open the current dir (parent fd from the stack, truncated then push).
-        let fd = match open_dir(&mut fds, root_fd, dirs, idx) {
-            Some(fd) => fd,
-            None => {
-                // Unopenable dir: clear untracked cache, no candidates.
-                dirs[idx].st = None;
-                dirs[idx].unmatched.clear();
-                continue;
-            }
-        };
-        let dir_path_len = dirs[idx].path.len() - 1;
-
         // StatFiles: compare every index file (regardless of the cache).
+        // Entry paths are root-relative and NUL-terminated: one fstatat
+        // from root_fd, no directory open needed.
         let file_idxs = dirs[idx].files.clone();
         for &ei in &file_idxs {
             let entry = &entries[ei];
-            let basename = &entry.path[dir_path_len..entry.path.len() - 1];
             let mut st: libc::stat = unsafe { std::mem::zeroed() };
-            // SAFETY: basename is derived from an entry path and NUL-terminated.
+            // SAFETY: entry.path is NUL-terminated.
             let r = unsafe {
                 libc::fstatat(
-                    fd,
-                    basename.as_ptr().cast(),
+                    root_fd,
+                    entry.path.as_ptr().cast(),
                     &mut st,
                     libc::AT_SYMLINK_NOFOLLOW,
                 )
@@ -126,32 +80,47 @@ pub fn scan_dirs(
         }
 
         // Untracked cache: unchanged mtime → reuse unmatched, skip readdir.
+        // Dir mtime via one fstatat from root_fd (the root dir itself via
+        // fstat on root_fd). The trailing '/' on dir paths is fine for
+        // fstatat.
         if opts.untracked_cache_enabled {
-            let mut st: libc::stat = unsafe { std::mem::zeroed() };
-            // SAFETY: fd is an open directory.
-            if unsafe { libc::fstat(fd, &mut st) } == 0 {
-                let cur = (st.st_mtime, st.st_mtime_nsec);
-                if dirs[idx].st == Some(cur) {
-                    for p in dirs[idx].unmatched.clone() {
-                        candidates.push(p);
+            let cur = stat_dir(root_fd, &dirs[idx]);
+            match cur {
+                Some(cur) => {
+                    if dirs[idx].st == Some(cur) {
+                        for p in dirs[idx].unmatched.clone() {
+                            candidates.push(p);
+                        }
+                        continue;
                     }
+                    dirs[idx].st = Some(cur);
+                }
+                None => {
+                    // Unstatable dir: clear untracked cache, no candidates.
+                    dirs[idx].st = None;
+                    dirs[idx].unmatched.clear();
                     continue;
                 }
-                dirs[idx].st = Some(cur);
-            } else {
-                dirs[idx].st = None;
-                dirs[idx].unmatched.clear();
-                continue;
             }
         }
 
         // readdir + sort; on failure clear cache, no candidates.
-        let Some(dirents) = list_dir(fd, caps.case_sensitive) else {
+        let dir_fd = open_dir(root_fd, &dirs[idx]);
+        let Some(dir_fd) = dir_fd else {
+            dirs[idx].st = None;
+            dirs[idx].unmatched.clear();
+            continue;
+        };
+        let dirents = list_dir(dir_fd, caps.case_sensitive);
+        // SAFETY: dir_fd was opened above; close on every path.
+        unsafe { libc::close(dir_fd) };
+        let Some(dirents) = dirents else {
             dirs[idx].st = None;
             dirs[idx].unmatched.clear();
             continue;
         };
         dirs[idx].unmatched.clear();
+        let dir_path_len = dirs[idx].path.len() - 1;
 
         // Merge join: dirents (sorted) vs files (entries sorted) vs
         // subdirs (tree order).
@@ -176,8 +145,8 @@ pub fn scan_dirs(
                     // SAFETY: name comes from readdir and is NUL-terminated.
                     let r = unsafe {
                         libc::fstatat(
-                            fd,
-                            de.name.as_ptr().cast(),
+                            root_fd,
+                            entry.path.as_ptr().cast(),
                             &mut st,
                             libc::AT_SYMLINK_NOFOLLOW,
                         )
@@ -229,74 +198,46 @@ pub fn scan_dirs(
     candidates
 }
 
-/// Open dirs[idx]'s directory fd, maintaining the fds stack
-/// (fds[d-1] = fd of depth d).
-///
-/// Two paths:
-/// - Parent fd already on the stack (pre-order accumulation) → truncate the
-///   stack to depth, openat, push.
-/// - Parent fd not on the stack (shard start: ancestors fell in a
-///   neighbouring shard) → clear the stack, dup the root, and rebuild the
-///   full ancestor chain along `dirs[idx].path` (like the original's
-///   OpenTail at each shard start).
-fn open_dir(fds: &mut DirStack, root_fd: RawFd, dirs: &[IndexDir], idx: usize) -> Option<RawFd> {
-    let depth = dirs[idx].depth;
-    if depth != 0 && fds.get(depth - 1).is_none() {
-        // Shard start: rebuild the ancestor chain.
-        fds.close_all();
-        // SAFETY: standard dup semantics.
-        let mut fd = unsafe { libc::dup(root_fd) };
-        if fd < 0 {
-            return None;
-        }
-        fds.push(fd);
-        let path = &dirs[idx].path[..dirs[idx].path.len() - 1]; // e.g. "a/b/"
-        for seg in path.split(|&b| b == b'/') {
-            if seg.is_empty() {
-                continue;
-            }
-            let mut name = seg.to_vec();
-            name.push(0); // NUL
-            let parent = *fds.last().expect("chain non-empty");
-            // SAFETY: name is NUL-terminated.
-            fd = unsafe {
-                libc::openat(
-                    parent,
-                    name.as_ptr().cast(),
-                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-                )
-            };
-            if fd < 0 {
-                return None;
-            }
-            fds.push(fd);
-        }
-        return fds.last().copied();
-    }
-    let parent_fd = if depth == 0 {
-        root_fd
+/// Stat a directory (for the untracked-cache mtime check): the root dir via
+/// fstat on root_fd, any other dir via fstatat(root_fd, path) — dir paths
+/// carry a trailing '/' and NUL, both accepted by fstatat. Returns
+/// (mtime_sec, mtime_nsec); None when the dir cannot be stat'ed.
+fn stat_dir(root_fd: RawFd, dir: &IndexDir) -> Option<(i64, i64)> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let ok = if dir.depth == 0 {
+        // SAFETY: root_fd is an open directory.
+        unsafe { libc::fstat(root_fd, &mut st) }
     } else {
-        *fds.get(depth - 1)?
-    };
-    fds.truncate(depth);
-    let fd = if depth == 0 {
-        // SAFETY: standard dup semantics.
-        unsafe { libc::dup(root_fd) }
-    } else {
-        // SAFETY: basename is NUL-terminated (see module docs).
+        // SAFETY: dir.path is NUL-terminated.
         unsafe {
-            libc::openat(
-                parent_fd,
-                dirs[idx].basename.as_ptr().cast(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            libc::fstatat(
+                root_fd,
+                dir.path.as_ptr().cast(),
+                &mut st,
+                libc::AT_SYMLINK_NOFOLLOW,
             )
         }
     };
-    if fd < 0 {
-        return None;
+    (ok == 0).then_some((st.st_mtime, st.st_mtime_nsec))
+}
+
+/// Open one directory for listing (untracked-cache miss): the root dir via
+/// dup(root_fd), any other dir via openat(root_fd, path, O_DIRECTORY).
+fn open_dir(root_fd: RawFd, dir: &IndexDir) -> Option<RawFd> {
+    if dir.depth == 0 {
+        // SAFETY: standard dup semantics.
+        let fd = unsafe { libc::dup(root_fd) };
+        return (fd >= 0).then_some(fd);
     }
-    fds.push(fd);
-    Some(fd)
+    // SAFETY: dir.path is NUL-terminated.
+    let fd = unsafe {
+        libc::openat(
+            root_fd,
+            dir.path.as_ptr().cast(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    (fd >= 0).then_some(fd)
 }
 
 /// readdir + sort (mirrors dir.cc ListDir): dup(fd) + fdopendir + readdir
