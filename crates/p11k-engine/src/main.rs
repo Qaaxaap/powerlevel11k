@@ -485,9 +485,6 @@ fn main() -> anyhow::Result<()> {
     // 引擎在透传流里匹配 `aa` 画前缀顶掉。占位符前的内容累积到缓冲。
     let mut pending_placeholder = false;
     let mut placeholder_buf: Vec<u8> = Vec::new();
-    // fish resize：fish 的 aa 打印晚于引擎 redraw（时序竞态），所以 resize 后
-    // 等 fish 输出 aa 再 redraw（避免 ❯ 被 aa 覆盖）。
-    let mut pending_redraw = false;
 
     // instant header（对齐 p10k instant prompt）：不等内部 shell 加载完
     // oh-my-zsh，立即用引擎 cwd 画占位 header + ❯，开窗即见 prompt；内部
@@ -583,14 +580,23 @@ fn main() -> anyhow::Result<()> {
                     at_prompt = true; // 输入行就绪
                 }
                 AnnMsg::Resize => {
-                    // 尺寸检查在循环开头已 resize pty。所有 shell 统一：等
-                    // shell 重绘输出占位符 aa（及其后的 buffer）再重画——若
-                    // 立即 redraw_full 画 ❯，光标停在 buffer 前（zle 以为在
-                    // buffer 末尾），resize 后输入/方向键错位。
-                    pending_placeholder = true;
-                    placeholder_buf.clear();
-                    pending_redraw = true;
-                    log("r: resize, wait for aa");
+                    // 尺寸检查在循环开头已 resize pty。只更新 header（新宽度，
+                    // \e[s 保存光标后上移画、\e[u 恢复），**不画 ❯、不匹配
+                    // 占位符**——zle/readline 的重绘与输入回显由 shell 自己
+                    // 管理（裸 zsh resize 后输入正常），引擎介入反而干扰光标。
+                    if at_prompt {
+                        log("r: redraw header only");
+                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                        theme::redraw_header(
+                            &mut stdout,
+                            last_size.1 as usize,
+                            current_info.as_ref(),
+                            vcs,
+                        )?;
+                        stdout.flush()?;
+                    } else {
+                        log("r: skip redraw (not at prompt)");
+                    }
                 }
             }
         }
@@ -651,22 +657,7 @@ fn main() -> anyhow::Result<()> {
                             let end = pos + PLACEHOLDER.len();
                             // 占位符（及之前的序列）先透传，再画前缀顶掉。
                             stdout.write_all(&placeholder_buf[..end])?;
-                            if pending_redraw {
-                                // resize：shell 已输出占位符 aa（含其后的
-                                // buffer），重画整个 prompt 窗口——透传 buffer
-                                // 使光标自然落在 buffer 末尾。
-                                pending_redraw = false;
-                                let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                                theme::redraw_full(
-                                    &mut stdout,
-                                    last_size.1 as usize,
-                                    current_info.as_ref(),
-                                    vcs,
-                                )?;
-                                log("resize: matched aa, redrawn");
-                            } else {
-                                theme::render_prompt(&mut stdout)?;
-                            }
+                            theme::render_prompt(&mut stdout)?;
                             stdout.write_all(&placeholder_buf[end..])?;
                             placeholder_buf.clear();
                             pending_placeholder = false;

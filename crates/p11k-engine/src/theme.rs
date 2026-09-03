@@ -86,22 +86,24 @@ pub fn redraw_vcs(
     Ok(())
 }
 
-/// resize 后重画 prompt 窗口（header + 前缀），**不清屏**。
+/// resize 后只更新 header（新宽度），**不画前缀、不覆盖 zle 的占位符**。
 ///
-/// zle 收到 SIGWINCH 的重绘只用 `\e[J`（清输入行到屏幕底）并重画占位 `aa`，
-/// header 仍在输入行上方 2 行、上方的历史输出也都还在。这里上移 2 行重画
-/// header（新宽度）+ 前缀顶掉 aa，保留可视区域的历史（`\e[2J` 会抹掉它们）。
-/// 前置条件：光标在输入行（prompt 就绪），header 在其上方 2 行。
-pub fn redraw_full(
+/// resize 时 zle 会重绘占位符 `aa` 及其后的 buffer，光标由 zle 管理（buffer
+/// 末尾）。此时若引擎画 ❯ 覆盖 `aa`，光标会停在 ❯ 后（buffer 前），与 zle
+/// 的光标模型不符 → resize 后输入/方向键错位。所以 resize 只上移 2 行清行
+/// 重画 header（新宽度），保留 zle 的 `aa`+buffer，光标不动；prompt 暂时是
+/// `aa` 占位，下次新 prompt（回车后）引擎照常画 ❯。
+pub fn redraw_header(
     out: &mut dyn Write,
     cols: usize,
     info: Option<&HeaderInfo>,
     vcs: Option<&GitStatus>,
 ) -> io::Result<()> {
     if let Some(info) = info {
-        write!(out, "\x1b[2A")?; // 上移到 header 行 1
+        // \e[s 保存光标（buffer 末尾），画完 \e[u 恢复。
+        write!(out, "\x1b[s\x1b[2A")?; // 上移到 header 行 1
         render_header(out, cols, info, vcs)?;
-        render_prompt(out)?;
+        write!(out, "\x1b[u")?;
     }
     Ok(())
 }
