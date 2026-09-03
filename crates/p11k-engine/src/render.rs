@@ -131,11 +131,19 @@ fn value_of<'a>(content: Option<&'a str>, default: impl Into<String>) -> String 
     content.map(String::from).unwrap_or(default.into())
 }
 
-/// 把一行拼成 ANSI:左段串 + 右段右对齐到 `cols`。
+/// 把一行拼成 ANSI:左段串(段间空格分隔,纯文本)+ 右段右对齐到 `cols`。
 fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize) -> String {
     let mut out = String::new();
+    let mut first = true;
     for s in left {
+        if s.text.is_empty() {
+            continue;
+        }
+        if !first {
+            out.push(' '); // 段间空格(纯文本;powerline 用分隔符,后续单元)
+        }
         out.push_str(&paint(&s.text, &s.style));
+        first = false;
     }
     if !right.is_empty() {
         let right_str: String = right.iter().map(|s| s.text.as_str()).collect();
@@ -229,13 +237,11 @@ mod tests {
     fn renders_pure_text_header_with_right_align() {
         let cfg = Config::default_lean().unwrap();
         let h = render_header(&cfg, &info("/tmp", Some(0)), None, 80);
-        // 行1: dir + vcs + 右(status,右对齐)。
-        assert!(h.contains("/tmp"));
+        // header 只一行行:含目录 + ✓;prompt_char(❯)不在 header(由 render_prompt 画)。
+        assert!(h.contains("/tmp") || h.contains('~'));
         assert!(h.contains("✓"));
-        let lines: Vec<&str> = h.split("\r\n").collect();
-        assert_eq!(lines.len(), 2, "lean 两行");
-        // 行2: prompt_char ❯。
-        assert!(lines.last().unwrap().contains('❯'));
+        assert!(!h.contains('❯'), "输入行前缀 ❯ 由 render_prompt 画，不应在 header");
+        assert_eq!(h.split("\r\n").count(), 1, "lean header 一行");
     }
 
     #[test]

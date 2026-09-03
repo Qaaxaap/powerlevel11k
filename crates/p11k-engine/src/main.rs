@@ -618,10 +618,11 @@ fn main() -> anyhow::Result<()> {
                     if at_prompt {
                         log("r: redraw header, defer prompt");
                         let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                        theme::redraw_header(
+                        theme::redraw_header_cfg(
                             &mut stdout,
                             last_size.1 as usize,
-                            current_info.as_ref(),
+                            &config,
+                            current_info.as_ref().unwrap_or(&instant_info),
                             vcs,
                         )?;
                         stdout.flush()?;
@@ -727,7 +728,7 @@ fn main() -> anyhow::Result<()> {
             if at_prompt {
                 if let Some(info) = &current_info {
                     let vcs = res.status.as_ref();
-                    theme::redraw_vcs(&mut stdout, last_size.1 as usize, info, vcs)?;
+                    theme::redraw_header_cfg(&mut stdout, last_size.1 as usize, &config, info, vcs)?;
                     stdout.flush()?;
                 }
             }

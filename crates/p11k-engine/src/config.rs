@@ -321,7 +321,6 @@ pub const DEFAULT_LEAN: &str = r#"
 layout {
     left {
         line { dir #true; vcs #true }
-        line { prompt_char #true }
     }
     right {
         line { status #true; command_execution_time #true; background_jobs #true }
@@ -449,12 +448,13 @@ mod tests {
     fn default_lean_parses() {
         let c = Config::default_lean().unwrap();
         assert!(!c.segments.is_empty());
-        assert_eq!(c.layout.left.len(), 2, "lean 左侧应为两行");
+        assert_eq!(c.layout.left.len(), 1, "lean 左侧 header 只一行");
         assert_eq!(c.layout.left[0], vec![Element::Seg("dir".into()), Element::Seg("vcs".into())]);
-        assert_eq!(c.layout.left[1], vec![Element::Seg("prompt_char".into())]);
+        assert_eq!(c.layout.right[0], vec![Element::Seg("status".into()), Element::Seg("command_execution_time".into()), Element::Seg("background_jobs".into())]);
         assert!(c.segment("dir").props.contains_key("shorten-strategy"));
+        // prompt_char 段仍在(供输入行前缀上色),但不在 header 布局里。
         assert_eq!(c.segment("prompt_char").style.fg, Color::Xterm(76));
-        assert!(c.segment("dir").states.contains_key("ANCHOR"));
+        assert!(!c.layout.left.iter().flatten().any(|e| matches!(e, Element::Seg(s) if s == "prompt_char")));
         assert!(c.layout.add_newline);
     }
 

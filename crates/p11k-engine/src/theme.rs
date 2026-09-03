@@ -103,6 +103,23 @@ pub fn render_header_cleared_cfg(
     render_header_cfg(out, cols, config, info, vcs)
 }
 
+/// resize 后重画 header(用配置):保存输入行光标、上移到 header 行 1、重画、
+/// 恢复。上移行数 = 配置 header 行数;不碰输入行(用户可能已在打字)。
+pub fn redraw_header_cfg(
+    out: &mut dyn Write,
+    cols: usize,
+    config: &crate::config::Config,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+) -> io::Result<()> {
+    let lines = crate::render::render_header_lines(config, info, vcs, cols);
+    let n = lines.len().max(1);
+    write!(out, "\x1b[s\x1b[{}A", n)?;
+    render_header_cfg(out, cols, config, info, vcs)?;
+    write!(out, "\x1b[u")?;
+    Ok(())
+}
+
 /// 异步 git 状态回来后重画 header 行 2（vcs 段）：保存输入行光标、上移到
 /// header 行 2、清行重画、再恢复——不碰输入行（用户可能已在打字）。
 pub fn redraw_vcs(
