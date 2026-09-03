@@ -741,7 +741,7 @@ fn main() -> anyhow::Result<()> {
                 .as_ref()
                 .map(|i| i.cwd.clone())
                 .unwrap_or_default();
-            last_vcs = Some((cwd, res.status.clone()));
+            last_vcs = Some((cwd.clone(), res.status.clone()));
             if at_prompt {
                 if let Some(info) = &current_info {
                     let vcs = res.status.as_ref();
