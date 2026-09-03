@@ -36,6 +36,7 @@
 //!   引导用户移除（现阶段测试用 P11K_USER_ZSHRC 过滤副本）。
 
 mod config;
+mod dir_shorten;
 mod render;
 mod theme;
 

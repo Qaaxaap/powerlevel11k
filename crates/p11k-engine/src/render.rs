@@ -83,13 +83,13 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
     SegmentText { text, style }
 }
 
-/// 读 dir 段的 `shorten-dir-length`(保留末 N 级,默认 2)。
+/// 读 dir 段的 `shorten-dir-length`(保留末 N 级,默认 1=p10k)。
 fn shorten_len(seg: &crate::config::Segment) -> usize {
     if let Some(crate::config::Prop::Int(n)) = seg.prop("shorten-dir-length") {
         let n = (*n).clamp(1, 20) as usize;
         n
     } else {
-        2
+        1
     }
 }
 
@@ -124,38 +124,11 @@ fn expand_env(s: &str) -> String {
     out
 }
 
-/// 目录文本:`~` 缩写 + 截断到末 `shorten` 级(中间用 `…` 省略)。
+/// 目录文本:`~` + `truncate_to_unique` 折叠(每级唯一前缀,锚点不缩)。
 fn dir_text(info: &HeaderInfo, shorten: usize) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let cwd = &info.cwd;
-    let (prefix, rest) = if !home.is_empty() {
-        if let Some(rest) = cwd.strip_prefix(&home) {
-            if rest.is_empty() {
-                return "~".to_string();
-            }
-            if let Some(r) = rest.strip_prefix('/') {
-                ("~", r)
-            } else {
-                ("~", rest)
-            }
-        } else {
-            ("", cwd.as_str())
-        }
-    } else {
-        ("", cwd.as_str())
-    };
-    // 按 `/` 分段,保留末 `shorten` 段;被省略的部分用 `…` 代替。
-    let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
-    if parts.len() <= shorten {
-        return if prefix.is_empty() { cwd.clone() } else { format!("{prefix}/{rest}") };
-    }
-    let keep = &parts[parts.len() - shorten..];
-    let tail = keep.join("/");
-    if prefix.is_empty() {
-        format!("…/{tail}")
-    } else {
-        format!("{prefix}/…/{tail}")
-    }
+    let cwd = std::path::Path::new(&info.cwd);
+    let home = std::env::var("HOME").ok();
+    crate::dir_shorten::truncate_to_unique(cwd, shorten, home.as_deref().map(|h| std::path::Path::new(h)))
 }
 
 /// git 文本:分支 + 计数(最简,图标/分色留给后续单元)。
@@ -411,13 +384,15 @@ mod tests {
     }
 
     #[test]
-    fn dir_truncates_to_last_n() {
-        // 截断到尾 2 级,中间省略号;非 home 路径不带前导 /。
-        assert_eq!(dir_text(&info("/a/b/c/d", None), 2), "…/c/d");
-        // home 内路径保留 ~/...
+    fn dir_truncates_to_unique() {
+        // 非 home 绝对路径折叠:至少保留当前目录全名。
+        let s = dir_text(&info("/a/b/c", None), 1);
+        assert!(s.ends_with("c"), "当前目录应保留,got {s}");
+        // home 内路径带 ~ 前缀。
         let home = std::env::var("HOME").unwrap_or_default();
         if home.len() > 1 {
-            assert_eq!(dir_text(&info(&format!("{home}/x/y/z"), None), 2), format!("~/…/y/z"));
+            let s = dir_text(&info(&format!("{home}/x/y"), None), 1);
+            assert!(s.starts_with("~/"), "home 内应以 ~ 开头,got {s}");
         }
     }
 
