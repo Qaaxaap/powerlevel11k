@@ -104,13 +104,15 @@ impl Style {
     }
 }
 
-/// 一个布局元素(行内的一个段)。
+/// 一个布局元素(行内的一个段或静态文本)。
 #[derive(Clone, Debug, PartialEq)]
 pub enum Element {
     /// 普通段。
     Seg(String),
     /// 与相邻段同底贴合(p10k 的 `<seg>_joined` 尾缀)。
     Joined(String),
+    /// 静态文本(如 `text "some text"`,原样输出,不解释为段)。
+    Text(String),
 }
 
 /// 布局:左右各是一组行;每行一组元素(顺序即显示顺序),行与行=换行。
@@ -267,11 +269,16 @@ fn parse_lines(node: &KdlNode) -> Vec<Vec<Element>> {
     rows
 }
 
-/// 解析一行:行内每个子节点是一个段(布尔启用);顺序 = children 顺序。
+/// 解析一行:行内每个子节点是一个段(布尔启用),或 `text "…"` 静态文本。
 fn parse_line(node: &KdlNode) -> Vec<Element> {
     let mut out = Vec::new();
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
+            // 值是字符串 → 静态文本(如 `text "some text"`);否则视为段。
+            if let Some(KdlValue::String(s)) = first_value(child) {
+                out.push(Element::Text(s.clone()));
+                continue;
+            }
             let name = child.name().value();
             // 值缺省视为启用;显式 #false 禁用。
             let enabled = first_value(child).map(bool_val).unwrap_or(true);

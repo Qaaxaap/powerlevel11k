@@ -46,6 +46,10 @@ fn render_row(config: &Config, elements: &[Element], info: &HeaderInfo, vcs: Opt
         .map(|el| match el {
             Element::Seg(name) => render_segment(config, name, info, vcs),
             Element::Joined(name) => render_segment(config, name, info, vcs),
+            Element::Text(t) => SegmentText {
+                text: expand_env(t),
+                style: config.segment("text").effective_style(None, &config.defaults),
+            },
         })
         .collect()
 }
@@ -62,6 +66,37 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
         _ => value_of(seg.content.as_deref(), String::new()),
     };
     SegmentText { text, style }
+}
+
+/// 展开环境变量:`${VAR}` 或 `$VAR` → 环境变量值;未定义 → 空串。
+fn expand_env(s: &str) -> String {
+    let b: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == '$' && i + 1 < b.len() {
+            if b[i + 1] == '{' {
+                if let Some(rel) = b[i + 2..].iter().position(|&c| c == '}') {
+                    let name: String = b[i + 2..i + 2 + rel].iter().collect();
+                    out.push_str(&std::env::var(&name).unwrap_or_default());
+                    i = i + 2 + rel + 1;
+                    continue;
+                }
+            } else if b[i + 1].is_ascii_alphanumeric() || b[i + 1] == '_' {
+                let mut j = i + 1;
+                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == '_') {
+                    j += 1;
+                }
+                let name: String = b[i + 1..j].iter().collect();
+                out.push_str(&std::env::var(&name).unwrap_or_default());
+                i = j;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    out
 }
 
 /// 目录文本:当前目录 `~` 缩写(最简,截断策略留给后续单元)。
@@ -307,6 +342,29 @@ mod tests {
     }
 
     #[test]
+    fn line_text_literal_renders() {
+        // line 里可穿插静态文本 text "some text"。
+        let cfg = Config::parse(
+            "layout {\n  left {\n    line { dir #true; text \"some text\"; vcs #true }\n  }\n}",
+        )
+        .unwrap();
+        let h = render_header(&cfg, &info("/tmp", None), None, 80);
+        assert!(h.contains("some text"), "line 里的 text 静态文本应渲染，实际：{h:?}");
+    }
+
+    #[test]
+    fn line_text_expands_env() {
+        // text 里的 ${VAR}/$VAR 展开为环境变量。
+        let home = std::env::var("HOME").unwrap_or_default();
+        let cfg = Config::parse(
+            "layout {\n  left {\n    line { text \"home=${HOME} $USER\" }\n  }\n}",
+        )
+        .unwrap();
+        let h = render_header(&cfg, &info("/tmp", None), None, 80);
+        assert!(h.contains(&home), "text 应展开环境变量，实际：{h:?}");
+    }
+
+    #[test]
     fn vcs_counts_appear() {
         let cfg = Config::default_lean().unwrap();
         let v = GitStatus {
@@ -327,8 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn background_blocks_and_powerline_arrow() {
-        // dir/vcs 都有背景,且不同 → 段间画 ``(fg=前段bg, bg=后段bg)。
+    fn background_blocks_and_powerline_arrow() {        // dir/vcs 都有背景,且不同 → 段间画 ``(fg=前段bg, bg=后段bg)。
         let cfg = Config::parse(
             "layout { left { line { dir #true; vcs #true } } }\n\
              segments { dir { bg 39 } }\n",
