@@ -131,23 +131,37 @@ fn value_of<'a>(content: Option<&'a str>, default: impl Into<String>) -> String 
     content.map(String::from).unwrap_or(default.into())
 }
 
-/// 把一行拼成 ANSI:左段串(段间空格分隔,纯文本)+ 右段右对齐到 `cols`。
+/// 把一行拼成 ANSI:左段串(段间空格或 `` 分隔符)+ 右段右对齐到 `cols`。
 fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize) -> String {
     let mut out = String::new();
-    let mut first = true;
+    let mut prev_bg = Color::Default; // 前一段的背景色(用于段间 `` 箭头)
     for s in left {
         if s.text.is_empty() {
             continue;
         }
-        if !first {
-            out.push(' '); // 段间空格(纯文本;powerline 用分隔符,后续单元)
+        // 段间分隔:前后段都有背景且不同 → powerline 箭头 ``(fg=前段bg, bg=后段bg);
+        // 否则纯空格。
+        if prev_bg != Color::Default && s.style.bg != Color::Default && s.style.bg != prev_bg {
+            out.push_str(&stylecodes(s.style.bg.clone(), prev_bg.clone()));
+            out.push('');
+        } else {
+            out.push(' ');
         }
         out.push_str(&paint(&s.text, &s.style));
-        first = false;
+        prev_bg = s.style.bg.clone();
     }
-    if !right.is_empty() {
-        let right_str: String = right.iter().map(|s| s.text.as_str()).collect();
-        let right_style = &right[0].style;
+    let mut right_str = String::new();
+    let mut right_style: Option<&Style> = None;
+    for s in right {
+        if s.text.is_empty() {
+            continue;
+        }
+        if right_style.is_none() {
+            right_style = Some(&s.style);
+        }
+        right_str.push_str(&s.text);
+    }
+    if !right_str.is_empty() {
         let lw = display_width(&out);
         let rw = right_str.chars().count();
         // 右对齐:右段起点列(1-based),p10k 用 COLUMNS - 右宽。
@@ -157,12 +171,31 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize) -> Str
                 write!(out, "\x1b[{}G", start + 1).unwrap();
             }
         }
-        out.push_str(&paint(&right_str, right_style));
+        out.push_str(&paint(&right_str, right_style.unwrap_or(&Style::default())));
     }
     out
 }
 
-/// 用样式上色(纯文本;块背景/分隔符留给后续单元)。
+/// 生成一段"背景色"ANSI 前缀(用于 `` 箭头:前景=前段背景,背景=后段背景)。
+fn stylecodes(bg: Color, fg: Color) -> String {
+    // 注:这里 fg/bg 参数顺序与语义是"箭头的 fg=前段背景、bg=后段背景"。
+    let mut s = String::new();
+    match fg {
+        Color::Default => {}
+        Color::Xterm(n) => write!(s, "\x1b[38;5;{n}m").unwrap(),
+        Color::Rgb(r, g, b) => write!(s, "\x1b[38;2;{r};{g};{b}m").unwrap(),
+        Color::Named(n) => write!(s, "\x1b[38;5;{}m", named_256(&n)).unwrap(),
+    }
+    match bg {
+        Color::Default => {}
+        Color::Xterm(n) => write!(s, "\x1b[48;5;{n}m").unwrap(),
+        Color::Rgb(r, g, b) => write!(s, "\x1b[48;2;{r};{g};{b}m").unwrap(),
+        Color::Named(n) => write!(s, "\x1b[48;5;{}m", named_256(&n)).unwrap(),
+    }
+    s
+}
+
+/// 用样式上色(前景 + 背景块 + 粗体;纯文本,无分隔符）。
 fn paint(text: &str, style: &Style) -> String {
     if text.is_empty() {
         return String::new();
@@ -173,6 +206,12 @@ fn paint(text: &str, style: &Style) -> String {
         Color::Xterm(n) => write!(s, "\x1b[38;5;{n}m").unwrap(),
         Color::Rgb(r, g, b) => write!(s, "\x1b[38;2;{r};{g};{b}m").unwrap(),
         Color::Named(n) => write!(s, "\x1b[38;5;{}m", named_256(n)).unwrap(),
+    }
+    match &style.bg {
+        Color::Default => {}
+        Color::Xterm(n) => write!(s, "\x1b[48;5;{n}m").unwrap(),
+        Color::Rgb(r, g, b) => write!(s, "\x1b[48;2;{r};{g};{b}m").unwrap(),
+        Color::Named(n) => write!(s, "\x1b[48;5;{}m", named_256(n)).unwrap(),
     }
     if style.bold {
         s.push_str("\x1b[1m");
@@ -270,5 +309,40 @@ mod tests {
         assert!(h.contains("+1"));
         assert!(h.contains("~2"));
         assert!(h.contains("?3"));
+    }
+
+    #[test]
+    fn background_blocks_and_powerline_arrow() {
+        // dir/vcs 都有背景,且不同 → 段间画 ``(fg=前段bg, bg=后段bg)。
+        let cfg = Config::parse(
+            "layout { left { line { dir #true; vcs #true } } }\n\
+             segments { dir { bg 39 } }\n",
+        )
+        .unwrap();
+        // 手动给 dir 加 bg、并加一个 vcs 段有 bg(两者异色)
+        let mut cfg = cfg;
+        cfg.segments.get_mut("dir").unwrap().style.bg = Color::Xterm(39);
+        cfg.segments.get_mut("dir").unwrap().style.fg = Color::Xterm(0);
+        cfg.segments.insert(
+            "vcs".into(),
+            crate::config::Segment {
+                style: crate::config::Style { fg: Color::Xterm(0), bg: Color::Xterm(76), bold: false },
+                ..Default::default()
+            },
+        );
+        let v = GitStatus {
+            branch: "master".into(),
+            staged: 0,
+            unstaged: 0,
+            conflicted: 0,
+            untracked: 0,
+            ahead: 0,
+            behind: 0,
+            stashes: 0,
+        };
+        let h = render_header(&cfg, &info("/tmp", None), Some(&v), 80);
+        assert!(h.contains("\x1b[48;5;39m"), "dir 应有背景块 39");
+        assert!(h.contains("\x1b[48;5;76m"), "vcs 应有背景块 76");
+        assert!(h.contains('\u{e0b0}'), "异底段间应画 powerline 箭头 ");
     }
 }
