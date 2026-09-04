@@ -24,10 +24,14 @@ const C_RESET: &str = "\x1b[0m";
 /// ❯ 宽 1 + 空格宽 1 = 2 列。
 pub const PROMPT_PREFIX: &str = "\x1b[1;32m❯\x1b[0m ";
 
-/// prompt 窗口需要的信息，由宣告行（`h\t<exit>\t<cwd>`）解析而来。
+/// prompt 窗口需要的信息，由宣告行（`h\t<exit>\t<cwd>[\t<jobs>]`）解析而来。
 pub struct HeaderInfo {
     pub exit_code: Option<i32>,
     pub cwd: String,
+    /// 上一条命令耗时(秒,engine 计时:回车→本次 precmd);首 prompt 为 0。
+    pub exec_seconds: f64,
+    /// 后台任务数(shell 宣告)。
+    pub jobs: usize,
 }
 
 /// 当前目录的 git 状态（由 p11k-gitstatus 的 API 计算，随 header 一起画）。
@@ -345,6 +349,8 @@ mod tests {
         let info = HeaderInfo {
             exit_code: Some(0),
             cwd: "/tmp".into(),
+            exec_seconds: 0.0,
+            jobs: 0,
         };
         render_header(&mut out, 80, &info, None).unwrap();
         let s = String::from_utf8_lossy(&out);

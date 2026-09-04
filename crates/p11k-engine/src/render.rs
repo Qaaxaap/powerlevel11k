@@ -121,6 +121,24 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
         "status" => paint(&status_text(info), &style),
         "prompt_char" => paint("❯", &style),
         "time" => paint(&now_hhmmss(), &style),
+        "command_execution_time" => {
+            let threshold = match seg.prop("threshold-seconds") {
+                Some(crate::config::Prop::Int(n)) => (*n as f64).max(0.0),
+                _ => 3.0,
+            };
+            if info.exec_seconds >= threshold {
+                paint(&format_duration(info.exec_seconds), &style)
+            } else {
+                paint("", &style)
+            }
+        }
+        "background_jobs" => {
+            if info.jobs > 0 {
+                paint(&info.jobs.to_string(), &style)
+            } else {
+                paint("", &style)
+            }
+        }
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
     // 段图标(VISUAL_IDENTIFIER):配置 `icon` 优先,否则按段名内置默认;图标+空格
@@ -140,6 +158,7 @@ fn default_icon(name: &str) -> Option<String> {
         "dir" => Some("\u{f07c}".into()),            // 
         "vcs" => Some("\u{f1d3}".into()),            // 
         "time" => Some("\u{f017}".into()),           // 
+        "background_jobs" => Some("\u{f013}".into()), // 齿轮 
         _ => None,
     }
 }
@@ -150,6 +169,18 @@ fn now_hhmmss() -> String {
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&now, &mut tm) };
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
+/// 命令时长格式(对齐 p10k lean PRECISION=0):<60s → `Ns`;否则 `Xm Ys`/`Xh Ym Zs`。
+fn format_duration(secs: f64) -> String {
+    let s = secs.round() as u64;
+    if s < 60 {
+        format!("{s}s")
+    } else if s < 3600 {
+        format!("{}m{}s", s / 60, s % 60)
+    } else {
+        format!("{}h{}m{}s", s / 3600, (s % 3600) / 60, s % 60)
+    }
 }
 
 /// `dir` 段文本:折叠(truncate_to_unique)+ 逐部件按类别上色。
@@ -240,6 +271,7 @@ fn vcs_text(vcs: Option<&GitStatus>) -> String {
     let Some(v) = vcs else { return String::new() };
     let mut s = String::new();
     if !v.branch.is_empty() {
+        s.push_str("\u{f126} "); // 分支图标 
         s.push_str(&v.branch);
     }
     let mut parts: Vec<String> = Vec::new();
@@ -445,7 +477,7 @@ mod tests {
     use super::*;
 
     fn info(cwd: &str, code: Option<i32>) -> HeaderInfo {
-        HeaderInfo { exit_code: code, cwd: cwd.to_string() }
+        HeaderInfo { exit_code: code, cwd: cwd.to_string(), exec_seconds: 0.0, jobs: 0 }
     }
 
     #[test]

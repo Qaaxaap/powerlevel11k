@@ -174,7 +174,7 @@ _p11k_pwd=$PWD
 _p11k_precmd() {
   _p11k_status=$?
   _p11k_pwd=$PWD
-  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd" >> "$P11K_ANNOUNCE"
+  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
 }
@@ -260,7 +260,7 @@ PS1='__'
 # 引擎 ack 才返回。bash 里 sleep 延迟 prompt 显示，正是 ack 机制需要的。
 _p11k_prompt_command() {
   local _st=$?
-  printf 'h\t%s\t%s\n' "$_st" "$PWD" >> "$P11K_ANNOUNCE"
+  printf 'h\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
 }
@@ -315,7 +315,7 @@ function fish_prompt
         printf '__'
         return
     end
-    printf 'h\t%s\t%s\n' $_st $PWD >> $P11K_ANNOUNCE
+    printf 'h\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
     end
@@ -343,7 +343,7 @@ function fish_prompt
         printf '__'
         return
     end
-    printf 'h\t%s\t%s\n' $_st $PWD >> $P11K_ANNOUNCE
+    printf 'h\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
     end
@@ -518,6 +518,8 @@ fn main() -> anyhow::Result<()> {
     // 光标是否停在输入行（p 宣告后、用户回车前）——异步结果只在此时重画，
     // 否则 redraw 的 \e[1A 会画到命令输出上。
     let mut at_prompt = false;
+    // 用户上次按回车(命令开始)的时刻:下次 precmd 用它与当前时刻算命令耗时。
+    let mut last_enter: Option<std::time::Instant> = None;
     // git 结果早于输入行就绪到达时(last_vcs 已更新但未 redraw),p 就绪时补重画。
     let mut vcs_dirty = false;
     // resize 后延迟补画 ❯：等 zle 重绘 aa+buffer 透传完（约 60ms）再画前缀，
@@ -537,6 +539,8 @@ fn main() -> anyhow::Result<()> {
         cwd: std::env::current_dir()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "~".into()),
+        exec_seconds: 0.0,
+        jobs: 0,
     };
     theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
     theme::render_prompt(&mut stdout, &prefix.text)?;
@@ -580,11 +584,16 @@ fn main() -> anyhow::Result<()> {
                 last_size = (r, c, xp, yp);
             }
             match msg {
-                AnnMsg::Header(info) => {
+                AnnMsg::Header(mut info) => {
                     log(&format!(
-                        "h: exit={:?} cwd={:?}",
-                        info.exit_code, info.cwd
+                        "h: exit={:?} cwd={:?} jobs={}",
+                        info.exit_code, info.cwd, info.jobs
                     ));
+                    // 命令耗时 = 上次回车 → 本次 precmd(首 prompt 无 last_enter → 0)。
+                    info.exec_seconds = last_enter
+                        .take()
+                        .map(|t| t.elapsed().as_secs_f64())
+                        .unwrap_or(0.0);
                     at_prompt = false; // 新 prompt 周期：画 header 前光标不在输入行
                     // 立即用缓存的旧状态画 header（不阻塞）；cwd 匹配才有，否则空。
                     let vcs = last_vcs
@@ -694,6 +703,7 @@ fn main() -> anyhow::Result<()> {
                     // 不再重画 header（否则 \e[1A 会画错行）。
                     if buf[..n].iter().any(|&b| b == b'\r' || b == b'\n') {
                         at_prompt = false;
+                        last_enter = Some(std::time::Instant::now()); // 命令开始计时
                     }
                     writer.write_all(&buf[..n])?;
                 }
@@ -882,9 +892,15 @@ fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
                     .next()
                     .map(|s| s.trim().to_string())
                     .unwrap_or_default();
+                let jobs = parts
+                    .next()
+                    .and_then(|s| s.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
                 out.push(AnnMsg::Header(HeaderInfo {
                     exit_code: code,
                     cwd,
+                    exec_seconds: 0.0, // 主循环用 last_enter 填
+                    jobs,
                 }));
             }
             Some("p") => out.push(AnnMsg::Prompt),
