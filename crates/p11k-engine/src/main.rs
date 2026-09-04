@@ -151,11 +151,6 @@ fn detect_shell() -> Shell {
     }
 }
 
-/// 占位 prompt（shell 侧 PROMPT 就是这个字符串）：宽 2 列的纯 ASCII。
-/// 必须与 `theme::PROMPT_PREFIX`（输入行前缀 `❯ `）的可见宽度严格一致，
-/// 否则 zle 重绘输入行的列偏移对不齐。字符内容不重要，宽度是协议。
-const PLACEHOLDER: &str = "__";
-
 /// 生成给 shell 的 bootstrap .zshrc。
 ///
 /// 结构：引擎协议（函数定义）→ source 用户配置（P11K_USER_ZSHRC，可选）

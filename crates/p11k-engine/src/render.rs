@@ -41,11 +41,6 @@ struct SegmentText {
     style: Style,
 }
 
-/// 渲染整个 header(多行),返回 ANSI 字符串(行间以 `\r\n` 分隔,最后一行结尾无换行)。
-pub fn render_header(config: &Config, info: &HeaderInfo, vcs: Option<&GitStatus>, cols: usize) -> String {
-    render_header_lines(config, info, vcs, cols).join("\r\n")
-}
-
 /// 渲染 header 为**逐行内容**(每行=左段串+右段右对齐,不含光标/清屏/换行)。
 /// 供 theme 层逐行 `\r\e[K` + 内容 + `\r\n` 画到终端。
 pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitStatus>, cols: usize) -> Vec<String> {
@@ -574,7 +569,7 @@ mod tests {
     #[test]
     fn renders_pure_text_header_with_right_align() {
         let cfg = Config::default_lean().unwrap();
-        let h = render_header(&cfg, &info("/tmp", Some(0)), None, 80);
+        let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
         // header 只一行行:含目录 + ✓;prompt_char(❯)不在 header(由 render_prompt 画)。
         assert!(h.contains("tmp"), "header 应含目录,实际：{h:?}");
         assert!(h.contains("✓"));
@@ -585,7 +580,7 @@ mod tests {
     #[test]
     fn right_aligns_to_cols() {
         let cfg = Config::default_lean().unwrap();
-        let h = render_header(&cfg, &info("/tmp", Some(0)), None, 80);
+        let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
         // 右段 ✓ 右对齐:gap 填充使整行显示宽度 = cols。
         assert!(h.contains('✓'), "右段应存在,实际:{h:?}");
         assert_eq!(display_width(&h), 80, "右对齐后行宽应为 80");
@@ -598,7 +593,7 @@ mod tests {
             "layout {\n  left {\n    line { dir #true; text \"some text\"; vcs #true }\n  }\n}",
         )
         .unwrap();
-        let h = render_header(&cfg, &info("/tmp", None), None, 80);
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(h.contains("some text"), "line 里的 text 静态文本应渲染，实际：{h:?}");
     }
 
@@ -610,18 +605,17 @@ mod tests {
             "layout {\n  left {\n    line { text \"home=${HOME} $USER\" }\n  }\n}",
         )
         .unwrap();
-        let h = render_header(&cfg, &info("/tmp", None), None, 80);
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(h.contains(&home), "text 应展开环境变量，实际：{h:?}");
     }
 
-    #[test]
     #[test]
     fn first_header_line_gets_frame() {
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\nframe {\n  first-prefix \"╭─\"\n  first-suffix \"─╮\"\n}",
         )
         .unwrap();
-        let h = render_header(&cfg, &info("/tmp", None), None, 80);
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(h.contains("╭─"), "首行应有 first-prefix 帧，实际：{h:?}");
         assert!(h.contains("─╮"), "首行应有 first-suffix 帧");
     }
@@ -654,7 +648,7 @@ mod tests {
             stashes: 0,
             remote_url: String::new(),
         };
-        let h = render_header(&cfg, &info("/tmp", None), Some(&v), 80);
+        let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
         assert!(h.contains("master"));
         assert!(h.contains("+1"));
         assert!(h.contains("~2"));
@@ -692,7 +686,7 @@ mod tests {
         };
         // 设置异底段间用 powerline 箭头,末尾端符。
         cfg.separators.segment = "\u{e0b0}".into();
-        let h = render_header(&cfg, &info("/tmp", None), Some(&v), 80);
+        let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
         assert!(h.contains("\x1b[48;5;39m"), "dir 应有背景块 39");
         assert!(h.contains("\x1b[48;5;76m"), "vcs 应有背景块 76");
         assert!(h.contains('\u{e0b0}'), "异底段间应画可配置的 segment 分隔符()");
