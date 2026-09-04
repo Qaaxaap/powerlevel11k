@@ -71,9 +71,8 @@ What the built-in segments render:
 - `command_execution_time` — how long the last command ran, shown only
   at or above `threshold-seconds` (`3s`, `1m5s`, `1h2m3s`).
 - `background_jobs` — number of background jobs.
-- `prompt_char` — not drawn in the header; it colors the input-line
-  prompt (drawn by the shell, after `frame.last-prefix`). To be removed
-  and folded into `last-prefix` once `frame` gets color support.
+- `prompt_char` — not drawn in the header; it colors the `❯` of the
+  input line (drawn by the shell, right after `frame.last-prefix`).
 - `os` — distro badge.
 - `text` — provides the style for `text "…"` elements.
 
@@ -88,11 +87,14 @@ behavior attributes accumulate.
 - `separators { segment … sub … end … right-start … right-segment …
   right-sub … gap … }` — the powerline arrow family; values are strings
   (`"\u{e0b0}"`).
-- `frame { first-prefix … first-suffix … newline-prefix … newline-suffix
-  … last-prefix … last-suffix … }` — row-edge decorations: the first
-  header row uses `first-*`, later header rows `newline-*`, the input
-  line `last-*`. The input prefix width participates in geometry: the
-  engine pads the placeholder to match it.
+- `frame fg=… bg=… bold=#true { first-prefix … first-suffix …
+  newline-prefix … newline-suffix … last-prefix … last-suffix … }` —
+  row-edge decorations: the first header row uses `first-*`, later header
+  rows `newline-*`, the input line `last-*`. Frame-level style
+  (`fg`/`bg`/`bold`) applies to every piece; a piece can carry its own
+  style to override it, e.g. `last-prefix "╰─" fg=196`. The input prefix
+  width participates in geometry: the engine pads the placeholder to
+  match it.
 - `vcs-remote-icons { github="\u{f113}" … }` — remote domain substring →
   icon, matched in order; unmatched remotes use the default git icon.
 
@@ -173,8 +175,8 @@ behavior attributes accumulate.
 - `command_execution_time` — 上次命令耗时，达到 `threshold-seconds`
   才显示(`3s`、`1m5s`、`1h2m3s`)。
 - `background_jobs` — 后台任务数。
-- `prompt_char` — 不在 header 绘制，配置输入行提示符上色(输入行由 shell
-  画，前面带 `frame.last-prefix`)。 将取消，在实现 frame 颜色配置后合并入 `last-prefix`。
+- `prompt_char` — 不在 header 绘制，给输入行提示符 `❯` 上色(输入行由
+  shell 画，`❯` 紧跟在 `frame.last-prefix` 之后)。
 - `os` — 发行版徽标。
 - `text` — 给 `text "…"` 元素提供样式。
 
@@ -188,10 +190,12 @@ icon/content，`state` 和行为属性累积。
 - `separators { segment … sub … end … right-start … right-segment …
   right-sub … gap … }` — powerline 箭头家族，值为字符串(如
   `"\u{e0b0}"`)。
-- `frame { first-prefix … first-suffix … newline-prefix … newline-suffix
-  … last-prefix … last-suffix … }` — 每行行首/行尾的装饰:第一个
-  header 行用 `first-*`，后面的 header 行用 `newline-*`，输入行用
-  `last-*`。输入前缀的宽度参与几何:引擎按它生成等宽占位符。
+- `frame fg=… bg=… bold=#true { first-prefix … first-suffix …
+  newline-prefix … newline-suffix … last-prefix … last-suffix … }` —
+  每行行首/行尾的装饰:第一个 header 行用 `first-*`，后面的 header 行用
+  `newline-*`，输入行用 `last-*`。帧级样式(`fg`/`bg`/`bold`)作用于所有
+  块，单块可带自己的样式覆盖(如 `last-prefix "╰─" fg=196`)。输入前缀的
+  宽度参与几何:引擎按它生成等宽占位符。
 - `vcs-remote-icons { github="\u{f113}" … }` — 远端域名子串 → 图标，
   按书写顺序匹配，未匹配使用默认 git 图标。
 

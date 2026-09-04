@@ -157,29 +157,48 @@ impl Default for Separators {
     }
 }
 
-/// 多行帧(行首/行尾装饰,可配字符)。见 p10k MULTILINE_*_PROMPT_PREFIX/SUFFIX。
+/// 帧的一块(行首/行尾装饰字符):文本 + 可选独立样式。
+/// 样式缺省(`None`)时回退 frame 级 → defaults。
+#[derive(Clone, Debug, PartialEq)]
+pub struct FramePiece {
+    pub text: String,
+    pub style: Option<Style>,
+}
+
+impl Default for FramePiece {
+    fn default() -> Self {
+        FramePiece { text: String::new(), style: None }
+    }
+}
+
+/// 多行帧(行首/行尾装饰,可配字符与颜色)。见 p10k MULTILINE_*_PROMPT_PREFIX/SUFFIX。
 /// - `first_*`:第一个 header 行(`╭─`/`─╮`);`newline_*`:中间 header 行(`├─`/`─┤`);
 ///   `last_*`:输入行(`╰─`/`─╯`)。空 = 不画。
+/// - 颜色:`style`(frame 节点属性 `fg`/`bg`/`bold`)是整帧默认,单块可带
+///   自己的样式属性覆盖;两者都没配的颜色回退 defaults。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
-    pub first_prefix: String,
-    pub first_suffix: String,
-    pub newline_prefix: String,
-    pub newline_suffix: String,
-    pub last_prefix: String,
-    pub last_suffix: String,
+    /// 帧级默认样式。
+    pub style: Style,
+    pub first_prefix: FramePiece,
+    pub first_suffix: FramePiece,
+    pub newline_prefix: FramePiece,
+    pub newline_suffix: FramePiece,
+    pub last_prefix: FramePiece,
+    pub last_suffix: FramePiece,
 }
 
 impl Default for Frame {
     fn default() -> Self {
         // 默认无帧(纯文本 lean)。经典帧(╭─/╰─)由配置 frame 块开启。
         Frame {
-            first_prefix: String::new(),
-            first_suffix: String::new(),
-            newline_prefix: String::new(),
-            newline_suffix: String::new(),
-            last_prefix: String::new(),
-            last_suffix: String::new(),
+            style: Style::default(),
+            first_prefix: FramePiece::default(),
+            first_suffix: FramePiece::default(),
+            newline_prefix: FramePiece::default(),
+            newline_suffix: FramePiece::default(),
+            last_prefix: FramePiece::default(),
+            last_suffix: FramePiece::default(),
         }
     }
 }
@@ -259,6 +278,15 @@ impl Config {
     /// 取某段配置(缺省返回默认空段)。
     pub fn segment(&self, name: &str) -> &Segment {
         self.segments.get(name).unwrap_or(&EMPTY_SEG)
+    }
+
+    /// 某帧块(prefix/suffix)的实际样式:块级属性 → frame 级 → defaults 回退。
+    pub fn frame_piece_style(&self, piece: &FramePiece) -> Style {
+        let base = merge_style(&self.frame.style, &self.defaults);
+        match &piece.style {
+            Some(s) => merge_style(s, &base),
+            None => base,
+        }
     }
 
     fn parse_doc(doc: &KdlDocument) -> Result<Config, String> {
@@ -357,20 +385,25 @@ fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
     out
 }
 
-/// 解析 `frame` 节点:first/newline/last 的 prefix/suffix(值字符串)。
+/// 解析 `frame` 节点:frame 级样式(节点属性 fg/bg/bold)+ first/newline/last 的
+/// prefix/suffix(子节点,值字符串;子节点自己的 fg/bg/bold 覆盖帧级)。
 fn parse_frame(node: &KdlNode) -> Frame {
-    let mut f = Frame::default();
+    let mut f = Frame { style: Style::from_entries(node.entries()), ..Frame::default() };
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
             let Some(v) = first_value(child) else { continue };
-            let Some(chstr) = str_val(v) else { continue };
+            let Some(text) = str_val(v) else { continue };
+            let st = Style::from_entries(child.entries());
+            // 子节点没写样式属性 → None(回退帧级);写了 → Some(覆盖)。
+            let style = if st == Style::default() { None } else { Some(st) };
+            let piece = FramePiece { text, style };
             match child.name().value() {
-                "first-prefix" => f.first_prefix = chstr,
-                "first-suffix" => f.first_suffix = chstr,
-                "newline-prefix" => f.newline_prefix = chstr,
-                "newline-suffix" => f.newline_suffix = chstr,
-                "last-prefix" => f.last_prefix = chstr,
-                "last-suffix" => f.last_suffix = chstr,
+                "first-prefix" => f.first_prefix = piece,
+                "first-suffix" => f.first_suffix = piece,
+                "newline-prefix" => f.newline_prefix = piece,
+                "newline-suffix" => f.newline_suffix = piece,
+                "last-prefix" => f.last_prefix = piece,
+                "last-suffix" => f.last_suffix = piece,
                 _ => {}
             }
         }

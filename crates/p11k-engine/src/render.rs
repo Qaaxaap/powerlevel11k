@@ -20,12 +20,13 @@ pub struct InputPrefix {
     pub width: usize,
 }
 
-/// 计算输入行前缀(如 `╰─❯`)。`last_prefix`/`text` 已上色;`width` 为去 ANSI 显示宽。
+/// 计算输入行前缀(如 `╰─❯`)。`last_prefix`(帧样式)/`❯`(prompt_char 样式)已上色;
+/// `width` 为去 ANSI 显示宽。
 pub fn input_prefix(config: &Config) -> InputPrefix {
-    let fg = Style { fg: config.defaults.fg.clone(), ..Default::default() };
     let mut text = String::new();
-    if !config.frame.last_prefix.is_empty() {
-        text.push_str(&paint(&config.frame.last_prefix, &fg));
+    if !config.frame.last_prefix.text.is_empty() {
+        let piece = &config.frame.last_prefix;
+        text.push_str(&paint(&piece.text, &config.frame_piece_style(piece)));
     }
     let pc = config.segment("prompt_char");
     let st = pc.effective_style(None, &config.defaults);
@@ -59,18 +60,17 @@ pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitS
             } else {
                 (&frame.newline_prefix, &frame.newline_suffix)
             };
-            let fg = Style { fg: config.defaults.fg.clone(), ..Default::default() };
-            let pre_w = display_width(prefix);
-            let suf_w = display_width(suffix);
+            let pre_w = display_width(&prefix.text);
+            let suf_w = display_width(&suffix.text);
             let mut row = String::new();
-            if !prefix.is_empty() {
-                row.push_str(&paint(prefix, &fg));
+            if !prefix.text.is_empty() {
+                row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
             }
             // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
             let body = assemble_row(&l, &r, cols.saturating_sub(pre_w + suf_w), &config.separators);
             row.push_str(&body);
-            if !suffix.is_empty() {
-                row.push_str(&paint(suffix, &fg));
+            if !suffix.text.is_empty() {
+                row.push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
             }
             row
         })
@@ -690,5 +690,25 @@ mod tests {
         assert!(h.contains("\x1b[48;5;39m"), "dir 应有背景块 39");
         assert!(h.contains("\x1b[48;5;76m"), "vcs 应有背景块 76");
         assert!(h.contains('\u{e0b0}'), "异底段间应画可配置的 segment 分隔符()");
+    }
+
+    #[test]
+    fn frame_colors_pieces_with_override() {
+        // 帧级 fg 作用于所有块;子节点自己的 fg 覆盖帧级。
+        let cfg = Config::parse(
+            "layout { left { line { dir #true } } }\n\
+             frame fg=76 {\n  first-prefix \"╭─\"\n  last-prefix \"╰─\" fg=196\n}",
+        )
+        .unwrap();
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
+        assert!(h.contains("\x1b[38;5;76m╭─"), "首行前缀用帧级 fg,实际:{h:?}");
+        // 输入行前缀:last-prefix 用子节点色(196),prompt_char ❯ 缺省无色。
+        let p = input_prefix(&cfg);
+        assert!(
+            p.text.contains("\x1b[38;5;196m╰─"),
+            "last-prefix 子节点 fg 应覆盖帧级,实际:{:?}",
+            p.text
+        );
+        assert!(p.text.contains('❯'), "输入行前缀仍含 prompt_char ❯");
     }
 }
