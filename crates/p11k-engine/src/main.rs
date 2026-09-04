@@ -184,6 +184,9 @@ _p11k_precmd() {
 # 只写文件，引擎异步处理（poll ~5ms）。引擎的前缀只覆盖输入行前 2 列
 # （占位符所在列），即使引擎稍慢、用户已输入，也不会碰到输入内容。
 _p11k_line_init() {
+  # 续行(多行命令的 PS2 提示)不是主 prompt:不发 p,让 zsh 默认续行符 '> '
+  # 原样显示(否则引擎会回行首画前缀,把续行符覆盖)。
+  [[ ${CONTEXT:-start} == cont ]] && return
   if [[ -n "${_p11k_user_line_init:-}" ]] && (( $+functions[$_p11k_user_line_init] )); then
     "$_p11k_user_line_init"   # 用户注册的 handler（如 autosuggestions）先跑
   fi
@@ -210,6 +213,8 @@ fi
 # （prompt 宽度、输入行列偏移）由此自洽；真实 prompt 由引擎绘制。
 PROMPT='__'
 RPROMPT=''
+# 续行提示(多行命令):zsh 用 PROMPT2,与 p10k 一致设 '> ';避免被用户配置/残留改掉。
+PROMPT2='> '
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
 # zle-line-init 单 handler：保留用户注册的（链式调用），再注册我们的宣告。
 if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p11k_line_init ]]; then

@@ -471,6 +471,20 @@ mod tests {
     }
 
     #[test]
+    fn input_prefix_width_matches_visual() {
+        // 有帧 last-prefix ╰─ 时,前缀 = "╰─❯ " (宽4);占位符要按这个宽度生成。
+        let cfg = Config::parse(
+            "layout { left { line { dir #true } } }\nframe {\n  last-prefix \"╰─\"\n}",
+        )
+        .unwrap();
+        let p = input_prefix(&cfg);
+        assert_eq!(p.width, 4, "╰─❯ 空格 应宽4, 实际 width={} text={:?}", p.width, p.text);
+        assert!(p.text.contains('╰'), "前缀应含帧 last-prefix");
+        assert!(p.text.contains('❯'), "前缀应含 prompt_char");
+        assert!(p.text.ends_with(' '), "前缀应以空格收尾");
+    }
+
+    #[test]
     fn vcs_counts_appear() {
         let cfg = Config::default_lean().unwrap();
         let v = GitStatus {
