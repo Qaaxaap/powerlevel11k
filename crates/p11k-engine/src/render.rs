@@ -10,6 +10,7 @@
 use std::fmt::Write as _;
 
 use std::cell::RefCell;
+use unicode_width::UnicodeWidthChar;
 use crate::config::{AttachText, Color, Config, Element, Style};
 use crate::theme::{GitStatus, HeaderInfo};
 
@@ -607,7 +608,7 @@ fn named_256(name: &str) -> u8 {
     }
 }
 
-/// 显示宽度(去 ANSI,按字符数,第一单元用简单宽度)。
+/// 显示宽度(去 ANSI,按 Unicode 显示宽度:emoji/CJK 宽字符算 2,组合/零宽算 0)。
 fn display_width(s: &str) -> usize {
     let mut w = 0;
     let mut in_esc = false;
@@ -622,7 +623,7 @@ fn display_width(s: &str) -> usize {
             in_esc = true;
             continue;
         }
-        w += 1;
+        w += UnicodeWidthChar::width(c).unwrap_or(0);
     }
     w
 }
@@ -870,5 +871,22 @@ mod tests {
         .unwrap();
         let h = render_header_lines(&only_text, &info("/tmp", None), None, 80).join("\r\n");
         assert!(!h.contains('M'), "仅文字无 icon 时 text-middle 应不渲染,实际:{h:?}");
+    }
+
+    #[test]
+    fn display_width_counts_wide_chars() {
+        assert_eq!(display_width("🎂"), 2, "emoji 应宽 2 列");
+        assert_eq!(display_width("a🎂b"), 4);
+        assert_eq!(display_width("2026"), 4);
+    }
+
+    #[test]
+    fn attach_emoji_keeps_row_width_aligned() {
+        // 附加 emoji 占 2 列,右对齐预算必须按 Unicode 宽度算,否则末尾被折行。
+        let src = "layout {\n  left { line { dir #true } }\n  right { line { foo #true } }\n}\n\
+                   segments { foo icon=\"🕐\" content=\"12:34:56\" { text-right \"🎂\" } }";
+        let cfg = Config::parse(src).unwrap_or_else(|e| panic!("parse: {e}\nsrc={src:?}"));
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 40).join("\r\n");
+        assert_eq!(display_width(&h), 40, "行宽应仍对齐 cols=40,实际:{h:?}");
     }
 }
