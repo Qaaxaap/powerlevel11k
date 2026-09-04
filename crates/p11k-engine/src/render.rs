@@ -64,12 +64,14 @@ pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitS
                 (&frame.newline_prefix, &frame.newline_suffix)
             };
             let fg = Style { fg: config.defaults.fg.clone(), ..Default::default() };
+            let pre_w = display_width(prefix);
             let suf_w = display_width(suffix);
             let mut row = String::new();
             if !prefix.is_empty() {
                 row.push_str(&paint(prefix, &fg));
             }
-            let body = assemble_row(&l, &r, cols.saturating_sub(suf_w), &config.separators);
+            // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
+            let body = assemble_row(&l, &r, cols.saturating_sub(pre_w + suf_w), &config.separators);
             row.push_str(&body);
             if !suffix.is_empty() {
                 row.push_str(&paint(suffix, &fg));
