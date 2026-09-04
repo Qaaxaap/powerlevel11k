@@ -436,14 +436,14 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
     let mut right_str = String::new();
     let parts: Vec<&SegmentText> = right.iter().filter(|s| !s.text.is_empty()).collect();
     if !parts.is_empty() {
-        // 右段行首端符(左三角 ,用右段背景做前景)+ 右段间 sub 分隔(各段已上色)。
-        let first_bg = parts[0].style.bg.clone();
+        // 右段行首端符(左三角 ):前景=右段**前景色**(亮,画在 gap/终端上可见);
+        // 右段间 sub():段前景色画在段背景上(p10k `$style`,黑块上亮细线可见)。
         if !seps.right_start.is_empty() {
-            right_str.push_str(&arrow(&seps.right_start, first_bg, Color::Default));
+            right_str.push_str(&arrow(&seps.right_start, parts[0].style.fg.clone(), Color::Default));
         }
         for (i, s) in parts.iter().enumerate() {
             if i > 0 && !seps.right_sub.is_empty() {
-                right_str.push_str(&arrow(&seps.right_sub, s.style.bg.clone(), Color::Default));
+                right_str.push_str(&paint(&seps.right_sub, &s.style));
             }
             right_str.push_str(&s.text);
         }
