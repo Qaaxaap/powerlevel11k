@@ -509,10 +509,10 @@ pub const DEFAULT_LEAN: &str = r#"
 // p11k 内置 lean 主题(默认)。换文件即换主题。
 layout {
     left {
-        line { dir #true; vcs #true }
+        line { dir; vcs }
     }
     right {
-        line { status #true; command_execution_time #true; background_jobs #true }
+        line { status; command_execution_time; background_jobs }
     }
     add-newline #true
 }
