@@ -441,8 +441,20 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
             right_str.push_str(&arrow(&seps.right_start, parts[0].style.bg.clone(), Color::Default));
         }
         for (i, s) in parts.iter().enumerate() {
-            if i > 0 && !seps.right_sub.is_empty() {
-                right_str.push_str(&paint(&seps.right_sub, &s.style));
+            if i > 0 {
+                // 右段间分隔:同色 → right_sub(段前景画在段背景),异色 → right_segment
+                // (左三角,前景=前段背景、背景=当前段背景;对齐左段/ p10k 决策)。
+                let prev_bg = parts[i - 1].style.bg.clone();
+                if prev_bg != Color::Default {
+                    let same = s.style.bg != Color::Default && s.style.bg == prev_bg;
+                    if same {
+                        if !seps.right_sub.is_empty() {
+                            right_str.push_str(&paint(&seps.right_sub, &s.style));
+                        }
+                    } else if !seps.right_segment.is_empty() {
+                        right_str.push_str(&arrow(&seps.right_segment, prev_bg, s.style.bg.clone()));
+                    }
+                }
             }
             right_str.push_str(&s.text);
         }

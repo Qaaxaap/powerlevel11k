@@ -135,7 +135,9 @@ pub struct Separators {
     pub end: String,
     /// 右段行首端符(左三角,如 ``)。
     pub right_start: String,
-    /// 右段内部细分隔(如 ``)。
+    /// 右段**异色**段间箭头(左三角,如 ``)。
+    pub right_segment: String,
+    /// 右段**同色**内部细线(如 ``)。
     pub right_sub: String,
     /// 行内左右栏之间的 gap 填充字符(如 `·`;空=空格)。
     pub gap: String,
@@ -148,6 +150,7 @@ impl Default for Separators {
             sub: String::new(),
             end: String::new(),
             right_start: String::new(),
+            right_segment: String::new(),
             right_sub: String::new(),
             gap: String::new(),
         }
@@ -491,6 +494,7 @@ fn parse_separators(node: &KdlNode) -> Separators {
                 "sub" => s.sub = ch,
                 "end" => s.end = ch,
                 "right-start" | "right_start" => s.right_start = ch,
+                "right-segment" | "right_segment" => s.right_segment = ch,
                 "right-sub" | "right_sub" => s.right_sub = ch,
                 "gap" => s.gap = ch,
                 _ => {}
