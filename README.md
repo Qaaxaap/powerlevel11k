@@ -98,6 +98,44 @@ P11K_USER_ZSHRC=/tmp/p11k-usertest.zshrc target/debug/p11k
 exec /path/to/target/debug/p11k --shell zsh
 ```
 
+### Config format (KDL v2) and naming conventions
+
+The theme config is **KDL v2**, hand-written and human-first (not wizard
+generated). Naming follows KDL v2's own conventions, not p10k's zsh variables:
+
+- **Names are kebab-case**: node names, segment names, and property keys are
+  lowercase with hyphens (`shorten-strategy`, `first-prefix`, `add-newline`,
+  `prompt-char`, `command-execution-time`). KDL v2 bare identifiers support
+  `-` natively; this matches KDL ecosystem conventions.
+- **Colors**: `fg` / `bg` (the short forms everyone uses in terminal-land;
+  `foreground`/`background` also accepted as aliases).
+- **Booleans**: `#true` / `#false` (KDL v2 literals). Strings use double
+  quotes; Unicode escapes are `\u{XXXX}` (braced, per KDL v2).
+- **Booleans for presence**: in `left`/`right` lines a segment is listed with
+  `#true` to enable, `#false` (or absence) to disable.
+
+```kdl
+layout {
+    left {
+        line { os #true; dir #true; vcs #true }
+    }
+    right {
+        line { status #true; command-execution-time #true; time #true }
+    }
+    add-newline #true
+}
+
+segments {
+    dir fg=15 bg=39 {
+        state SHORTENED fg=103
+        state ANCHOR fg=15 bold=#true
+    }
+}
+
+separators { segment "\u{E0B0}" sub "\u{E0B1}" gap "·" }
+frame { first-prefix "\u{256D}\u{2500}" }
+```
+
 Known limits (M0, tracked): full-screen zle redraws on resize can clobber the
 header; a previous command that does not end with a newline leaves the header
 painted over residual text; user shell configs are re-sourced but a theme set
@@ -188,6 +226,34 @@ p11k 从这里接手。计划是：
    后台任务、virtualenv……）。
 4. instant prompt 与 transient prompt，由 zsh 适配层驱动时序。
 5. 长尾：其余分段、配置向导、框架集成（oh-my-zsh、prezto、zinit）。
+
+### 配置格式(KDL v2)与命名规范
+
+主题配置是 **KDL v2**,手写优先、人类友好(不是向导生成的)。命名遵循 KDL v2
+自己的惯例,而不是 p10k 的 zsh 变量:
+
+- **命名统一 kebab-case**:节点名、段名、属性键全部小写+连字符
+  (`shorten-strategy`、`first-prefix`、`add-newline`、`prompt-char`、
+  `command-execution-time`)。KDL v2 裸标识符原生支持 `-`,符合 KDL 生态惯例。
+- **颜色用短写 `fg` / `bg`**(终端领域通用缩写;`foreground`/`background` 作为别名兼容)。
+- **布尔用 `#true` / `#false`**(KDL v2 字面量);字符串用双引号,unicode 转义 `\u{XXXX}`(带花括号)。
+- **布局里的段 = 节点 + 布尔**:`line { dir #true; vcs #true }`,`#false`/不列即禁用。
+
+```kdl
+layout {
+    left { line { os #true; dir #true; vcs #true } }
+    right { line { status #true; command-execution-time #true; time #true } }
+    add-newline #true
+}
+segments {
+    dir fg=15 bg=39 {
+        state SHORTENED fg=103
+        state ANCHOR fg=15 bold=#true
+    }
+}
+separators { segment "\u{E0B0}" sub "\u{E0B1}" gap "·" }
+frame { first-prefix "\u{256D}\u{2500}" }
+```
 
 ## 当前状态
 
