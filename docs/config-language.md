@@ -46,6 +46,12 @@ are ignored (forward-compatible) and skipped.
 - `state <NAME> fg=…` is a situational override: style, plus an optional
   `char` for glyph segments (e.g. `state ERROR char="✘"`); fallback
   chain below.
+- `text-left` / `text-middle` / `text-right` are attach slots, each a
+  child node `text-left "…"` with an optional `fg=…`. They concatenate
+  text into the segment — `left` before the icon, `middle` between icon
+  and content (rendered only when the segment has both), `right` after
+  the content — and never form their own block. Color follows the segment
+  unless `fg` overrides the foreground (bg/bold still follow).
 - `icon="…"` replaces the default icon; `icon=""` removes it. Defaults:
   `dir` folder, `time` clock, `background_jobs` gear (shown even at zero
   jobs), `os` distro badge, `vcs` per remote domain (see
@@ -159,6 +165,10 @@ behavior attributes accumulate.
 - 样式属性:`fg`、`bg`、`bold`。
 - `state <NAME> fg=…` 是某个情境下的覆盖:样式,外加可选 `char`(按字符渲染
   的段用它,如 `state ERROR char="✘"`);回退链见下。
+- `text-left` / `text-middle` / `text-right` 是附加文字槽,每个都是子节点
+  `text-left "…"`(可选 `fg=…`)。它们把文本拼进段——`left` 在 icon 前,
+  `middle` 在 icon 与内容之间(仅当段既有 icon 又有内容时渲染),`right` 在
+  内容后——不单独成块。颜色缺省跟段走,`fg` 可覆盖前景(bg/bold 仍跟段)。
 - `icon="…"` 覆盖默认图标;`icon=""` 去掉图标。默认图标:`dir` 文件夹、
   `time` 时钟、`background_jobs` 齿轮(任务数为 0 也显示)、`os` 发行版
   徽标、`vcs` 按远端域名(`vcs-remote-icons`);

@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 
 use std::cell::RefCell;
-use crate::config::{Color, Config, Element, Style};
+use crate::config::{AttachText, Color, Config, Element, Style};
 use crate::theme::{GitStatus, HeaderInfo};
 
 /// 输入行前缀(配置驱动):`frame.last_prefix` + `prompt_char` 内容;`width` 是它的
@@ -190,11 +190,36 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
             default_icon(name)
         }
     });
-    let text = match icon {
-        Some(ic) => format!("{}{}", paint(&format!("{ic} "), &style), text),
-        None => text,
+    let icon_text = match icon {
+        Some(ic) => paint(&format!("{ic} "), &style),
+        None => String::new(),
     };
-    SegmentText { text, style }
+    // 附加文字槽:左(icon 前)/中(icon 与内容之间,须二者都有)/右(内容后)。
+    // 仅拼接显示、不独立成块;fg 缺省跟段走。
+    let mut out = String::new();
+    if let Some(l) = &seg.text_left {
+        out.push_str(&paint_attach(&style, l));
+    }
+    out.push_str(&icon_text);
+    if let Some(m) = &seg.text_middle {
+        if !icon_text.is_empty() && !text.is_empty() {
+            out.push_str(&paint_attach(&style, m));
+        }
+    }
+    out.push_str(&text);
+    if let Some(r) = &seg.text_right {
+        out.push_str(&paint_attach(&style, r));
+    }
+    SegmentText { text: out, style }
+}
+
+/// 附加文字上色:fg 缺省沿用段样式,配了则覆盖前景(bg/bold 仍跟段)。
+fn paint_attach(style: &Style, a: &AttachText) -> String {
+    let mut st = style.clone();
+    if let Some(fg) = &a.fg {
+        st.fg = fg.clone();
+    }
+    paint(&a.text, &st)
 }
 
 /// vcs 图标按远端域名选择(配置 `vcs-remote-icons` 按序子串匹配;未命中默认 git )。
@@ -797,5 +822,53 @@ mod tests {
         )
         .unwrap();
         assert!(check_prompt_char_widths(&bad_cfg).is_err(), "不等宽应报错");
+    }
+
+    #[test]
+    fn segment_attach_text_slots() {
+        // 附加文字槽:左(icon 前)/中(icon 与内容间)/右(内容后),仅拼接、不独立成块。
+        let cfg = Config::parse(
+            "layout { left { line { foo #true } } }\n\
+             segments { foo fg=15 bg=236 icon=\"🕐\" content=\"02:49:19\" {\n\
+               text-left \"L\"\n\
+               text-middle \"M\"\n\
+               text-right \"R\" fg=196\n\
+             } }",
+        )
+        .unwrap();
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
+        let li = h.find('L').expect("text-left 应渲染");
+        let ii = h.find("🕐").expect("icon 应渲染");
+        let mi = h.find('M').expect("text-middle 应渲染");
+        let ci = h.find("02:49:19").expect("内容应渲染");
+        let ri = h.find('R').expect("text-right 应渲染");
+        assert!(
+            li < ii && ii < mi && mi < ci && ci < ri,
+            "顺序应为 左<icon<中<内容<右,实际:{h:?}"
+        );
+        assert!(
+            h.contains("\x1b[38;5;196m\x1b[48;5;236mR"),
+            "text-right 配 fg=196 应覆盖前景,实际:{h:?}"
+        );
+    }
+
+    #[test]
+    fn segment_attach_middle_requires_icon_and_text() {
+        // text-middle 仅当段既有 icon 又有文字时才渲染。
+        let only_icon = Config::parse(
+            "layout { left { line { foo #true } } }\n\
+             segments { foo icon=\"🕐\" { text-middle \"M\" } }",
+        )
+        .unwrap();
+        let h = render_header_lines(&only_icon, &info("/tmp", None), None, 80).join("\r\n");
+        assert!(!h.contains('M'), "仅 icon 无文字时 text-middle 应不渲染,实际:{h:?}");
+
+        let only_text = Config::parse(
+            "layout { left { line { foo #true } } }\n\
+             segments { foo content=\"X\" { text-middle \"M\" } }",
+        )
+        .unwrap();
+        let h = render_header_lines(&only_text, &info("/tmp", None), None, 80).join("\r\n");
+        assert!(!h.contains('M'), "仅文字无 icon 时 text-middle 应不渲染,实际:{h:?}");
     }
 }

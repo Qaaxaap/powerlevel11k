@@ -220,6 +220,14 @@ pub struct StateSpec {
     pub char: Option<String>,
 }
 
+/// 段上的附加文字槽(左/中/右):仅拼接显示、不独立成块。
+/// `fg` 为 `None` 时沿用段样式,配了则覆盖前景(背景/粗体仍跟段走)。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AttachText {
+    pub text: String,
+    pub fg: Option<Color>,
+}
+
 /// 单个段的配置。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Segment {
@@ -231,6 +239,12 @@ pub struct Segment {
     pub content: Option<String>,
     /// 图标字符(可选)。
     pub icon: Option<String>,
+    /// 段左缘附加文字(icon 之前)。
+    pub text_left: Option<AttachText>,
+    /// 段中间附加文字(icon 与内容之间;仅当段既有 icon 又有文字时渲染)。
+    pub text_middle: Option<AttachText>,
+    /// 段右缘附加文字(内容之后)。
+    pub text_right: Option<AttachText>,
     pub prefix: Option<String>,
     pub suffix: Option<String>,
     /// 是否显示(`disabled` 置 false)。
@@ -378,6 +392,15 @@ fn merge_segment(a: &mut Segment, b: Segment) {
     if b.icon.is_some() {
         a.icon = b.icon;
     }
+    if b.text_left.is_some() {
+        a.text_left = b.text_left;
+    }
+    if b.text_middle.is_some() {
+        a.text_middle = b.text_middle;
+    }
+    if b.text_right.is_some() {
+        a.text_right = b.text_right;
+    }
     if b.prefix.is_some() {
         a.prefix = b.prefix;
     }
@@ -512,16 +535,31 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
     }
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
-            if child.name().value() != "state" {
-                continue;
+            match child.name().value() {
+                "state" => {
+                    let Some(nm) = first_state_name(child) else {
+                        return Err("state 需要名字(位置字符串)".into());
+                    };
+                    // state 覆盖 = 样式(fg/bg/bold)+ 可选 char(该态下的显示字符)。
+                    let st = Style::from_entries(child.entries());
+                    let ch = named_str(child, "char");
+                    seg.states.insert(nm, StateSpec { style: st, char: ch });
+                }
+                // 附加文字槽:左/中/右。位置字符串是文本,`fg` 可选(缺省跟段走)。
+                "text-left" | "text-middle" | "text-right" => {
+                    let Some(text) = first_state_name(child) else {
+                        return Err(format!("{} 需要文本(位置字符串)", child.name().value()));
+                    };
+                    let attach = AttachText { text, fg: named_color(child, "fg") };
+                    match child.name().value() {
+                        "text-left" => seg.text_left = Some(attach),
+                        "text-middle" => seg.text_middle = Some(attach),
+                        "text-right" => seg.text_right = Some(attach),
+                        _ => {}
+                    }
+                }
+                _ => {}
             }
-            let Some(nm) = first_state_name(child) else {
-                return Err("state 需要名字(位置字符串)".into());
-            };
-            // state 覆盖 = 样式(fg/bg/bold)+ 可选 char(该态下的显示字符)。
-            let st = Style::from_entries(child.entries());
-            let ch = named_str(child, "char");
-            seg.states.insert(nm, StateSpec { style: st, char: ch });
         }
     }
     Ok(seg)
@@ -533,6 +571,14 @@ fn named_str(node: &KdlNode, name: &str) -> Option<String> {
         .iter()
         .find(|e| e.name().map(|n| n.value() == name).unwrap_or(false))
         .and_then(|e| str_val(e.value()))
+}
+
+/// 节点的命名颜色属性(如附加文字的 `fg=196`)。
+fn named_color(node: &KdlNode, name: &str) -> Option<Color> {
+    node.entries()
+        .iter()
+        .find(|e| e.name().map(|n| n.value() == name).unwrap_or(false))
+        .map(|e| Color::from_value(e.value()))
 }
 
 /// 节点的首个位置参数值(条目无 name 的那个)。
@@ -603,6 +649,9 @@ static EMPTY_SEG: Segment = Segment {
     states: BTreeMap::new(),
     content: None,
     icon: None,
+    text_left: None,
+    text_middle: None,
+    text_right: None,
     prefix: None,
     suffix: None,
     shown: true,
