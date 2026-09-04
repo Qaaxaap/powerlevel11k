@@ -9,11 +9,11 @@
 //! - **布局**:`layout { left { line {…} line {…} } right { line {…} } }`。
 //!   `left`/`right` 下每个 `line` 节点即一行;行内是段节点(`dir #true` 等,布尔原生,
 //!   `#false`/未列出则不启用,顺序=children 顺序);行与行之间就是换行。
-//! - **段**:`segments { dir foreground=39 bold=#true shorten-strategy="t" … }`。
-//!   段节点带**属性**:`foreground|fg`、`background|bg`(颜色)、`bold`(布尔)、
+//! - **段**:`segments { dir fg=39 bold=#true shorten-strategy="t" … }`。
+//!   段节点带**属性**:`fg`、`bg`(颜色)、`bold`(布尔)、
 //!   `content`/`icon`/`prefix`/`suffix`(文本)、`disabled`(显隐);其余进
 //!   [`Segment::props`](行为,段渲染函数按需读)。
-//! - **state 覆盖**:段节点下 `state <NAME> foreground=…` 子节点;其样式覆盖段默认,
+//! - **state 覆盖**:段节点下 `state <NAME> fg=…` 子节点;其样式覆盖段默认,
 //!   即 p10k `SEG[_STATE]_ATTR` 三段回退(段STATE → 段 → [`Config::defaults`] 全局兜底)。
 //! - **默认**:顶层 `defaults { … }`(属性)是全局回退样式。
 //!
@@ -88,14 +88,14 @@ pub struct Style {
 }
 
 impl Style {
-    /// 从一组 KDL 属性读样式键(`foreground`/`fg`、`background`/`bg`、`bold`)。
+    /// 从一组 KDL 属性读样式键(`fg`、`bg`、`bold`)。
     fn from_entries(entries: &[kdl::KdlEntry]) -> Style {
         let mut s = Style::default();
         for e in entries {
             let Some(name) = e.name() else { continue };
             match name.value() {
-                "foreground" | "fg" => s.fg = Color::from_value(e.value()),
-                "background" | "bg" => s.bg = Color::from_value(e.value()),
+                "fg" => s.fg = Color::from_value(e.value()),
+                "bg" => s.bg = Color::from_value(e.value()),
                 "bold" => s.bold = bool_val(e.value()),
                 _ => {}
             }
@@ -277,7 +277,7 @@ impl Config {
                         for seg in ch.nodes() {
                             let name = seg.name().value().to_string();
                             let parsed = parse_segment(seg)?;
-                            // 同段名多个节点(如 os icon=… 与 os foreground=… 两行)合并,
+                            // 同段名多个节点(如 os icon=… 与 os fg=… 两行)合并,
                             // 后者覆盖字段,states/props 累积。
                             match segments.get_mut(&name) {
                                 Some(existing) => merge_segment(existing, parsed),
@@ -291,7 +291,7 @@ impl Config {
                 "defaults" => defaults = Style::from_entries(node.entries()),
                 "separators" => separators = parse_separators(node),
                 "frame" => frame = parse_frame(node),
-                "vcs-remote-icons" | "vcs_remote_icons" => vcs_remote_icons = parse_remote_icons(node),
+                "vcs-remote-icons" => vcs_remote_icons = parse_remote_icons(node),
                 _ => {} // 未知顶层忽略(向前兼容)
             }
         }
@@ -386,7 +386,7 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
             match child.name().value() {
                 "left" => layout.left = parse_lines(child),
                 "right" => layout.right = parse_lines(child),
-                "add-newline" | "add_newline" => {
+                "add-newline" => {
                     layout.add_newline = first_value(child).map(bool_val).unwrap_or(false);
                 }
                 _ => {}
@@ -443,7 +443,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
     for e in node.entries() {
         let Some(name) = e.name() else { continue };
         match name.value() {
-            "foreground" | "fg" | "background" | "bg" | "bold" => {}
+            "fg" | "bg" | "bold" => {}
             "content" => seg.content = str_val(e.value()),
             "icon" => seg.icon = str_val(e.value()),
             "prefix" => seg.prefix = str_val(e.value()),
@@ -493,9 +493,9 @@ fn parse_separators(node: &KdlNode) -> Separators {
                 "segment" => s.segment = ch,
                 "sub" => s.sub = ch,
                 "end" => s.end = ch,
-                "right-start" | "right_start" => s.right_start = ch,
-                "right-segment" | "right_segment" => s.right_segment = ch,
-                "right-sub" | "right_sub" => s.right_sub = ch,
+                "right-start" => s.right_start = ch,
+                "right-segment" => s.right_segment = ch,
+                "right-sub" => s.right_sub = ch,
                 "gap" => s.gap = ch,
                 _ => {}
             }
@@ -518,15 +518,15 @@ layout {
 }
 
 segments {
-    dir foreground=39 shorten-strategy="truncate_to_unique" shorten-dir-length=1 {
-        state SHORTENED foreground=103
-        state ANCHOR foreground=39 bold=#true
+    dir fg=39 shorten-strategy="truncate_to_unique" shorten-dir-length=1 {
+        state SHORTENED fg=103
+        state ANCHOR fg=39 bold=#true
     }
     vcs clean-foreground=76 modified-foreground=178 untracked-foreground=39
     status ok-foreground=70 error-foreground=160 verbose=#true
-    command_execution_time threshold-seconds=3 precision=0 foreground=101
-    background_jobs foreground=70 verbose=#false
-    prompt_char foreground=76 error-foreground=196
+    command_execution_time threshold-seconds=3 precision=0 fg=101
+    background_jobs fg=70 verbose=#false
+    prompt_char fg=76 error-foreground=196
 }
 "#;
 
@@ -555,36 +555,12 @@ fn bool_val(v: &KdlValue) -> bool {
 }
 fn str_val(v: &KdlValue) -> Option<String> {
     match v {
-        KdlValue::String(s) => Some(unescape_unicode(s)),
+        KdlValue::String(s) => Some(s.clone()),
         KdlValue::Integer(n) => Some(n.to_string()),
         KdlValue::Float(f) => Some(f.to_string()),
         KdlValue::Bool(b) => Some(b.to_string()),
         KdlValue::Null => None,
     }
-}
-
-/// 展开 `\uXXXX`(4 位十六进制)unicode 转义,让配置里能写 `icon="\uF303"` 这类。
-fn unescape_unicode(s: &str) -> String {
-    let b: Vec<char> = s.chars().collect();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == '\\' && i + 1 < b.len() && b[i + 1] == 'u' && i + 6 <= b.len()
-            && b[i + 2..i + 6].iter().all(|c| c.is_ascii_hexdigit())
-        {
-            let hex: String = b[i + 2..i + 6].iter().collect();
-            if let Ok(n) = u32::from_str_radix(&hex, 16) {
-                if let Some(c) = char::from_u32(n) {
-                    out.push(c);
-                    i += 6;
-                    continue;
-                }
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    out
 }
 fn prop_val(v: &KdlValue) -> Prop {
     match v {
@@ -631,9 +607,9 @@ mod tests {
     fn parses_segment_attrs_states_and_props() {
         let c = Config::parse(
             r#"layout {}
-               segments { dir foreground=39 shorten-strategy="truncate_to_unique" {
-                   state SHORTENED foreground=103
-                   state ANCHOR foreground=39 bold=#true
+               segments { dir fg=39 shorten-strategy="truncate_to_unique" {
+                   state SHORTENED fg=103
+                   state ANCHOR fg=39 bold=#true
                } }"#,
         )
         .unwrap();
@@ -648,8 +624,8 @@ mod tests {
     fn effective_style_three_way_fallback() {
         let c = Config::parse(
             r#"layout {}
-               defaults foreground=200
-               segments { dir foreground=39 { state SHORTENED foreground=103 } }"#,
+               defaults fg=200
+               segments { dir fg=39 { state SHORTENED fg=103 } }"#,
         )
         .unwrap();
         assert_eq!(c.segment("dir").effective_style(Some("SHORTENED"), &c.defaults).fg, Color::Xterm(103));
@@ -675,7 +651,7 @@ mod tests {
     fn bool_and_hex() {
         let c = Config::parse(
             r##"layout {}
-defaults foreground="#ffffff"
+defaults fg="#ffffff"
 segments {
   a bold=#true x=3
 }"##,
