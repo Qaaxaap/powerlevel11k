@@ -29,6 +29,12 @@ rules below more important, not less.
   the wire format next to the parsing code, because byte-level compatibility
   with the original daemon is a hard requirement.
 
+## Config language
+
+The theme config language has its own spec, kept in sync with the engine:
+[docs/config-language.md](docs/config-language.md). Follow it when
+changing config parsing or rendering.
+
 ## AI policy
 
 Production code in this repository is written by humans. The maintainer
@@ -110,6 +116,11 @@ Everything in this repository is GPLv3, including contributions.
   允许的例外，不是其他代码效仿的先例。
 - 公开 API 需要文档注释。gitstatus 协议代码必须在解析代码旁写明线上
   格式，因为与原版守护进程的字节级兼容是硬性要求。
+
+## 配置语言
+
+主题配置语言规范在独立文档，随引擎同步维护:
+[docs/config-language.md](docs/config-language.md)。改动配置解析或渲染时遵守。
 
 ## AI 政策
 
