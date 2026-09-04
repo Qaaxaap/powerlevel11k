@@ -77,8 +77,8 @@ What the built-in segments render:
   is the `char` attribute (default `❯`), any literal string — no
   environment expansion. `state ERROR` (exit code non-zero) may override
   glyph and style. All states' glyphs must share one width (prompt
-  geometry is fixed at startup); on mismatch the engine reports an error
-  and falls back to the built-in default prompt entirely.
+  geometry is fixed at startup); on mismatch the engine reports the
+  error and drops into a clean shell instead of theming.
 - `os` — distro badge.
 - `text` — provides the style for `text "…"` elements.
 
@@ -186,7 +186,7 @@ behavior attributes accumulate.
   提示符紧跟在 `frame.last-prefix` 之后)。字符由 `char` 属性配置(默认
   `❯`),可为任意字符串,纯字面(不做环境变量展开);`state ERROR`(上次
   退出码非 0)可覆盖字符与样式。各态的提示符必须等宽(宽度在启动期定死,
-  占位符协议依赖它);不等宽 → 引擎报错,并整段回退内置默认提示符。
+  占位符协议依赖它);不等宽 → 引擎报错,并进入干净 shell(不加载主题)。
 - `os` — 发行版徽标。
 - `text` — 给 `text "…"` 元素提供样式。
 

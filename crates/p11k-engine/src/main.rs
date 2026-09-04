@@ -368,12 +368,24 @@ fn main() -> anyhow::Result<()> {
     let shell = detect_shell();
     // 先加载配置以算输入行前缀宽度,再据此生成等宽占位符(几何自洽)。
     // 启动无退出码 → 正常态(占位符宽度按正常态算)。
-    let mut config = load_config();
-    // prompt_char 各态(正常/ERROR)提示符必须等宽(占位符协议);不等宽 → 报错,
-    // 整个 prompt_char 回退内置默认(连样式一起,像没写这个段)。
+    let config = load_config();
+    // prompt_char 各态(正常/ERROR)提示符必须等宽(占位符协议按启动期宽度生成)。
+    // 不等宽是配置错误:直接在真实终端报错(stderr),再 exec 干净 shell——不读
+    // rc、没有引擎刷新,报错留在屏幕上(同递归检测的处理;画进渲染管线会被
+    // 第一次 precmd 的清屏顶掉)。
     if let Err(e) = crate::render::check_prompt_char_widths(&config) {
-        eprintln!("p11k: 配置错误: {e};prompt_char 回退默认提示符");
-        config.segments.remove("prompt_char");
+        eprintln!("p11k: 配置错误: {e}");
+        eprintln!("p11k: prompt_char 各态提示符必须等宽(prompt 宽度在启动期固定)。请修改配置后重新启动。");
+        use std::os::unix::process::CommandExt;
+        let err = match shell {
+            Shell::Zsh => std::process::Command::new("zsh").arg("-f").exec(),
+            Shell::Bash => {
+                std::process::Command::new("bash").args(["--noprofile", "--norc"]).exec()
+            }
+            Shell::Fish => std::process::Command::new("fish").arg("--no-config").exec(),
+        };
+        eprintln!("p11k: exec 干净 shell 失败: {err}");
+        std::process::exit(1);
     }
     let prefix = crate::render::input_prefix(&config, None);
     let placeholder = "_".repeat(prefix.width.max(1));
