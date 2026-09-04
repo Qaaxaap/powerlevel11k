@@ -118,9 +118,36 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
         "vcs" => if seg.content.is_some() { paint(&value_of(seg.content.as_deref(), vcs_text(vcs)), &style) } else { paint(&vcs_text(vcs), &style) },
         "status" => paint(&status_text(info), &style),
         "prompt_char" => paint("❯", &style),
+        "time" => paint(&now_hhmmss(), &style),
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
+    // 段图标(VISUAL_IDENTIFIER):配置 `icon` 优先,否则按段名内置默认;图标+空格
+    // 前缀,用段样式上色。
+    let icon = seg.icon.clone().filter(|i| !i.is_empty()).or_else(|| default_icon(name));
+    let text = match icon {
+        Some(ic) => format!("{}{}", paint(&format!("{ic} "), &style), text),
+        None => text,
+    };
     SegmentText { text, style }
+}
+
+/// 内置段图标(无配置 `icon` 时的默认;nerd font)。
+fn default_icon(name: &str) -> Option<String> {
+    match name {
+        "os" | "os_icon" => Some("\u{f17c}".into()), // 
+        "dir" => Some("\u{f07c}".into()),            // 
+        "vcs" => Some("\u{f1d3}".into()),            // 
+        "time" => Some("\u{f017}".into()),           // 
+        _ => None,
+    }
+}
+
+/// 当前时间 HH:MM:SS(libc localtime)。
+fn now_hhmmss() -> String {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&now, &mut tm) };
+    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
 /// `dir` 段文本:折叠(truncate_to_unique)+ 逐部件按类别上色。
@@ -294,27 +321,30 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
         out.push_str(&arrow(&seps.end, prev_bg.clone(), Color::Default));
     }
     let mut right_str = String::new();
-    let mut right_style: Option<&Style> = None;
-    for s in right {
-        if s.text.is_empty() {
-            continue;
+    let parts: Vec<&SegmentText> = right.iter().filter(|s| !s.text.is_empty()).collect();
+    if !parts.is_empty() {
+        // 右段行首端符(左三角 ,用右段背景做前景)+ 右段间 sub 分隔(各段已上色)。
+        let first_bg = parts[0].style.bg.clone();
+        if !seps.right_start.is_empty() {
+            right_str.push_str(&arrow(&seps.right_start, first_bg, Color::Default));
         }
-        if right_style.is_none() {
-            right_style = Some(&s.style);
+        for (i, s) in parts.iter().enumerate() {
+            if i > 0 && !seps.right_sub.is_empty() {
+                right_str.push_str(&arrow(&seps.right_sub, s.style.bg.clone(), Color::Default));
+            }
+            right_str.push_str(&s.text);
         }
-        right_str.push_str(&s.text);
-    }
-    if !right_str.is_empty() {
         let lw = display_width(&out);
         let rw = display_width(&right_str);
-        // 右对齐:右段起点列(1-based),p10k 用 COLUMNS - 右宽。
+        // 右对齐:gap 字符填满左段到右段起点之间。
         if cols > rw {
-            let start = cols - rw;
+            let start = cols - rw; // 右段起点(0-based)
             if start > lw {
-                write!(out, "\x1b[{}G", start + 1).unwrap();
+                let gap_char = if seps.gap.is_empty() { " ".to_string() } else { seps.gap.clone() };
+                out.push_str(&gap_char.repeat(start - lw));
             }
         }
-        out.push_str(&paint(&right_str, right_style.unwrap_or(&Style::default())));
+        out.push_str(&right_str);
     }
     out
 }
@@ -431,8 +461,9 @@ mod tests {
     fn right_aligns_to_cols() {
         let cfg = Config::default_lean().unwrap();
         let h = render_header(&cfg, &info("/tmp", Some(0)), None, 80);
-        // 右段 ✓ 起点在最后一列(80)。找 \e[...G。
-        assert!(h.contains("\x1b[80G"));
+        // 右段 ✓ 右对齐:gap 填充使整行显示宽度 = cols。
+        assert!(h.contains('✓'), "右段应存在,实际:{h:?}");
+        assert_eq!(display_width(&h), 80, "右对齐后行宽应为 80");
     }
 
     #[test]
