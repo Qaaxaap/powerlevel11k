@@ -9,6 +9,7 @@
 
 use std::fmt::Write as _;
 
+use std::cell::RefCell;
 use crate::config::{Color, Config, Element, Style};
 use crate::theme::{GitStatus, HeaderInfo};
 
@@ -167,16 +168,78 @@ fn vcs_remote_icon(config: &Config, remote_url: &str) -> String {
     "\u{f1d3}".to_string() //  默认 git
 }
 
-/// 内置段图标(无配置 `icon` 时的默认;nerd font)。
+/// 内置段图标(无配置 `icon` 时的默认;nerd font)。os 段按发行版动态。
 fn default_icon(name: &str) -> Option<String> {
     match name {
-        "os" | "os_icon" => Some("\u{f17c}".into()), // 
+        "os" | "os_icon" => Some(os_icon()),
         "dir" => Some("\u{f07c}".into()),            // 
         "vcs" => Some("\u{f1d3}".into()),            // 
         "time" => Some("\u{f017}".into()),           // 
         "background_jobs" => Some("\u{f013}".into()), // 齿轮 
         _ => None,
     }
+}
+
+thread_local! {
+    static OS_ICON: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// os 图标:uname 大类 + /etc/os-release ID 匹配发行版(对齐 p10k `_p9k_set_os`)。
+fn os_icon() -> String {
+    OS_ICON.with(|c| {
+        if c.borrow().is_none() {
+            *c.borrow_mut() = Some(detect_os_icon());
+        }
+        c.borrow().as_ref().unwrap().clone()
+    })
+}
+
+fn detect_os_icon() -> String {
+    let uname = std::env::consts::OS;
+    if uname != "linux" {
+        return match uname {
+            "macos" => "\u{f179}".into(),  // 
+            "windows" => "\u{f17a}".into(), // 
+            _ => "\u{f17c}".into(),        // 默认 linux 图标
+        };
+    }
+    // Linux:读 /etc/os-release 的 ID(子串匹配,对齐 p10k case *arch* 等)。
+    let id = std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("ID="))
+                .map(|l| l.trim_start_matches("ID=").trim().trim_matches('"').to_string())
+        })
+        .unwrap_or_default();
+    let icon = if id.contains("arch") {
+        "\u{f303}" // 
+    } else if id.contains("ubuntu") {
+        "\u{f31b}" // 
+    } else if id.contains("debian") {
+        "\u{f306}" // 
+    } else if id.contains("fedora") {
+        "\u{f30a}" // 
+    } else if id.contains("gentoo") {
+        "\u{f30d}" // 
+    } else if id.contains("nixos") {
+        "\u{f313}" // 
+    } else if id.contains("manjaro") {
+        "\u{f312}" // 
+    } else if id.contains("mint") {
+        "\u{f30e}" // 
+    } else if id.contains("alpine") {
+        "\u{f300}" // 
+    } else if id.contains("void") {
+        "\u{f32e}" // 
+    } else if id.contains("artix") {
+        "\u{f31f}" // 
+    } else if id.contains("opensuse") || id.contains("suse") {
+        "\u{f314}" // 
+    } else {
+        "\u{f17c}" // 默认 
+    };
+    icon.to_string()
 }
 
 /// 当前时间 HH:MM:SS(libc localtime)。
