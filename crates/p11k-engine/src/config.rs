@@ -509,12 +509,36 @@ fn bool_val(v: &KdlValue) -> bool {
 }
 fn str_val(v: &KdlValue) -> Option<String> {
     match v {
-        KdlValue::String(s) => Some(s.clone()),
+        KdlValue::String(s) => Some(unescape_unicode(s)),
         KdlValue::Integer(n) => Some(n.to_string()),
         KdlValue::Float(f) => Some(f.to_string()),
         KdlValue::Bool(b) => Some(b.to_string()),
         KdlValue::Null => None,
     }
+}
+
+/// 展开 `\uXXXX`(4 位十六进制)unicode 转义,让配置里能写 `icon="\uF303"` 这类。
+fn unescape_unicode(s: &str) -> String {
+    let b: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == '\\' && i + 1 < b.len() && b[i + 1] == 'u' && i + 6 <= b.len()
+            && b[i + 2..i + 6].iter().all(|c| c.is_ascii_hexdigit())
+        {
+            let hex: String = b[i + 2..i + 6].iter().collect();
+            if let Ok(n) = u32::from_str_radix(&hex, 16) {
+                if let Some(c) = char::from_u32(n) {
+                    out.push(c);
+                    i += 6;
+                    continue;
+                }
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    out
 }
 fn prop_val(v: &KdlValue) -> Prop {
     match v {
