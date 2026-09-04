@@ -368,7 +368,13 @@ fn main() -> anyhow::Result<()> {
     let shell = detect_shell();
     // 先加载配置以算输入行前缀宽度,再据此生成等宽占位符(几何自洽)。
     // 启动无退出码 → 正常态(占位符宽度按正常态算)。
-    let config = load_config();
+    let mut config = load_config();
+    // prompt_char 各态(正常/ERROR)提示符必须等宽(占位符协议);不等宽 → 报错,
+    // 整个 prompt_char 回退内置默认(连样式一起,像没写这个段)。
+    if let Err(e) = crate::render::check_prompt_char_widths(&config) {
+        eprintln!("p11k: 配置错误: {e};prompt_char 回退默认提示符");
+        config.segments.remove("prompt_char");
+    }
     let prefix = crate::render::input_prefix(&config, None);
     let placeholder = "_".repeat(prefix.width.max(1));
     let state = StateDir::create(shell, &placeholder)?;

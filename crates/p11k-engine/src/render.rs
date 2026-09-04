@@ -28,10 +28,8 @@ fn prompt_state(exit_code: Option<i32>) -> Option<&'static str> {
     }
 }
 
-/// 计算输入行前缀(如 `╰─❯`)。`last_prefix`(帧样式)/提示符字符(prompt_char 样式,
-/// 可按 `exit_code` 进 ERROR state)已上色;`width` 为去 ANSI 显示宽。
-pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
-    let state = prompt_state(exit_code);
+/// 某 state 下的输入行前缀文本(帧 last_prefix + prompt_char 字符 + 空格)。
+fn prefix_text(config: &Config, state: Option<&str>) -> String {
     let mut text = String::new();
     if !config.frame.last_prefix.text.is_empty() {
         let piece = &config.frame.last_prefix;
@@ -41,8 +39,40 @@ pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
     let st = pc.effective_style(state, &config.defaults);
     text.push_str(&paint(pc.char_for(state, "❯"), &st));
     text.push(' '); // 前缀后空格(无色),对齐原 `❯ ` 几何
+    text
+}
+
+/// 某 state 下前缀的显示宽度(去 ANSI)。
+fn prefix_width(config: &Config, state: Option<&str>) -> usize {
+    display_width(&prefix_text(config, state))
+}
+
+/// 计算输入行前缀(如 `╰─❯`)。`last_prefix`(帧样式)/提示符字符(prompt_char 样式,
+/// 可按 `exit_code` 进 ERROR state)已上色;`width` 为去 ANSI 显示宽。
+pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
+    let state = prompt_state(exit_code);
+    let text = prefix_text(config, state);
     let width = display_width(&text);
     InputPrefix { text, width }
+}
+
+/// 校验 prompt_char:凡配了 char 的 state(如 ERROR)必须与正常态等宽。
+/// 提示符宽度在启动期就得确定(占位符协议按它生成),不等宽会破几何;
+/// 调用方(引擎启动)收到 Err 后应报错并回退默认提示符。
+pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
+    let pc = config.segment("prompt_char");
+    let base = prefix_width(config, None);
+    for (name, spec) in &pc.states {
+        if spec.char.is_some() {
+            let w = prefix_width(config, Some(name));
+            if w != base {
+                return Err(format!(
+                    "prompt_char state `{name}` 的提示符宽度({w})与正常态({base})不一致,须等宽"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 一段渲染结果:文本 + 它的样式(渲染期才装配 ANSI)。
@@ -749,5 +779,23 @@ mod tests {
         );
         let none = input_prefix(&cfg, None);
         assert!(none.text.contains('>'), "无退出码(首 prompt)按正常态");
+    }
+
+    #[test]
+    fn prompt_char_states_must_match_width() {
+        // 正常态与 ERROR 态 char 等宽(都单字符)→ 校验通过。
+        let ok_cfg = Config::parse(
+            "layout { left { line { dir #true } } }\n\
+             segments { prompt_char char=\"❯\" {\n  state ERROR char=\"✘\"\n} }",
+        )
+        .unwrap();
+        assert!(check_prompt_char_widths(&ok_cfg).is_ok(), "等宽应通过校验");
+        // 宽度不等(✘✘ 双宽)→ 校验报错。
+        let bad_cfg = Config::parse(
+            "layout { left { line { dir #true } } }\n\
+             segments { prompt_char char=\"❯\" {\n  state ERROR char=\"✘✘\"\n} }",
+        )
+        .unwrap();
+        assert!(check_prompt_char_widths(&bad_cfg).is_err(), "不等宽应报错");
     }
 }
