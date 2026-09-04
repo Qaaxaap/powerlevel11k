@@ -151,11 +151,37 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
             default_icon(name)
         }
     });
-    let text = match icon {
-        Some(ic) => format!("{}{}", paint(&format!("{ic} "), &style), text),
-        None => text,
+    // 内容为空(如 jobs=0、cet 未到阈值)的段整段不渲染,包括图标。
+    let plain = strip_ansi(&text);
+    let text = if plain.trim().is_empty() {
+        String::new()
+    } else {
+        match icon {
+            Some(ic) => format!("{}{}", paint(&format!("{ic} "), &style), text),
+            None => text,
+        }
     };
     SegmentText { text, style }
+}
+
+/// 去掉 ANSI 转义序列(用于判断"内容是否为空")。
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_esc = false;
+    for c in s.chars() {
+        if in_esc {
+            if c == 'm' {
+                in_esc = false;
+            }
+            continue;
+        }
+        if c == '\x1b' {
+            in_esc = true;
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// vcs 图标按远端域名选择(配置 `vcs-remote-icons` 按序子串匹配;未命中默认 git )。
