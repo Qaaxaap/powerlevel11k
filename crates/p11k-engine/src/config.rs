@@ -273,7 +273,15 @@ impl Config {
                     if let Some(ch) = node.children() {
                         for seg in ch.nodes() {
                             let name = seg.name().value().to_string();
-                            segments.insert(name, parse_segment(seg)?);
+                            let parsed = parse_segment(seg)?;
+                            // 同段名多个节点(如 os icon=… 与 os foreground=… 两行)合并,
+                            // 后者覆盖字段,states/props 累积。
+                            match segments.get_mut(&name) {
+                                Some(existing) => merge_segment(existing, parsed),
+                                None => {
+                                    segments.insert(name, parsed);
+                                }
+                            }
                         }
                     }
                 }
@@ -297,6 +305,40 @@ fn default_remote_icons() -> Vec<(String, String)> {
         ("aur.archlinux.org".into(), "\u{f303}".into()), // 
         ("archlinux.org".into(), "\u{f303}".into()), // 
     ]
+}
+
+/// 同段名多节点的合并:样式非 Default 覆盖、文本/图标后者覆盖、states/props 累积。
+fn merge_segment(a: &mut Segment, b: Segment) {
+    if b.style.fg != Color::Default {
+        a.style.fg = b.style.fg;
+    }
+    if b.style.bg != Color::Default {
+        a.style.bg = b.style.bg;
+    }
+    if b.style.bold {
+        a.style.bold = true;
+    }
+    if b.content.is_some() {
+        a.content = b.content;
+    }
+    if b.icon.is_some() {
+        a.icon = b.icon;
+    }
+    if b.prefix.is_some() {
+        a.prefix = b.prefix;
+    }
+    if b.suffix.is_some() {
+        a.suffix = b.suffix;
+    }
+    if !b.shown {
+        a.shown = false;
+    }
+    for (k, v) in b.states {
+        a.states.insert(k, v);
+    }
+    for (k, v) in b.props {
+        a.props.insert(k, v);
+    }
 }
 
 /// 解析 `vcs-remote-icons` 节点:每个子节点 = domain→icon 字符串。
