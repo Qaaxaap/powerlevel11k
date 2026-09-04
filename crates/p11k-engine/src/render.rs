@@ -141,14 +141,30 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
         }
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
-    // 段图标(VISUAL_IDENTIFIER):配置 `icon` 优先,否则按段名内置默认;图标+空格
-    // 前缀,用段样式上色。
-    let icon = seg.icon.clone().filter(|i| !i.is_empty()).or_else(|| default_icon(name));
+    // 段图标(VISUAL_IDENTIFIER):配置 `icon` 优先,否则按段名内置默认;vcs 段按
+    // 远端域名选图标(如 github 、aur )。图标+空格前缀,用段样式上色。
+    let icon = seg.icon.clone().filter(|i| !i.is_empty()).or_else(|| {
+        if name == "vcs" {
+            vcs.as_ref().map(|v| vcs_remote_icon(config, &v.remote_url))
+        } else {
+            default_icon(name)
+        }
+    });
     let text = match icon {
         Some(ic) => format!("{}{}", paint(&format!("{ic} "), &style), text),
         None => text,
     };
     SegmentText { text, style }
+}
+
+/// vcs 图标按远端域名选择(配置 `vcs-remote-icons` 按序子串匹配;未命中默认 git )。
+fn vcs_remote_icon(config: &Config, remote_url: &str) -> String {
+    for (domain, icon) in &config.vcs_remote_icons {
+        if !domain.is_empty() && remote_url.contains(domain) {
+            return icon.clone();
+        }
+    }
+    "\u{f1d3}".to_string() //  默认 git
 }
 
 /// 内置段图标(无配置 `icon` 时的默认;nerd font)。
@@ -561,6 +577,7 @@ mod tests {
             ahead: 1,
             behind: 0,
             stashes: 0,
+            remote_url: String::new(),
         };
         let h = render_header(&cfg, &info("/tmp", None), Some(&v), 80);
         assert!(h.contains("master"));
@@ -596,6 +613,7 @@ mod tests {
             ahead: 0,
             behind: 0,
             stashes: 0,
+            remote_url: String::new(),
         };
         // 设置异底段间用 powerline 箭头,末尾端符。
         cfg.separators.segment = "\u{e0b0}".into();

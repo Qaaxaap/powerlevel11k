@@ -46,6 +46,8 @@ pub struct GitStatus {
     pub ahead: usize,
     pub behind: usize,
     pub stashes: usize,
+    /// tracking 远端 URL(用于按域名选 vcs 图标,如 github/archlinux)。
+    pub remote_url: String,
 }
 
 /// 画多行 header 到 `out`（真实终端 stdout），末尾换行把光标送到输入行行首。

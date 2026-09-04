@@ -237,6 +237,8 @@ pub struct Config {
     pub separators: Separators,
     /// 多行帧。
     pub frame: Frame,
+    /// vcs 图标按远端域名选择(domain 子串 → icon 字符);按序匹配,未命中用 git 默认。
+    pub vcs_remote_icons: Vec<(String, String)>,
 }
 
 impl Config {
@@ -262,6 +264,7 @@ impl Config {
         let mut defaults = Style::default();
         let mut separators = Separators::default();
         let mut frame = Frame::default();
+        let mut vcs_remote_icons = default_remote_icons();
 
         for node in doc.nodes() {
             match node.name().value() {
@@ -277,11 +280,36 @@ impl Config {
                 "defaults" => defaults = Style::from_entries(node.entries()),
                 "separators" => separators = parse_separators(node),
                 "frame" => frame = parse_frame(node),
+                "vcs-remote-icons" | "vcs_remote_icons" => vcs_remote_icons = parse_remote_icons(node),
                 _ => {} // 未知顶层忽略(向前兼容)
             }
         }
-        Ok(Config { layout, segments, defaults, separators, frame })
+        Ok(Config { layout, segments, defaults, separators, frame, vcs_remote_icons })
     }
+}
+
+/// 内置 vcs 远端图标表(对齐 p10k 默认 `VCS_GIT_REMOTE_ICONS`;aur/archlinux 用 )。
+fn default_remote_icons() -> Vec<(String, String)> {
+    vec![
+        ("github".into(), "\u{f113}".into()),       // 
+        ("gitlab".into(), "\u{f296}".into()),       // 
+        ("bitbucket".into(), "\u{f171}".into()),    // 
+        ("aur.archlinux.org".into(), "\u{f303}".into()), // 
+        ("archlinux.org".into(), "\u{f303}".into()), // 
+    ]
+}
+
+/// 解析 `vcs-remote-icons` 节点:每个子节点 = domain→icon 字符串。
+fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            if let Some(KdlValue::String(icon)) = first_value(child) {
+                out.push((child.name().value().to_string(), icon.clone()));
+            }
+        }
+    }
+    out
 }
 
 /// 解析 `frame` 节点:first/newline/last 的 prefix/suffix(值字符串)。
