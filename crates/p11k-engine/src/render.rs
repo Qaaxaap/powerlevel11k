@@ -20,17 +20,26 @@ pub struct InputPrefix {
     pub width: usize,
 }
 
-/// 计算输入行前缀(如 `╰─❯`)。`last_prefix`(帧样式)/`❯`(prompt_char 样式)已上色;
-/// `width` 为去 ANSI 显示宽。
-pub fn input_prefix(config: &Config) -> InputPrefix {
+/// prompt_char 的 state:退出码非 0 → ERROR;0 或无 → 正常态(None)。
+fn prompt_state(exit_code: Option<i32>) -> Option<&'static str> {
+    match exit_code {
+        Some(0) | None => None,
+        Some(_) => Some("ERROR"),
+    }
+}
+
+/// 计算输入行前缀(如 `╰─❯`)。`last_prefix`(帧样式)/提示符字符(prompt_char 样式,
+/// 可按 `exit_code` 进 ERROR state)已上色;`width` 为去 ANSI 显示宽。
+pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
+    let state = prompt_state(exit_code);
     let mut text = String::new();
     if !config.frame.last_prefix.text.is_empty() {
         let piece = &config.frame.last_prefix;
         text.push_str(&paint(&piece.text, &config.frame_piece_style(piece)));
     }
     let pc = config.segment("prompt_char");
-    let st = pc.effective_style(None, &config.defaults);
-    text.push_str(&paint("❯", &st));
+    let st = pc.effective_style(state, &config.defaults);
+    text.push_str(&paint(pc.char_for(state, "❯"), &st));
     text.push(' '); // 前缀后空格(无色),对齐原 `❯ ` 几何
     let width = display_width(&text);
     InputPrefix { text, width }
@@ -115,7 +124,12 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
         "dir" => dir_seg_text(config, info, seg, &style),
         "vcs" => if seg.content.is_some() { paint(&value_of(seg.content.as_deref(), vcs_text(vcs)), &style) } else { paint(&vcs_text(vcs), &style) },
         "status" => paint(&status_text(info), &style),
-        "prompt_char" => paint("❯", &style),
+        "prompt_char" => {
+            // 提示符字符随退出码进 ERROR state(char/样式都可按态配)。
+            let state = prompt_state(info.exit_code);
+            style = seg.effective_style(state, &config.defaults);
+            paint(seg.char_for(state, "❯"), &style)
+        }
         "time" => paint(&now_hhmmss(), &style),
         "command_execution_time" => {
             let threshold = match seg.prop("threshold-seconds") {
@@ -627,7 +641,7 @@ mod tests {
             "layout { left { line { dir #true } } }\nframe {\n  last-prefix \"╰─\"\n}",
         )
         .unwrap();
-        let p = input_prefix(&cfg);
+        let p = input_prefix(&cfg, None);
         assert_eq!(p.width, 4, "╰─❯ 空格 应宽4, 实际 width={} text={:?}", p.width, p.text);
         assert!(p.text.contains('╰'), "前缀应含帧 last-prefix");
         assert!(p.text.contains('❯'), "前缀应含 prompt_char");
@@ -703,12 +717,37 @@ mod tests {
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(h.contains("\x1b[38;5;76m╭─"), "首行前缀用帧级 fg,实际:{h:?}");
         // 输入行前缀:last-prefix 用子节点色(196),prompt_char ❯ 缺省无色。
-        let p = input_prefix(&cfg);
+        let p = input_prefix(&cfg, None);
         assert!(
             p.text.contains("\x1b[38;5;196m╰─"),
             "last-prefix 子节点 fg 应覆盖帧级,实际:{:?}",
             p.text
         );
         assert!(p.text.contains('❯'), "输入行前缀仍含 prompt_char ❯");
+    }
+
+    #[test]
+    fn prompt_char_configurable_with_error_state() {
+        // char 属性配提示符字符;state ERROR 覆盖错误态(退出码非 0)的字符与颜色。
+        let cfg = Config::parse(
+            "layout { left { line { dir #true } } }\n\
+             segments { prompt_char char=\">\" fg=76 {\n  state ERROR char=\"✘\" fg=196\n} }",
+        )
+        .unwrap();
+        let ok = input_prefix(&cfg, Some(0));
+        assert!(
+            ok.text.contains("\x1b[38;5;76m>"),
+            "正常态应显示 char(>) 且用 fg=76,实际:{:?}",
+            ok.text
+        );
+        assert!(!ok.text.contains('❯'), "配了 char 就不该用默认 ❯");
+        let err = input_prefix(&cfg, Some(1));
+        assert!(
+            err.text.contains("\x1b[38;5;196m✘"),
+            "错误态应显示 state ERROR 的 char/颜色,实际:{:?}",
+            err.text
+        );
+        let none = input_prefix(&cfg, None);
+        assert!(none.text.contains('>'), "无退出码(首 prompt)按正常态");
     }
 }

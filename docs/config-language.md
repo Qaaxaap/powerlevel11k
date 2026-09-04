@@ -43,8 +43,9 @@ are ignored (forward-compatible) and skipped.
   not implement does not error — that segment is silently skipped.
   Adding a segment means extending the engine, or using `text` instead.
 - Style attributes: `fg`, `bg`, `bold`.
-- `state <NAME> fg=…` is a situational style override (fallback chain
-  below).
+- `state <NAME> fg=…` is a situational override: style, plus an optional
+  `char` for glyph segments (e.g. `state ERROR char="✘"`); fallback
+  chain below.
 - `icon="…"` replaces the default icon; `icon=""` removes it. Defaults:
   `dir` folder, `time` clock, `background_jobs` gear (shown even at zero
   jobs), `os` distro badge, `vcs` per remote domain (see
@@ -71,8 +72,10 @@ What the built-in segments render:
 - `command_execution_time` — how long the last command ran, shown only
   at or above `threshold-seconds` (`3s`, `1m5s`, `1h2m3s`).
 - `background_jobs` — number of background jobs.
-- `prompt_char` — not drawn in the header; it colors the `❯` of the
-  input line (drawn by the shell, right after `frame.last-prefix`).
+- `prompt_char` — not drawn in the header; it renders the input-line
+  glyph (drawn by the shell, right after `frame.last-prefix`). The glyph
+  is the `char` attribute (default `❯`); `state ERROR` (exit code
+  non-zero) overrides glyph and style.
 - `os` — distro badge.
 - `text` — provides the style for `text "…"` elements.
 
@@ -151,7 +154,8 @@ behavior attributes accumulate.
   引用引擎没实现的段名不会报错，仅静默跳过渲染。
   添加段需修改引擎实现，或使用 `text` 进行实现。
 - 样式属性:`fg`、`bg`、`bold`。
-- `state <NAME> fg=…` 是某个情境下的样式覆盖(回退链见下)。
+- `state <NAME> fg=…` 是某个情境下的覆盖:样式,外加可选 `char`(按字符渲染
+  的段用它,如 `state ERROR char="✘"`);回退链见下。
 - `icon="…"` 覆盖默认图标;`icon=""` 去掉图标。默认图标:`dir` 文件夹、
   `time` 时钟、`background_jobs` 齿轮(任务数为 0 也显示)、`os` 发行版
   徽标、`vcs` 按远端域名(`vcs-remote-icons`);
@@ -175,8 +179,9 @@ behavior attributes accumulate.
 - `command_execution_time` — 上次命令耗时，达到 `threshold-seconds`
   才显示(`3s`、`1m5s`、`1h2m3s`)。
 - `background_jobs` — 后台任务数。
-- `prompt_char` — 不在 header 绘制，给输入行提示符 `❯` 上色(输入行由
-  shell 画，`❯` 紧跟在 `frame.last-prefix` 之后)。
+- `prompt_char` — 不在 header 绘制;渲染输入行提示符(输入行由 shell 画，
+  提示符紧跟在 `frame.last-prefix` 之后)。字符由 `char` 属性配置(默认
+  `❯`);`state ERROR`(上次退出码非 0)可覆盖字符与样式。
 - `os` — 发行版徽标。
 - `text` — 给 `text "…"` 元素提供样式。
 

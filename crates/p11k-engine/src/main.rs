@@ -367,8 +367,9 @@ fn main() -> anyhow::Result<()> {
 
     let shell = detect_shell();
     // 先加载配置以算输入行前缀宽度,再据此生成等宽占位符(几何自洽)。
+    // 启动无退出码 → 正常态(占位符宽度按正常态算)。
     let config = load_config();
-    let prefix = crate::render::input_prefix(&config);
+    let prefix = crate::render::input_prefix(&config, None);
     let placeholder = "_".repeat(prefix.width.max(1));
     let state = StateDir::create(shell, &placeholder)?;
     log(&format!(
@@ -636,7 +637,13 @@ fn main() -> anyhow::Result<()> {
                         )?;
                         stdout.flush()?;
                     }
-                    theme::render_prompt(&mut stdout, &prefix.text)?;
+                    // 前缀按当前退出码动态生成(ERROR 态变色/变字符)。
+                    let text = crate::render::input_prefix(
+                        &config,
+                        current_info.as_ref().and_then(|i| i.exit_code),
+                    )
+                    .text;
+                    theme::render_prompt(&mut stdout, &text)?;
                     stdout.flush()?;
                     at_prompt = true; // 输入行就绪
                 }
@@ -722,7 +729,12 @@ fn main() -> anyhow::Result<()> {
                             let end = pos + placeholder.len();
                             // 占位符（及之前的序列）先透传，再画前缀顶掉。
                             stdout.write_all(&placeholder_buf[..end])?;
-                            theme::render_prompt(&mut stdout, &prefix.text)?;
+                            let text = crate::render::input_prefix(
+                                &config,
+                                current_info.as_ref().and_then(|i| i.exit_code),
+                            )
+                            .text;
+                            theme::render_prompt(&mut stdout, &text)?;
                             stdout.write_all(&placeholder_buf[end..])?;
                             placeholder_buf.clear();
                             pending_placeholder = false;
@@ -769,7 +781,12 @@ fn main() -> anyhow::Result<()> {
         if let Some(deadline) = resize_prompt_at {
             if std::time::Instant::now() >= deadline {
                 resize_prompt_at = None;
-                theme::render_prompt(&mut stdout, &prefix.text)?;
+                let text = crate::render::input_prefix(
+                    &config,
+                    current_info.as_ref().and_then(|i| i.exit_code),
+                )
+                .text;
+                theme::render_prompt(&mut stdout, &text)?;
                 stdout.flush()?;
                 log("deferred prompt drawn");
             }

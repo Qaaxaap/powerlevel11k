@@ -143,6 +143,22 @@ fn exit_code_shows_in_status() {
 }
 
 #[test]
+fn prompt_char_turns_error_color_on_failure() {
+    // 默认 lean:prompt_char 带 state ERROR fg=196。失败命令后输入行前缀
+    // 的 ❯ 应变红(38;5;196),正常态是 76。
+    let (master, _child, mut reader, mut writer) = spawn_engine();
+    wait_ready(&master, &mut reader);
+
+    writer.write_all(b"false\n").unwrap();
+    writer.flush().unwrap();
+    let out = read_until(&master, &mut reader, "\x1b[38;5;196m", Duration::from_secs(5));
+    assert!(
+        out.contains("\x1b[38;5;196m❯"),
+        "失败后 prompt_char 应进 ERROR state 变红(196)，实际：{out:?}"
+    );
+}
+
+#[test]
 fn ctrl_c_interrupts_running_command() {
     let (master, _child, mut reader, mut writer) = spawn_engine();
     wait_ready(&master, &mut reader);

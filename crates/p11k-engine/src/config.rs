@@ -212,13 +212,21 @@ pub enum Prop {
     Bool(bool),
 }
 
+/// 单个 state 的覆盖:样式 + 可选字符(prompt_char 之类按字符渲染的段用)。
+#[derive(Clone, Debug, PartialEq)]
+pub struct StateSpec {
+    pub style: Style,
+    /// 该 state 下段显示的字符(如 prompt_char 的 ERROR 态);None = 沿用段默认。
+    pub char: Option<String>,
+}
+
 /// 单个段的配置。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Segment {
     /// 段默认样式。
     pub style: Style,
-    /// state 情境覆盖(名字 -> 样式,如 `SHORTENED`/`ANCHOR`/`MODIFIED`)。
-    pub states: BTreeMap<String, Style>,
+    /// state 情境覆盖(名字 -> 覆盖,如 dir 的 `SHORTENED`/`ANCHOR`)。
+    pub states: BTreeMap<String, StateSpec>,
     /// 内容文本(可选;缺省由段渲染函数生成)。
     pub content: Option<String>,
     /// 图标字符(可选)。
@@ -235,11 +243,26 @@ impl Segment {
     /// 取某 state(或段默认)的样式,走 段STATE → 段 → 全局 三段回退。
     pub fn effective_style(&self, state: Option<&str>, globals: &Style) -> Style {
         if let Some(st) = state {
-            if let Some(s) = self.states.get(st) {
-                return merge_style(s, &self.style);
+            if let Some(spec) = self.states.get(st) {
+                return merge_style(&spec.style, &self.style);
             }
         }
         merge_style(&self.style, globals)
+    }
+
+    /// 段在当前 state 下渲染的字符:state.char → 段 `char` 属性 → `default_char`。
+    pub fn char_for<'a>(&'a self, state: Option<&str>, default_char: &'a str) -> &'a str {
+        if let Some(st) = state {
+            if let Some(spec) = self.states.get(st) {
+                if let Some(c) = &spec.char {
+                    return c;
+                }
+            }
+        }
+        match &self.props.get("char") {
+            Some(Prop::Str(c)) => c,
+            _ => default_char,
+        }
     }
 
     /// 读一个行为属性(按名)。
@@ -495,11 +518,21 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
             let Some(nm) = first_state_name(child) else {
                 return Err("state 需要名字(位置字符串)".into());
             };
+            // state 覆盖 = 样式(fg/bg/bold)+ 可选 char(该态下的显示字符)。
             let st = Style::from_entries(child.entries());
-            seg.states.insert(nm, st);
+            let ch = named_str(child, "char");
+            seg.states.insert(nm, StateSpec { style: st, char: ch });
         }
     }
     Ok(seg)
+}
+
+/// 节点的命名字符串属性(如 state 节点的 `char="✘"`)。
+fn named_str(node: &KdlNode, name: &str) -> Option<String> {
+    node.entries()
+        .iter()
+        .find(|e| e.name().map(|n| n.value() == name).unwrap_or(false))
+        .and_then(|e| str_val(e.value()))
 }
 
 /// 节点的首个位置参数值(条目无 name 的那个)。
@@ -559,7 +592,9 @@ segments {
     status ok-foreground=70 error-foreground=160 verbose=#true
     command_execution_time threshold-seconds=3 precision=0 fg=101
     background_jobs fg=70 verbose=#false
-    prompt_char fg=76 error-foreground=196
+    prompt_char fg=76 {
+        state ERROR fg=196
+    }
 }
 "#;
 
@@ -649,8 +684,8 @@ mod tests {
         let d = c.segment("dir");
         assert_eq!(d.style.fg, Color::Xterm(39));
         assert_eq!(d.props["shorten-strategy"], Prop::Str("truncate_to_unique".into()));
-        assert_eq!(d.states["SHORTENED"].fg, Color::Xterm(103));
-        assert!(d.states["ANCHOR"].bold);
+        assert_eq!(d.states["SHORTENED"].style.fg, Color::Xterm(103));
+        assert!(d.states["ANCHOR"].style.bold);
     }
 
     #[test]
