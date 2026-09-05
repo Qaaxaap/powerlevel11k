@@ -112,6 +112,10 @@ What the built-in segments render:
 - `gcloud` — active config name from `active_config`.
 - `kubecontext` — current context from `$KUBECONFIG`/`~/.kube/config`.
 - `terraform` — current workspace from `.terraform/environment`.
+- `ip` — first non-loopback IPv4 (`ip -4 addr show`).
+- `vpn_ip` — VPN interface IP (tailscale/wg/tun/zt).
+- `wifi` — WiFi interface + link quality from `/proc/net/wireless`.
+- `public_ip` — public IP via curl (cached).
 - `ssh` — indicator that the session is SSH (icon only).
 - `proxy` — host:port of the first set proxy env var (`all_proxy`/`http_proxy`/…).
 - `docker_machine` — `$DOCKER_MACHINE_NAME`.
@@ -256,6 +260,11 @@ behavior attributes accumulate.
 - `gcloud` — 当前配置名(读 `active_config`)。
 - `kubecontext` — 当前 context(读 `$KUBECONFIG`/`~/.kube/config`)。
 - `terraform` — 当前 workspace(读 `.terraform/environment`)。
+- `terraform` — 当前 workspace(读 `.terraform/environment`)。
+- `ip` — 第一个非回环 IPv4(跑 `ip -4 addr show`)。
+- `vpn_ip` — VPN 接口 IP(tailscale/wg/tun/zt)。
+- `wifi` — WiFi 接口 + 信号质量(读 `/proc/net/wireless`)。
+- `public_ip` — 公网 IP(curl 查询,有缓存)。
 - `ssh` — 当前处于 SSH 会话的指示(仅图标)。
 - `proxy` — 第一个已设代理环境变量的 host:port(`all_proxy`/`http_proxy`/…)。
 - `docker_machine` — `$DOCKER_MACHINE_NAME`。

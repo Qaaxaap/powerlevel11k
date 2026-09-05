@@ -264,6 +264,11 @@ fn render_segment(
         "gcloud" => paint(&gcloud_text(), &style),
         "kubecontext" => paint(&kubecontext_text(&info.cwd), &style),
         "terraform" => paint(&terraform_text(&info.cwd), &style),
+        // 网络段:本机 IP/VPN/WiFi(同步),公网 IP(异步查询缓存)。
+        "ip" => paint(&ip_text(), &style),
+        "vpn_ip" => paint(&vpn_ip_text(), &style),
+        "wifi" => paint(&wifi_text(), &style),
+        "public_ip" => paint(&public_ip_text(), &style),
         // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
         // 整段隐藏。
         "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
@@ -377,6 +382,10 @@ fn default_icon(name: &str) -> Option<String> {
         "gcloud" => Some("\u{f7b7}".into()),            // GCloud
         "kubecontext" => Some("\u{2388}".into()),       // ⎈ k8s
         "terraform" => Some("\u{f1bb}".into()),         // Terraform
+        "ip" => Some("\u{f50d}".into()),                // 网络
+        "vpn_ip" => Some("\u{f023}".into()),            // VPN
+        "wifi" => Some("\u{f1eb}".into()),              // WiFi
+        "public_ip" => Some("\u{f0ac}".into()),         // 公网
         // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
         "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
         "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
@@ -697,6 +706,66 @@ fn terraform_text(cwd: &str) -> String {
         .ok()
         .map(|s| s.trim().to_string())
         .unwrap_or_default()
+}
+
+/// 本机第一个非回环 IPv4(跑 `ip -4 addr show`,跳过 127.0.0.1)。
+fn ip_text() -> String {
+    run_cmd("ip", &["-4", "addr", "show"])
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| l.contains("inet ") && !l.contains("127.0.0.1"))
+        .find_map(|l| l.split("inet ").nth(1)?.split('/').next())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// VPN 接口 IP(匹配 tailscale/wg/tun/zt 的 IPv4)。
+fn vpn_ip_text() -> String {
+    let out = run_cmd("ip", &["addr", "show"]).unwrap_or_default();
+    let mut ifname = String::new();
+    for line in out.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix("inet ") {
+            if is_vpn_if(&ifname) {
+                let ip = rest.split('/').next().unwrap_or("");
+                if !ip.is_empty() {
+                    return ip.to_string();
+                }
+            }
+        } else if let Some(name) = line.split(": ").nth(1).and_then(|s| s.split(':').next()) {
+            ifname = name.to_string();
+        }
+    }
+    String::new()
+}
+
+fn is_vpn_if(name: &str) -> bool {
+    ["tailscale", "wg", "tun", "zt"]
+        .iter()
+        .any(|p| name.starts_with(p))
+}
+
+/// WiFi:读 /proc/net/wireless 的接口名 + 信号质量。
+fn wifi_text() -> String {
+    std::fs::read_to_string("/proc/net/wireless")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find(|l| l.contains(':')) // 数据行(`接口名: ...`)
+                .map(|l| l.to_string())
+        })
+        .and_then(|l| {
+            let mut p = l.split_whitespace();
+            let ifn = p.next()?.trim_end_matches(':').to_string();
+            let _ = p.next(); // flags
+            let q = p.next()?; // link quality
+            Some(format!("{ifn} {}", q.trim_end_matches('.')))
+        })
+        .unwrap_or_default()
+}
+
+/// 公网 IP:curl 查询(经 run_cmd 缓存;首次同步,后续直接用缓存)。
+fn public_ip_text() -> String {
+    run_cmd("curl", &["-s", "--max-time", "4", "https://v4.ident.me/"]).unwrap_or_default()
 }
 
 /// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。
