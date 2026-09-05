@@ -269,6 +269,15 @@ fn render_segment(
         "vpn_ip" => paint(&vpn_ip_text(), &style),
         "wifi" => paint(&wifi_text(), &style),
         "public_ip" => paint(&public_ip_text(), &style),
+        // 补齐:虚拟化/容器/目录权限/history 作用域/语言栈/包管理器。
+        "detect_virt" => paint(&detect_virt(), &style),
+        "toolbox" => paint(&toolbox_text(), &style),
+        "dir_writable" => paint(&dir_writable_text(&info.cwd), &style),
+        "per_directory_history" => paint(&per_directory_history_text(), &style),
+        "haskell_stack" => paint(&haskell_stack_text(), &style),
+        "package" => paint(&package_text(&info.cwd), &style),
+        "asdf" => paint(&asdf_text(&info.cwd), &style),
+        "fvm" => paint(&fvm_text(&info.cwd), &style),
         // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
         // 整段隐藏。
         "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
@@ -386,6 +395,16 @@ fn default_icon(name: &str) -> Option<String> {
         "vpn_ip" => Some("\u{f023}".into()),            // VPN
         "wifi" => Some("\u{f1eb}".into()),              // WiFi
         "public_ip" => Some("\u{f0ac}".into()),         // 公网
+        "toolbox" => (!toolbox_text().is_empty()).then(|| "\u{e20f}".into()), // 容器
+        "dir_writable" => {
+            (!dir_writable_text(&current_dir()).is_empty()).then(|| "\u{f023}".into())
+        }
+        "per_directory_history" => {
+            (!per_directory_history_text().is_empty()).then(|| "\u{f1da}".into())
+        }
+        "haskell_stack" => (!haskell_stack_text().is_empty()).then(|| "\u{e61f}".into()),
+        "package" => (!package_text(&current_dir()).is_empty()).then(|| "\u{f8d6}".into()),
+        "fvm" => (!fvm_text(&current_dir()).is_empty()).then(|| "F".into()), // Flutter
         // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
         "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
         "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
@@ -642,6 +661,12 @@ fn home() -> String {
     std::env::var("HOME").unwrap_or_default()
 }
 
+fn current_dir() -> String {
+    std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// AWS 段:当前 profile(env `AWS_PROFILE`/`AWS_DEFAULT_PROFILE`)。
 fn aws_text() -> String {
     env_var("AWS_PROFILE")
@@ -766,6 +791,116 @@ fn wifi_text() -> String {
 /// 公网 IP:curl 查询(经 run_cmd 缓存;首次同步,后续直接用缓存)。
 fn public_ip_text() -> String {
     run_cmd("curl", &["-s", "--max-time", "4", "https://v4.ident.me/"]).unwrap_or_default()
+}
+
+// 补齐一批 p10k 常见段:虚拟化/容器/目录权限/history 作用域/语言栈工具/包管理器。
+
+fn detect_virt() -> String {
+    run_cmd("systemd-detect-virt", &[])
+        .filter(|v| v != "none")
+        .unwrap_or_default()
+}
+
+fn toolbox_text() -> String {
+    env_var("P9K_TOOLBOX_NAME")
+        .or_else(|| {
+            std::fs::read_to_string("/run/.containerenv")
+                .ok()
+                .and_then(|s| {
+                    s.lines()
+                        .find_map(|l| l.strip_prefix("name=").map(|v| v.trim().to_string()))
+                })
+        })
+        .unwrap_or_default()
+}
+
+fn dir_writable_text(cwd: &str) -> String {
+    use std::os::unix::fs::MetadataExt;
+    let writable = std::fs::metadata(cwd)
+        .map(|m| m.mode() & 0o222 != 0)
+        .unwrap_or(true);
+    if writable { String::new() } else { "!".into() }
+}
+
+fn per_directory_history_text() -> String {
+    match env_var("PER_DIRECTORY_HISTORY_TOGGLE").as_deref() {
+        Some("global") => "global".into(),
+        Some(_) => "local".into(),
+        None => String::new(),
+    }
+}
+
+fn haskell_stack_text() -> String {
+    run_cmd("stack", &["--version"])
+        .and_then(|s| {
+            s.split_whitespace()
+                .nth(1)
+                .map(|v| v.trim_end_matches(',').to_string())
+        })
+        .unwrap_or_default()
+}
+
+/// 从 cwd 祖先找 `filename`,返回其完整内容。
+fn find_up_content(cwd: &str, filename: &str) -> Option<String> {
+    let mut dir = std::path::Path::new(cwd);
+    loop {
+        let p = dir.join(filename);
+        if let Ok(c) = std::fs::read_to_string(&p) {
+            return Some(c);
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => return None,
+        }
+    }
+}
+
+/// package 段:package.json 的 `name`/`version`。
+fn package_text(cwd: &str) -> String {
+    let Some(content) = find_up_content(cwd, "package.json") else {
+        return String::new();
+    };
+    let name = json_str_field(&content, "\"name\":");
+    let version = json_str_field(&content, "\"version\":");
+    match (name, version) {
+        (Some(n), Some(v)) => format!("{n}@{}", v.trim_start_matches('v')),
+        (Some(n), None) => n,
+        _ => String::new(),
+    }
+}
+
+/// 从 JSON 字符串里取某字段 `"key": "value"` 的 value。
+fn json_str_field(content: &str, key: &str) -> Option<String> {
+    let pos = content.find(key)?;
+    let rest = &content[pos + key.len()..];
+    let rest = rest.trim_start();
+    Some(rest.strip_prefix('"')?.split('"').next()?.to_string())
+}
+
+/// asdf 段:.tool-versions 第一个插件版本行(简化,显示首行)。
+fn asdf_text(cwd: &str) -> String {
+    find_up_version(cwd, ".tool-versions").unwrap_or_default()
+}
+
+/// fvm 段:.fvm/flutter_sdk(或其父目录)检测到 Flutter 版本。
+fn fvm_text(cwd: &str) -> String {
+    let mut dir = std::path::Path::new(cwd);
+    loop {
+        let sdk = dir.join(".fvm").join("flutter_sdk");
+        if sdk.exists() {
+            // 从版本路径推导(如 …/versions/3.22.0)。
+            let real = std::fs::canonicalize(&sdk).unwrap_or(sdk);
+            if let Some(v) = real.to_string_lossy().split("/versions/").nth(1) {
+                return v.split('/').next().unwrap_or("").to_string();
+            }
+            return "fvm".into();
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => break,
+        }
+    }
+    String::new()
 }
 
 /// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。

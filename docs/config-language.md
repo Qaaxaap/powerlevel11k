@@ -116,6 +116,14 @@ What the built-in segments render:
 - `vpn_ip` — VPN interface IP (tailscale/wg/tun/zt).
 - `wifi` — WiFi interface + link quality from `/proc/net/wireless`.
 - `public_ip` — public IP via curl (cached).
+- `detect_virt` — virtualization type (`systemd-detect-virt`).
+- `toolbox` — container/toolbox name from `/run/.containerenv`.
+- `dir_writable` — `!` when the cwd is not writable.
+- `per_directory_history` — `global`/`local` from `PER_DIRECTORY_HISTORY_TOGGLE`.
+- `haskell_stack` — stack version.
+- `package` — `name@version` from `package.json`.
+- `asdf` — first `.tool-versions` entry.
+- `fvm` — Flutter version from `.fvm/flutter_sdk`.
 - `ssh` — indicator that the session is SSH (icon only).
 - `proxy` — host:port of the first set proxy env var (`all_proxy`/`http_proxy`/…).
 - `docker_machine` — `$DOCKER_MACHINE_NAME`.
@@ -265,6 +273,15 @@ behavior attributes accumulate.
 - `vpn_ip` — VPN 接口 IP(tailscale/wg/tun/zt)。
 - `wifi` — WiFi 接口 + 信号质量(读 `/proc/net/wireless`)。
 - `public_ip` — 公网 IP(curl 查询,有缓存)。
+- `public_ip` — 公网 IP(curl 查询,有缓存)。
+- `detect_virt` — 虚拟化类型(跑 `systemd-detect-virt`)。
+- `toolbox` — 容器名(读 `/run/.containerenv`)。
+- `dir_writable` — 当前目录不可写时显示 `!`。
+- `per_directory_history` — `PER_DIRECTORY_HISTORY_TOGGLE` 的 `global`/`local`。
+- `haskell_stack` — stack 版本。
+- `package` — `package.json` 的 `name@version`。
+- `asdf` — `.tool-versions` 首行。
+- `fvm` — `.fvm/flutter_sdk` 的 Flutter 版本。
 - `ssh` — 当前处于 SSH 会话的指示(仅图标)。
 - `proxy` — 第一个已设代理环境变量的 host:port(`all_proxy`/`http_proxy`/…)。
 - `docker_machine` — `$DOCKER_MACHINE_NAME`。
