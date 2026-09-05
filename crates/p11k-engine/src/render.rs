@@ -253,25 +253,31 @@ fn render_segment(
         None => String::new(),
     };
     // 附加文字槽:左(icon 前)/中(icon 与内容之间,须二者都有)/右(内容后)。
-    // 仅拼接显示、不独立成块;fg 缺省跟段走。
+    // 仅拼接显示、不独立成块;fg 缺省跟段走。text-middle 始终紧随 icon 与内容
+    // 之间:左列 icon 在前 → middle 在 icon 后;右列 icon 后置 → middle 在内容与 icon 之间。
     let mut out = String::new();
     if let Some(l) = &seg.text_left {
         out.push_str(&paint_attach(&style, l));
     }
-    if !right {
+    let middle = if !icon_text.is_empty() && !text.is_empty() {
+        seg.text_middle
+            .as_ref()
+            .map(|m| paint_attach(&style, m))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    if right {
+        out.push_str(&text);
+        out.push_str(&middle);
         out.push_str(&icon_text);
+    } else {
+        out.push_str(&icon_text);
+        out.push_str(&middle);
+        out.push_str(&text);
     }
-    if let Some(m) = &seg.text_middle {
-        if !icon_text.is_empty() && !text.is_empty() {
-            out.push_str(&paint_attach(&style, m));
-        }
-    }
-    out.push_str(&text);
     if let Some(r) = &seg.text_right {
         out.push_str(&paint_attach(&style, r));
-    }
-    if right {
-        out.push_str(&icon_text);
     }
     SegmentText { text: out, style }
 }
