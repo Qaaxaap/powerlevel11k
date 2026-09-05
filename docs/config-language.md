@@ -102,6 +102,11 @@ What the built-in segments render:
   toolchain version parsed from `<cmd> --version`, shown only when the command
   is available (output cached).
 - `cpu_arch` — CPU architecture from `/proc/sys/kernel/arch` (fallback `uname -m`).
+- `load` — system load from `/proc/loadavg`.
+- `ram` — available memory (`MemAvailable`, human-readable).
+- `swap` — used swap (from `/proc/meminfo`).
+- `disk_usage` — used percent of the current directory's partition (`df`).
+- `battery` — charge percent + status from `/sys/class/power_supply`.
 - `ssh` — indicator that the session is SSH (icon only).
 - `proxy` — host:port of the first set proxy env var (`all_proxy`/`http_proxy`/…).
 - `docker_machine` — `$DOCKER_MACHINE_NAME`.
@@ -236,6 +241,11 @@ behavior attributes accumulate.
   `java_version` / `dotnet_version` / `swift_version` / `terraform_version` —
   从 `<cmd> --version` 解析的工具链版本,命令存在才显示(输出有缓存)。
 - `cpu_arch` — 从 `/proc/sys/kernel/arch` 读的 CPU 架构(回退 `uname -m`)。
+- `load` — 系统负载(读 `/proc/loadavg`)。
+- `ram` — 可用内存(`MemAvailable`,人类可读)。
+- `swap` — 已用 swap(读 `/proc/meminfo`)。
+- `disk_usage` — 当前目录所在分区的已用百分比(`df`)。
+- `battery` — 电量百分比 + 状态(读 `/sys/class/power_supply`)。
 - `ssh` — 当前处于 SSH 会话的指示(仅图标)。
 - `proxy` — 第一个已设代理环境变量的 host:port(`all_proxy`/`http_proxy`/…)。
 - `docker_machine` — `$DOCKER_MACHINE_NAME`。

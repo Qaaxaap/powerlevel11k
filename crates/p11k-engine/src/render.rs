@@ -252,6 +252,12 @@ fn render_segment(
         "plenv" => paint(&plenv_text(&info.cwd), &style),
         "scalaenv" => paint(&scalaenv_text(&info.cwd), &style),
         "perlbrew" => paint(&perlbrew_text(&info.cwd), &style),
+        // 系统资源段:读 /proc /sys 或 df,数据源缺失则隐藏。
+        "load" => paint(&load(), &style),
+        "ram" => paint(&ram(), &style),
+        "swap" => paint(&swap(), &style),
+        "disk_usage" => paint(&disk_usage(&info.cwd), &style),
+        "battery" => paint(&battery(), &style),
         // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
         // 整段隐藏。
         "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
@@ -355,6 +361,11 @@ fn default_icon(name: &str) -> Option<String> {
         "luaenv" => Some("\u{e620}".into()),            // Lua
         "plenv" | "perlbrew" => Some("\u{e769}".into()), // Perl
         "scalaenv" => Some("\u{e737}".into()),          // Scala
+        "load" => Some("\u{f080}".into()),              // 负载
+        "ram" => Some("\u{f0e4}".into()),               // 内存
+        "swap" => Some("\u{f464}".into()),              // swap
+        "battery" => Some("\u{f240}".into()),           // 电池
+        "disk_usage" => Some("\u{f0a0}".into()),        // 磁盘
         // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
         "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
         "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
@@ -516,6 +527,95 @@ fn nix_shell_text() -> String {
 
 fn in_nix_shell() -> bool {
     env_var("IN_NIX_SHELL").is_some_and(|v| v == "pure" || v == "impure")
+}
+
+// 系统资源段:读 /proc 与 /sys(battery),或跑 `df`。数据源缺失则隐藏。
+fn human_bytes(bytes: u64) -> String {
+    let mut val = bytes as f64;
+    let mut i = 0;
+    const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
+    while val >= 1024.0 && i < UNITS.len() - 1 {
+        val /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{val}B")
+    } else {
+        format!("{val:.1}{}", UNITS[i])
+    }
+}
+
+/// 读 /proc/meminfo 某字段(KiB)。
+fn meminfo_kb(name: &str) -> Option<u64> {
+    std::fs::read_to_string("/proc/meminfo")
+        .ok()?
+        .lines()
+        .find_map(|l| {
+            l.strip_prefix(&format!("{name}:"))
+                .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
+        })
+}
+
+/// 负载:当前系统负载(/proc/loadavg 第一个值)。
+fn load() -> String {
+    std::fs::read_to_string("/proc/loadavg")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().map(|v| v.to_string()))
+        .unwrap_or_default()
+}
+
+/// 空闲内存(MemAvailable,人类可读)。
+fn ram() -> String {
+    meminfo_kb("MemAvailable")
+        .map(|kb| human_bytes(kb * 1024))
+        .unwrap_or_default()
+}
+
+/// 已用 swap。
+fn swap() -> String {
+    let total = meminfo_kb("SwapTotal").unwrap_or(0);
+    let free = meminfo_kb("SwapFree").unwrap_or(0);
+    let used = total.saturating_sub(free);
+    if used == 0 {
+        String::new()
+    } else {
+        human_bytes(used * 1024)
+    }
+}
+
+/// 当前目录所在分区的已用百分比。
+fn disk_usage(cwd: &str) -> String {
+    run_cmd("df", &["-P", cwd])
+        .and_then(|s| {
+            s.lines()
+                .nth(1)
+                .and_then(|l| l.split_whitespace().nth(4))
+                .map(|v| v.trim_end_matches('%').to_string())
+        })
+        .unwrap_or_default()
+}
+
+/// 电池:电量百分比 + 状态(如 `Charging 87%`),无电池文件则隐藏。
+fn battery() -> String {
+    let bat = std::fs::read_dir("/sys/class/power_supply")
+        .ok()
+        .and_then(|rd| {
+            rd.flatten()
+                .find(|e| e.file_name().to_string_lossy().starts_with("BAT"))
+        });
+    let Some(bat) = bat else { return String::new() };
+    let bat = bat.path();
+    let cap = std::fs::read_to_string(bat.join("capacity"))
+        .ok()
+        .map(|s| s.trim().to_string());
+    let status = std::fs::read_to_string(bat.join("status"))
+        .ok()
+        .map(|s| s.trim().to_string());
+    match (cap, status) {
+        (Some(c), Some(s)) => format!("{s} {c}%"),
+        (Some(c), None) => format!("{c}%"),
+        _ => String::new(),
+    }
 }
 
 /// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。
@@ -1537,5 +1637,13 @@ mod tests {
             cpu_arch()
         );
         assert_eq!(run_cmd("no-such-cmd-p11k-test", &["--version"]), None);
+    }
+
+    #[test]
+    fn system_resource_segments_resolve() {
+        // /proc 数据源恒有(开发机为 Linux);battery 依赖硬件,不测。
+        assert!(!load().is_empty(), "load 应从 /proc/loadavg 读出");
+        assert!(!ram().is_empty(), "ram 应是 MemAvailable");
+        assert!(!disk_usage("/tmp").is_empty(), "disk_usage 应有 df 结果");
     }
 }
