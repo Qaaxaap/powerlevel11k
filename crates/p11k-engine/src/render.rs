@@ -530,7 +530,15 @@ fn run_cmd(cmd: &str, args: &[&str]) -> Option<String> {
             .output()
             .ok()
             .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+            .map(|o| {
+                // 部分命令(如 java)把版本信息写到 stderr,stdout 为空时回退。
+                let s = String::from_utf8_lossy(&o.stdout);
+                if s.trim().is_empty() {
+                    String::from_utf8_lossy(&o.stderr).trim().to_string()
+                } else {
+                    s.trim().to_string()
+                }
+            });
         c.borrow_mut().insert(key.clone(), out.clone());
         out
     })
