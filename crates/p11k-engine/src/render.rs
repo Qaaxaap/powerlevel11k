@@ -222,6 +222,19 @@ fn render_segment(
         "host" => paint(&host_text(), &style),
         "root_indicator" => paint(&root_indicator_text(), &style),
         "date" => paint(&date_text(seg), &style),
+        // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
+        // 整段隐藏。
+        "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
+            paint("", &style)
+        }
+        "proxy" => paint(&proxy_text(), &style),
+        "docker_machine" => paint(&env_var("DOCKER_MACHINE_NAME").unwrap_or_default(), &style),
+        "openfoam" => paint(&openfoam_text(), &style),
+        "ranger" => paint(&level_text("RANGER_LEVEL"), &style),
+        "yazi" => paint(&level_text("YAZI_LEVEL"), &style),
+        "nnn" => paint(&level_text("NNNLVL"), &style),
+        "lf" => paint(&level_text("LF_LEVEL"), &style),
+        "nix_shell" => paint(&env_var("IN_NIX_SHELL").unwrap_or_default(), &style),
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
     // 段图标:配置 `icon` 优先,否则按段名内置默认;vcs 段按
@@ -284,6 +297,20 @@ fn default_icon(name: &str) -> Option<String> {
         "time" => Some("\u{f017}".into()),            // 
         "background_jobs" => Some("\u{f013}".into()), // 齿轮 
         "date" => Some("\u{f073}".into()),            // 日历 
+        // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
+        "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
+        "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
+        "docker_machine" => env_var("DOCKER_MACHINE_NAME").map(|_| "\u{f0ae}".into()), // 服务器
+        "ranger" => level_icon("RANGER_LEVEL", "\u{f00b}"), // 文件列表
+        "yazi" => level_icon("YAZI_LEVEL", "\u{f00b}"),
+        "nnn" => level_icon("NNNLVL", "nnn"),
+        "lf" => level_icon("LF_LEVEL", "lf"),
+        "nix_shell" => env_var("IN_NIX_SHELL").map(|_| "\u{f313}".into()), // 雪花
+        "xplr" => env_var("XPLR_PID").map(|_| "xplr".into()),
+        "midnight_commander" => env_var("MC_TMPDIR").map(|_| "mc".into()),
+        "vim_shell" => env_var("VIMRUNTIME").map(|_| "\u{e62b}".into()), // vim
+        "direnv" => env_var("DIRENV_DIR").map(|_| "\u{25bc}".into()),    // ▼
+        "chezmoi_shell" => env_var("CHEZMOI").map(|_| "\u{f015}".into()), // 家
         _ => None,
     }
 }
@@ -375,6 +402,51 @@ fn root_indicator_text() -> String {
     } else {
         String::new()
     }
+}
+
+/// 读环境变量,缺失或空 → None。
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+/// 层级段(ranger/nnf/lf/yazi):值为 0 或空 → 空(不在该程序里)。
+fn level_text(name: &str) -> String {
+    env_var(name).filter(|v| v != "0").unwrap_or_default()
+}
+
+fn level_icon(name: &str, icon: &str) -> Option<String> {
+    env_var(name).filter(|v| v != "0").map(|_| icon.into())
+}
+
+fn env_has_proxy() -> bool {
+    ["all_proxy", "http_proxy", "https_proxy", "ftp_proxy"]
+        .iter()
+        .chain(["ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY"].iter())
+        .any(|k| env_var(k).is_some())
+}
+
+/// proxy 段:取第一个非空代理的 host:port(去 scheme/user@/路径)。
+fn proxy_text() -> String {
+    for key in ["all_proxy", "http_proxy", "https_proxy", "ftp_proxy"]
+        .iter()
+        .chain(["ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY"].iter())
+    {
+        let Some(v) = env_var(key) else { continue };
+        let v = v.split_once("://").map(|(_, rest)| rest).unwrap_or(&v);
+        let v = v.rsplit('@').next().unwrap_or(v);
+        let v = v.split(['/', '?']).next().unwrap_or(v);
+        if !v.is_empty() {
+            return v.to_string();
+        }
+    }
+    String::new()
+}
+
+/// openfoam 段:p10k 显示 `OF: <版本>`。
+fn openfoam_text() -> String {
+    env_var("WM_PROJECT_VERSION")
+        .map(|v| format!("OF: {v}"))
+        .unwrap_or_default()
 }
 
 /// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。
@@ -1120,5 +1192,34 @@ mod tests {
         let cfg = Config::parse("layout { left { line { context #true } } }").unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(!h.contains('@'), "非 SSH 不应显示 user@host,实际:{h:?}");
+    }
+
+    #[test]
+    fn env_indicator_segments() {
+        // ranger:设 RANGER_LEVEL 显示层级,清除后隐藏。
+        let r = Config::parse("layout { left { line { ranger #true } } }").unwrap();
+        unsafe {
+            std::env::set_var("RANGER_LEVEL", "2");
+        }
+        let h = render_header_lines(&r, &info("/tmp", None), None, 80).join("\r\n");
+        assert!(h.contains('2'), "ranger 应显示层级,实际:{h:?}");
+        unsafe {
+            std::env::remove_var("RANGER_LEVEL");
+        }
+        let h2 = render_header_lines(&r, &info("/tmp", None), None, 80).join("\r\n");
+        assert_eq!(h2.trim(), "", "清除后 ranger 应隐藏,实际:{h2:?}");
+        // proxy:设 http_proxy 后显示其 host:port(清除不深究,机器可能自带代理 env)。
+        let p = Config::parse("layout { left { line { proxy #true } } }").unwrap();
+        unsafe {
+            std::env::set_var("http_proxy", "http://proxy.example:8080");
+        }
+        let hp = render_header_lines(&p, &info("/tmp", None), None, 80).join("\r\n");
+        assert!(
+            hp.contains("proxy.example:8080"),
+            "proxy 应显示 http_proxy 的 host:port,实际:{hp:?}"
+        );
+        unsafe {
+            std::env::remove_var("http_proxy");
+        }
     }
 }

@@ -91,6 +91,14 @@ What the built-in segments render:
 - `host` — hostname, shown in SSH or as root.
 - `root_indicator` — `#` as root, hidden otherwise.
 - `date` — current date, formatted via `date-format` (strftime, default `%d.%m.%y`).
+- `ssh` — indicator that the session is SSH (icon only).
+- `proxy` — host:port of the first set proxy env var (`all_proxy`/`http_proxy`/…).
+- `docker_machine` — `$DOCKER_MACHINE_NAME`.
+- `openfoam` — `OF: <version>` from `$WM_PROJECT_VERSION`.
+- `nix_shell` — `$IN_NIX_SHELL` (`pure`/`impure`).
+- `ranger` / `yazi` / `nnn` / `lf` — nesting level inside the file manager.
+- `xplr` / `midnight_commander` / `vim_shell` / `direnv` / `chezmoi_shell` —
+  icon-only indicator shown while that program is active (env var set).
 - `text` — provides the style for `text "…"` elements.
 
 The same segment name may appear several times in `segments`; the nodes
@@ -208,6 +216,14 @@ behavior attributes accumulate.
 - `host` — 主机名,SSH 或 root 时显示。
 - `root_indicator` — root 时显示 `#`,否则隐藏。
 - `date` — 当前日期,由 `date-format`(strftime,默认 `%d.%m.%y`)格式化。
+- `ssh` — 当前处于 SSH 会话的指示(仅图标)。
+- `proxy` — 第一个已设代理环境变量的 host:port(`all_proxy`/`http_proxy`/…)。
+- `docker_machine` — `$DOCKER_MACHINE_NAME`。
+- `openfoam` — `$WM_PROJECT_VERSION` 的 `OF: <版本>`。
+- `nix_shell` — `$IN_NIX_SHELL`(`pure`/`impure`)。
+- `ranger` / `yazi` / `nnn` / `lf` — 在文件管理器里的嵌套层级。
+- `xplr` / `midnight_commander` / `vim_shell` / `direnv` / `chezmoi_shell` —
+  该程序激活时(对应环境变量已设)仅显示图标的指示段。
 - `text` — 给 `text "…"` 元素提供样式。
 
 同一段名可以在 `segments` 里写多次，节点会合并:后出现的覆盖样式/
