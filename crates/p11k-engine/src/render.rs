@@ -264,7 +264,7 @@ fn render_segment(
         "yazi" => paint(&level_text("YAZI_LEVEL"), &style),
         "nnn" => paint(&level_text("NNNLVL"), &style),
         "lf" => paint(&level_text("LF_LEVEL"), &style),
-        "nix_shell" => paint(&env_var("IN_NIX_SHELL").unwrap_or_default(), &style),
+        "nix_shell" => paint(&nix_shell_text(), &style),
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
     // 段图标:配置 `icon` 优先,否则按段名内置默认;vcs 段按
@@ -363,7 +363,7 @@ fn default_icon(name: &str) -> Option<String> {
         "yazi" => level_icon("YAZI_LEVEL", "\u{f00b}"),
         "nnn" => level_icon("NNNLVL", "nnn"),
         "lf" => level_icon("LF_LEVEL", "lf"),
-        "nix_shell" => env_var("IN_NIX_SHELL").map(|_| "\u{f313}".into()), // 雪花
+        "nix_shell" => in_nix_shell().then(|| "\u{f313}".into()), // 雪花
         "xplr" => env_var("XPLR_PID").map(|_| "xplr".into()),
         "midnight_commander" => env_var("MC_TMPDIR").map(|_| "mc".into()),
         "vim_shell" => env_var("VIMRUNTIME").map(|_| "\u{e62b}".into()), // vim
@@ -505,6 +505,17 @@ fn openfoam_text() -> String {
     env_var("WM_PROJECT_VERSION")
         .map(|v| format!("OF: {v}"))
         .unwrap_or_default()
+}
+
+// nix_shell:对齐 p10k,只认 `IN_NIX_SHELL` 的 pure/impure,其它值视为未激活。
+fn nix_shell_text() -> String {
+    env_var("IN_NIX_SHELL")
+        .filter(|v| v == "pure" || v == "impure")
+        .unwrap_or_default()
+}
+
+fn in_nix_shell() -> bool {
+    env_var("IN_NIX_SHELL").is_some_and(|v| v == "pure" || v == "impure")
 }
 
 /// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。
