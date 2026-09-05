@@ -258,6 +258,12 @@ fn render_segment(
         "swap" => paint(&swap(), &style),
         "disk_usage" => paint(&disk_usage(&info.cwd), &style),
         "battery" => paint(&battery(), &style),
+        // 云/k8s 段:读云配置或环境变量,配置缺失则隐藏。
+        "aws" => paint(&aws_text(), &style),
+        "azure" => paint(&azure_text(), &style),
+        "gcloud" => paint(&gcloud_text(), &style),
+        "kubecontext" => paint(&kubecontext_text(&info.cwd), &style),
+        "terraform" => paint(&terraform_text(&info.cwd), &style),
         // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
         // 整段隐藏。
         "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
@@ -366,6 +372,11 @@ fn default_icon(name: &str) -> Option<String> {
         "swap" => Some("\u{f464}".into()),              // swap
         "battery" => Some("\u{f240}".into()),           // 电池
         "disk_usage" => Some("\u{f0a0}".into()),        // 磁盘
+        "aws" => Some("\u{f270}".into()),               // AWS
+        "azure" => Some("\u{fd03}".into()),             // Azure
+        "gcloud" => Some("\u{f7b7}".into()),            // GCloud
+        "kubecontext" => Some("\u{2388}".into()),       // ⎈ k8s
+        "terraform" => Some("\u{f1bb}".into()),         // Terraform
         // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
         "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
         "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
@@ -616,6 +627,76 @@ fn battery() -> String {
         (Some(c), None) => format!("{c}%"),
         _ => String::new(),
     }
+}
+
+fn home() -> String {
+    std::env::var("HOME").unwrap_or_default()
+}
+
+/// AWS 段:当前 profile(env `AWS_PROFILE`/`AWS_DEFAULT_PROFILE`)。
+fn aws_text() -> String {
+    env_var("AWS_PROFILE")
+        .or_else(|| env_var("AWS_DEFAULT_PROFILE"))
+        .unwrap_or_default()
+}
+
+/// gcloud 段:当前配置名(active_config 文件内容)。
+fn gcloud_text() -> String {
+    let dir = env_var("CLOUDSDK_CONFIG").unwrap_or_else(|| format!("{}/.config/gcloud", home()));
+    std::fs::read_to_string(format!("{dir}/active_config"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// azure 段:默认订阅名(azureProfile.json 中 `isDefault: true` 的 name)。
+fn azure_text() -> String {
+    let dir = env_var("AZURE_CONFIG_DIR").unwrap_or_else(|| format!("{}/.azure", home()));
+    let Some(s) = std::fs::read_to_string(format!("{dir}/azureProfile.json")).ok() else {
+        return String::new();
+    };
+    let mut rest = s.as_str();
+    while let Some(pos) = rest.find("\"isDefault\":") {
+        // `isDefault` 后允许空白,再判断是否为 true。
+        if rest[pos + "\"isDefault\":".len()..]
+            .trim_start()
+            .starts_with("true")
+        {
+            let before = &rest[..pos];
+            if let Some(n) = before.rfind("\"name\"") {
+                let after = &before[n + "\"name\"".len()..];
+                if let Some(v) = after.split('"').nth(1) {
+                    return v.to_string();
+                }
+            }
+        }
+        rest = &rest[pos + 1..];
+    }
+    String::new()
+}
+
+/// kubecontext 段:当前 context(读 `$KUBECONFIG` 或 `~/.kube/config`)。
+fn kubecontext_text(_cwd: &str) -> String {
+    let path = env_var("KUBECONFIG").unwrap_or_else(|| format!("{}/.kube/config", home()));
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| {
+            s.lines().find_map(|l| {
+                l.trim()
+                    .strip_prefix("current-context:")
+                    .map(|v| v.trim().to_string())
+            })
+        })
+        .unwrap_or_default()
+}
+
+/// terraform 段:当前 workspace(读 `$TF_DATA_DIR`/`.terraform/environment`)。
+fn terraform_text(cwd: &str) -> String {
+    let dir = env_var("TF_DATA_DIR").unwrap_or_else(|| ".terraform".into());
+    std::fs::read_to_string(std::path::Path::new(cwd).join(dir).join("environment"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。

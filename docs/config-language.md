@@ -107,6 +107,11 @@ What the built-in segments render:
 - `swap` — used swap (from `/proc/meminfo`).
 - `disk_usage` — used percent of the current directory's partition (`df`).
 - `battery` — charge percent + status from `/sys/class/power_supply`.
+- `aws` — current AWS profile from `AWS_PROFILE`/`AWS_DEFAULT_PROFILE`.
+- `azure` — default subscription name from `azureProfile.json`.
+- `gcloud` — active config name from `active_config`.
+- `kubecontext` — current context from `$KUBECONFIG`/`~/.kube/config`.
+- `terraform` — current workspace from `.terraform/environment`.
 - `ssh` — indicator that the session is SSH (icon only).
 - `proxy` — host:port of the first set proxy env var (`all_proxy`/`http_proxy`/…).
 - `docker_machine` — `$DOCKER_MACHINE_NAME`.
@@ -246,6 +251,11 @@ behavior attributes accumulate.
 - `swap` — 已用 swap(读 `/proc/meminfo`)。
 - `disk_usage` — 当前目录所在分区的已用百分比(`df`)。
 - `battery` — 电量百分比 + 状态(读 `/sys/class/power_supply`)。
+- `aws` — 当前 AWS profile(读 `AWS_PROFILE`/`AWS_DEFAULT_PROFILE`)。
+- `azure` — 默认订阅名(读 `azureProfile.json`)。
+- `gcloud` — 当前配置名(读 `active_config`)。
+- `kubecontext` — 当前 context(读 `$KUBECONFIG`/`~/.kube/config`)。
+- `terraform` — 当前 workspace(读 `.terraform/environment`)。
 - `ssh` — 当前处于 SSH 会话的指示(仅图标)。
 - `proxy` — 第一个已设代理环境变量的 host:port(`all_proxy`/`http_proxy`/…)。
 - `docker_machine` — `$DOCKER_MACHINE_NAME`。
