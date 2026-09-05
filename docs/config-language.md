@@ -86,6 +86,11 @@ What the built-in segments render:
   geometry is fixed at startup); on mismatch the engine reports the
   error and drops into a clean shell instead of theming.
 - `os` — distro badge.
+- `context` — `user@host` in SSH, `user` as local root, hidden otherwise.
+- `user` — current username.
+- `host` — hostname, shown in SSH or as root.
+- `root_indicator` — `#` as root, hidden otherwise.
+- `date` — current date, formatted via `date-format` (strftime, default `%d.%m.%y`).
 - `text` — provides the style for `text "…"` elements.
 
 The same segment name may appear several times in `segments`; the nodes
@@ -198,6 +203,11 @@ behavior attributes accumulate.
   退出码非 0)可覆盖字符与样式。各态的提示符必须等宽(宽度在启动期定死,
   占位符协议依赖它);不等宽 → 引擎报错,并进入干净 shell(不加载主题)。
 - `os` — 发行版徽标。
+- `context` — SSH 下显示 `user@host`,本地 root 显示 `user`,否则隐藏。
+- `user` — 当前用户名。
+- `host` — 主机名,SSH 或 root 时显示。
+- `root_indicator` — root 时显示 `#`,否则隐藏。
+- `date` — 当前日期,由 `date-format`(strftime,默认 `%d.%m.%y`)格式化。
 - `text` — 给 `text "…"` 元素提供样式。
 
 同一段名可以在 `segments` 里写多次，节点会合并:后出现的覆盖样式/

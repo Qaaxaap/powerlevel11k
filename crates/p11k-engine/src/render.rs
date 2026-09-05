@@ -217,6 +217,11 @@ fn render_segment(
                 paint("", &style)
             }
         }
+        "context" => paint(&context_text(), &style),
+        "user" => paint(&user_name(), &style),
+        "host" => paint(&host_text(), &style),
+        "root_indicator" => paint(&root_indicator_text(), &style),
+        "date" => paint(&date_text(seg), &style),
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
     // 段图标:配置 `icon` 优先,否则按段名内置默认;vcs 段按
@@ -278,6 +283,7 @@ fn default_icon(name: &str) -> Option<String> {
         "vcs" => Some("\u{f1d3}".into()),             // 
         "time" => Some("\u{f017}".into()),            // 
         "background_jobs" => Some("\u{f013}".into()), // 齿轮 
+        "date" => Some("\u{f073}".into()),            // 日历 
         _ => None,
     }
 }
@@ -294,6 +300,114 @@ fn os_icon() -> String {
         }
         c.borrow().as_ref().unwrap().clone()
     })
+}
+
+#[derive(Clone)]
+struct EnvInfo {
+    user: String,
+    host: String,
+    ssh: bool,
+    root: bool,
+}
+
+thread_local! {
+    static ENV: RefCell<Option<EnvInfo>> = const { RefCell::new(None) };
+}
+
+fn env() -> EnvInfo {
+    ENV.with(|c| {
+        if c.borrow().is_none() {
+            *c.borrow_mut() = Some(detect_env());
+        }
+        c.borrow().as_ref().unwrap().clone()
+    })
+}
+
+fn detect_env() -> EnvInfo {
+    let user = std::env::var("USER")
+        .ok()
+        .or_else(|| std::env::var("LOGNAME").ok())
+        .unwrap_or_default();
+    let host = std::env::var("HOSTNAME")
+        .ok()
+        .or_else(|| std::env::var("HOST").ok())
+        .unwrap_or_default();
+    let ssh = ["SSH_CONNECTION", "SSH_TTY", "SSH_CLIENT"]
+        .iter()
+        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()));
+    let root = unsafe { libc::geteuid() } == 0;
+    EnvInfo {
+        user,
+        host,
+        ssh,
+        root,
+    }
+}
+
+fn user_name() -> String {
+    env().user
+}
+
+/// context：SSH → `user@host`；本地 root → `user`；本地普通用户 → 空（隐藏）。
+fn context_text() -> String {
+    let e = env();
+    if e.ssh {
+        format!("{}@{}", e.user, e.host)
+    } else if e.root {
+        e.user
+    } else {
+        String::new()
+    }
+}
+
+fn host_text() -> String {
+    let e = env();
+    if e.ssh || e.root {
+        e.host
+    } else {
+        String::new()
+    }
+}
+
+fn root_indicator_text() -> String {
+    if env().root {
+        "#".into()
+    } else {
+        String::new()
+    }
+}
+
+/// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。
+fn date_text(seg: &crate::config::Segment) -> String {
+    let fmt = match seg.prop("date-format") {
+        Some(crate::config::Prop::Str(s)) => s.as_str(),
+        _ => "%d.%m.%y",
+    };
+    strftime_now(fmt)
+}
+
+fn strftime_now(fmt: &str) -> String {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&now, &mut tm) };
+    let cfmt = match std::ffi::CString::new(fmt) {
+        Ok(c) => c,
+        Err(_) => return String::new(),
+    };
+    let mut buf = [0u8; 128];
+    let n = unsafe {
+        libc::strftime(
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            cfmt.as_ptr(),
+            &tm,
+        )
+    };
+    if n == 0 {
+        String::new()
+    } else {
+        String::from_utf8_lossy(&buf[..n]).into_owned()
+    }
 }
 
 fn detect_os_icon() -> String {
@@ -981,5 +1095,30 @@ mod tests {
         let cfg = Config::parse(src).unwrap_or_else(|e| panic!("parse: {e}\nsrc={src:?}"));
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 40).join("\r\n");
         assert_eq!(display_width(&h), 40, "行宽应仍对齐 cols=40,实际:{h:?}");
+    }
+
+    #[test]
+    fn user_and_date_segments_render() {
+        let cfg = Config::parse(
+            "layout { left { line { user #true; date #true } } }\n\
+             segments { date date-format=\"%Y\" }",
+        )
+        .unwrap();
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
+        let user = std::env::var("USER").unwrap_or_default();
+        assert!(h.contains(&user), "user 段应显示 $USER,实际:{h:?}");
+        let digits: Vec<char> = h.chars().filter(|c| c.is_ascii_digit()).collect();
+        assert!(
+            digits.len() >= 4,
+            "date 段 date-format=%Y 应输出四位年份,实际:{h:?}"
+        );
+    }
+
+    #[test]
+    fn context_hidden_for_local_non_ssh() {
+        // 非 SSH 时 context 不出现 user@host 形式(本地 root 只显示 user)。
+        let cfg = Config::parse("layout { left { line { context #true } } }").unwrap();
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
+        assert!(!h.contains('@'), "非 SSH 不应显示 user@host,实际:{h:?}");
     }
 }
