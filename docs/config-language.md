@@ -91,6 +91,12 @@ What the built-in segments render:
 - `host` — hostname, shown in SSH or as root.
 - `root_indicator` — `#` as root, hidden otherwise.
 - `date` — current date, formatted via `date-format` (strftime, default `%d.%m.%y`).
+- `virtualenv` / `anaconda` / `nodeenv` — active environment name (`(name)` /
+  `[name]`) from `$VIRTUAL_ENV` / `$CONDA_PREFIX` / `$NODE_VIRTUAL_ENV`; hidden
+  when not activated.
+- `pyenv` / `nodenv` / `nvm` / `rbenv` / `chruby` / `rvm` / `goenv` / `jenv` /
+  `phpenv` / `luaenv` / `plenv` / `scalaenv` / `perlbrew` — language version from
+  the matching env var or an ancestor `.X-version` file; shown only when active.
 - `go_version` / `rust_version` / `node_version` / `php_version` /
   `java_version` / `dotnet_version` / `swift_version` / `terraform_version` —
   toolchain version parsed from `<cmd> --version`, shown only when the command
@@ -221,6 +227,11 @@ behavior attributes accumulate.
 - `host` — 主机名,SSH 或 root 时显示。
 - `root_indicator` — root 时显示 `#`,否则隐藏。
 - `date` — 当前日期,由 `date-format`(strftime,默认 `%d.%m.%y`)格式化。
+- `virtualenv` / `anaconda` / `nodeenv` — 激活的环境名(`(名字)` / `[名字]`),
+  来自 `$VIRTUAL_ENV` / `$CONDA_PREFIX` / `$NODE_VIRTUAL_ENV`;未激活则隐藏。
+- `pyenv` / `nodenv` / `nvm` / `rbenv` / `chruby` / `rvm` / `goenv` / `jenv` /
+  `phpenv` / `luaenv` / `plenv` / `scalaenv` / `perlbrew` — 语言版本,来自对应
+  环境变量或祖先目录的 `.X-version` 文件;仅激活时显示。
 - `go_version` / `rust_version` / `node_version` / `php_version` /
   `java_version` / `dotnet_version` / `swift_version` / `terraform_version` —
   从 `<cmd> --version` 解析的工具链版本,命令存在才显示(输出有缓存)。

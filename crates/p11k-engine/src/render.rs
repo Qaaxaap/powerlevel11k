@@ -235,6 +235,23 @@ fn render_segment(
         "swift_version" => paint(&swift_version(), &style),
         "terraform_version" => paint(&terraform_version(), &style),
         "cpu_arch" => paint(&cpu_arch(), &style),
+        // 环境管理器/*env 家族:读环境变量或祖先版本文件,激活才显示。
+        "virtualenv" => paint(&virtualenv_text(&info.cwd), &style),
+        "anaconda" => paint(&anaconda_text(&info.cwd), &style),
+        "pyenv" => paint(&pyenv_text(&info.cwd), &style),
+        "nodeenv" => paint(&nodeenv_text(&info.cwd), &style),
+        "nodenv" => paint(&nodenv_text(&info.cwd), &style),
+        "nvm" => paint(&nvm_text(&info.cwd), &style),
+        "rbenv" => paint(&rbenv_text(&info.cwd), &style),
+        "chruby" => paint(&chruby_text(&info.cwd), &style),
+        "rvm" => paint(&rvm_text(&info.cwd), &style),
+        "goenv" => paint(&goenv_text(&info.cwd), &style),
+        "jenv" => paint(&jenv_text(&info.cwd), &style),
+        "phpenv" => paint(&phpenv_text(&info.cwd), &style),
+        "luaenv" => paint(&luaenv_text(&info.cwd), &style),
+        "plenv" => paint(&plenv_text(&info.cwd), &style),
+        "scalaenv" => paint(&scalaenv_text(&info.cwd), &style),
+        "perlbrew" => paint(&perlbrew_text(&info.cwd), &style),
         // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
         // 整段隐藏。
         "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
@@ -329,6 +346,15 @@ fn default_icon(name: &str) -> Option<String> {
         "dotnet_version" => Some("\u{e77f}".into()),    // .NET
         "terraform_version" => Some("\u{f1bb}".into()), // Terraform
         "cpu_arch" => Some("\u{e266}".into()),          // 芯片
+        "virtualenv" | "anaconda" | "pyenv" => Some("\u{e73c}".into()), // Python
+        "nodeenv" | "nodenv" | "nvm" => Some("\u{e617}".into()), // Node
+        "rbenv" | "chruby" | "rvm" => Some("\u{f219}".into()), // Ruby
+        "goenv" => Some("\u{e626}".into()),             // Go
+        "jenv" => Some("\u{e738}".into()),              // Java
+        "phpenv" => Some("\u{e608}".into()),            // PHP
+        "luaenv" => Some("\u{e620}".into()),            // Lua
+        "plenv" | "perlbrew" => Some("\u{e769}".into()), // Perl
+        "scalaenv" => Some("\u{e737}".into()),          // Scala
         // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
         "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
         "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
@@ -633,6 +659,120 @@ fn cpu_arch() -> String {
         .ok()
         .or_else(|| run_cmd("uname", &["-m"]))
         .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+// 环境管理器/*env 家族段:从环境变量或 cwd 祖先的 `.X-version` 文件取当前版本,
+// 沿用 p10k 的"环境变量 > 本地文件 > 全局"优先级,激活才显示。
+
+fn basename(p: &str) -> String {
+    p.rsplit('/').next().unwrap_or(p).to_string()
+}
+
+/// 从 cwd 祖先目录找 `filename`,返回其首个非空行(版本文件)。
+fn find_up_version(cwd: &str, filename: &str) -> Option<String> {
+    let mut dir = std::path::Path::new(cwd);
+    loop {
+        let p = dir.join(filename);
+        if let Ok(c) = std::fs::read_to_string(&p) {
+            let first = c.lines().next().unwrap_or("").trim();
+            if !first.is_empty() {
+                return Some(first.to_string());
+            }
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => return None,
+        }
+    }
+}
+
+fn env_or_file(env: &str, file: &str, cwd: &str) -> Option<String> {
+    env_var(env).or_else(|| find_up_version(cwd, file))
+}
+
+fn virtualenv_text(_cwd: &str) -> String {
+    env_var("VIRTUAL_ENV")
+        .map(|v| format!("({})", basename(&v)))
+        .unwrap_or_default()
+}
+
+fn anaconda_text(_cwd: &str) -> String {
+    env_var("CONDA_PREFIX")
+        .or_else(|| env_var("CONDA_ENV_PATH"))
+        .map(|v| format!("({})", basename(&v)))
+        .unwrap_or_default()
+}
+
+fn pyenv_text(cwd: &str) -> String {
+    env_or_file("PYENV_VERSION", ".python-version", cwd)
+        .map(|v| v.trim_start_matches("python-").to_string())
+        .unwrap_or_default()
+}
+
+fn nodeenv_text(_cwd: &str) -> String {
+    env_var("NODE_VIRTUAL_ENV")
+        .map(|v| format!("[{}]", basename(&v)))
+        .unwrap_or_default()
+}
+
+fn nodenv_text(cwd: &str) -> String {
+    env_or_file("NODENV_VERSION", ".node-version", cwd).unwrap_or_default()
+}
+
+fn nvm_text(_cwd: &str) -> String {
+    // 简化:NVM_DIR 存在即显示当前 node 版本。
+    env_var("NVM_DIR")
+        .map(|_| node_version())
+        .unwrap_or_default()
+}
+
+fn rbenv_text(cwd: &str) -> String {
+    env_or_file("RBENV_VERSION", ".ruby-version", cwd)
+        .map(|v| v.trim_start_matches("ruby-").to_string())
+        .unwrap_or_default()
+}
+
+fn chruby_text(_cwd: &str) -> String {
+    env_var("RUBY_ENGINE").unwrap_or_default()
+}
+
+fn rvm_text(_cwd: &str) -> String {
+    env_var("GEM_HOME")
+        .filter(|g| g.contains("rvm"))
+        .map(|g| basename(&g))
+        .unwrap_or_default()
+}
+
+fn goenv_text(cwd: &str) -> String {
+    env_or_file("GOENV_VERSION", ".go-version", cwd)
+        .map(|v| v.trim_start_matches("go-").to_string())
+        .unwrap_or_default()
+}
+
+fn jenv_text(cwd: &str) -> String {
+    env_or_file("JENV_VERSION", ".java-version", cwd).unwrap_or_default()
+}
+
+fn phpenv_text(cwd: &str) -> String {
+    env_or_file("PHPENV_VERSION", ".php-version", cwd).unwrap_or_default()
+}
+
+fn luaenv_text(cwd: &str) -> String {
+    env_or_file("LUAENV_VERSION", ".lua-version", cwd).unwrap_or_default()
+}
+
+fn plenv_text(cwd: &str) -> String {
+    env_or_file("PLENV_VERSION", ".perl-version", cwd).unwrap_or_default()
+}
+
+fn scalaenv_text(cwd: &str) -> String {
+    env_or_file("SCALAENV_VERSION", ".scala-version", cwd).unwrap_or_default()
+}
+
+fn perlbrew_text(_cwd: &str) -> String {
+    env_var("PERLBREW_PERL")
+        .map(|v| v.trim_start_matches("perl-").to_string())
         .unwrap_or_default()
 }
 
