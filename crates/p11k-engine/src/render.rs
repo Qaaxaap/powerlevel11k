@@ -615,9 +615,16 @@ fn swift_version() -> String {
 }
 
 fn terraform_version() -> String {
-    // "Terraform v1.6.0" → "1.6.0"
+    // "Terraform v1.15.9\non linux_amd64…" → "1.15.9"(只取首行)
     run_cmd("terraform", &["--version"])
-        .map(|s| s.trim_start_matches("Terraform v").to_string())
+        .and_then(|s| {
+            Some(
+                s.lines()
+                    .next()?
+                    .trim_start_matches("Terraform v")
+                    .to_string(),
+            )
+        })
         .unwrap_or_default()
 }
 
