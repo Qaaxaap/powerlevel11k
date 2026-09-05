@@ -10,12 +10,12 @@
 //!   `left`/`right` 下每个 `line` 节点即一行;行内是段节点(`dir #true` 等,布尔原生,
 //!   `#false`/未列出则不启用,顺序=children 顺序);行与行之间就是换行。
 //! - **段**:`segments { dir fg=39 bold=#true shorten-strategy="t" … }`。
-//!   段节点带**属性**:`fg`、`bg`(颜色)、`bold`(布尔)、
-//!   `content`/`icon`/`prefix`/`suffix`(文本)、`disabled`(显隐);其余进
+//!   段节点带**属性**:`fg`、`bg`、`bold`、
+//!   `content`/`icon`/`prefix`/`suffix`、`disabled`;其余进
 //!   [`Segment::props`](行为,段渲染函数按需读)。
 //! - **state 覆盖**:段节点下 `state <NAME> fg=…` 子节点;其样式覆盖段默认,
 //!   即 p10k `SEG[_STATE]_ATTR` 三段回退(段STATE → 段 → [`Config::defaults`] 全局兜底)。
-//! - **默认**:顶层 `defaults { … }`(属性)是全局回退样式。
+//! - **默认**:顶层 `defaults { … }` 是全局回退样式。
 //!
 //! 段功能由代码实现,外观/布局全由配置驱动——换配置即换主题,不硬编码视觉。
 
@@ -79,7 +79,7 @@ impl fmt::Display for Color {
     }
 }
 
-/// 一段的视觉样式(颜色 + 粗体)。
+/// 一段的视觉样式。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Style {
     pub fg: Color,
@@ -88,7 +88,7 @@ pub struct Style {
 }
 
 impl Style {
-    /// 从一组 KDL 属性读样式键(`fg`、`bg`、`bold`)。
+    /// 从一组 KDL 属性读样式键。
     fn from_entries(entries: &[kdl::KdlEntry]) -> Style {
         let mut s = Style::default();
         for e in entries {
@@ -115,7 +115,7 @@ pub enum Element {
     Text(String),
 }
 
-/// 布局:左右各是一组行;每行一组元素(顺序即显示顺序),行与行=换行。
+/// 布局:左右各是一组行;每行一组元素,行与行=换行。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Layout {
     pub left: Vec<Vec<Element>>,
@@ -158,7 +158,7 @@ impl Default for Separators {
 }
 
 /// 帧的一块(行首/行尾装饰字符):文本 + 可选独立样式。
-/// 样式缺省(`None`)时回退 frame 级 → defaults。
+/// 样式缺省时回退 frame 级 → defaults。
 #[derive(Clone, Debug, PartialEq)]
 pub struct FramePiece {
     pub text: String,
@@ -240,7 +240,7 @@ pub struct Segment {
     pub states: BTreeMap<String, StateSpec>,
     /// 内容文本(可选;缺省由段渲染函数生成)。
     pub content: Option<String>,
-    /// 图标字符(可选)。
+    /// 图标字符。
     pub icon: Option<String>,
     /// 段左缘附加文字(icon 之前)。
     pub text_left: Option<AttachText>,
@@ -282,7 +282,7 @@ impl Segment {
         }
     }
 
-    /// 读一个行为属性(按名)。
+    /// 读一个行为属性。
     pub fn prop(&self, name: &str) -> Option<&Prop> {
         self.props.get(name)
     }
@@ -304,7 +304,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// 解析 KDL 文本为配置(用 kdl crate)。
+    /// 解析 KDL 文本为配置。
     pub fn parse(src: &str) -> Result<Config, String> {
         let doc = KdlDocument::parse(src).map_err(|e| format!("KDL 解析失败: {e}"))?;
         Self::parse_doc(&doc)
@@ -320,7 +320,7 @@ impl Config {
         self.segments.get(name).unwrap_or(&EMPTY_SEG)
     }
 
-    /// 某帧块(prefix/suffix)的实际样式:块级属性 → frame 级 → defaults 回退。
+    /// 某帧块的实际样式:块级属性 → frame 级 → defaults 回退。
     pub fn frame_piece_style(&self, piece: &FramePiece) -> Style {
         let base = merge_style(&self.frame.style, &self.defaults);
         match &piece.style {
@@ -476,7 +476,7 @@ fn parse_frame(node: &KdlNode) -> Frame {
     f
 }
 
-/// 解析 `layout`:{ `left`/`right`(行组)、`add-newline` }。
+/// 解析 `layout`:{ `left`/`right`、`add-newline` }。
 fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     let mut layout = Layout::default();
     if let Some(ch) = node.children() {
@@ -494,7 +494,7 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     Ok(layout)
 }
 
-/// 解析一个侧(row 组):每个子节点是一行。
+/// 解析一个侧:每个子节点是一行。
 fn parse_lines(node: &KdlNode) -> Vec<Vec<Element>> {
     let mut rows = Vec::new();
     if let Some(ch) = node.children() {
@@ -560,7 +560,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                     let Some(nm) = first_state_name(child) else {
                         return Err("state 需要名字(位置字符串)".into());
                     };
-                    // state 覆盖 = 样式(fg/bg/bold)+ 可选 char(该态下的显示字符)。
+                    // state 覆盖 = 样式 + 可选 char。
                     let st = Style::from_entries(child.entries());
                     let ch = named_str(child, "char");
                     seg.states.insert(
@@ -618,7 +618,7 @@ fn first_value(node: &KdlNode) -> Option<&KdlValue> {
         .map(|e| e.value())
 }
 
-/// state 节点的名字 = 首个位置参数(字符串)。
+/// state 节点的名字 = 首个位置参数。
 fn first_state_name(node: &KdlNode) -> Option<String> {
     match first_value(node) {
         Some(KdlValue::String(s)) => Some(s.clone()),
@@ -652,7 +652,7 @@ fn parse_separators(node: &KdlNode) -> Separators {
 
 /// 内置 lean 主题(KDL v2)。放在仓库里,不硬编码进渲染逻辑。
 pub const DEFAULT_LEAN: &str = r#"
-// p11k 内置 lean 主题(默认)。换文件即换主题。
+// p11k 内置 lean 主题。换文件即换主题。
 layout {
     left {
         line { dir; vcs }

@@ -3,7 +3,7 @@
 //! 从当前目录往回,把每个**非锚定**部件缩短到"它在目录兄弟中的最短唯一前缀";
 //! 锚点(home `~`/根、末尾 `shortenlen` 级、含 marker 文件的祖先)不缩;缩短后无省略符。
 //!
-//! 返回按类别标记的部件([`DirPart`]),render 据此映射到 state 上色。
+//! 返回按类别标记的部件,render 据此映射到 state 上色。
 //!
 //! # 性能(对齐 p10k 的 mtime 缓存)
 //!
@@ -18,10 +18,10 @@ thread_local! {
     static CACHE: RefCell<HashMap<(PathBuf, i64), String>> = RefCell::new(HashMap::new());
 }
 
-/// 部件类别(决定上色)。
+/// 部件类别。
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Class {
-    /// 锚(首 `~`/根/当前目录/marker 祖先),不缩,varies 颜色。
+    /// 锚(首 `~`/根/当前目录/marker 祖先),不缩。
     Anchor,
     /// 被缩短(唯一前缀)。
     Shortened,

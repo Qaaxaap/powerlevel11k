@@ -5,7 +5,7 @@
 //!   prompt_char/os/text）按配置渲染，可叠加左/中/右附加文字。
 //! - **色**：配置的 `fg`/`bg`（三段回退）+ 段间 powerline 分隔符与背景块。
 //!
-//! 输入：配置 + 当前状态（cwd/git/exit）。输出：header 的 ANSI 字符串。
+//! 输入：配置 + 当前状态。输出：header 的 ANSI 字符串。
 
 use std::fmt::Write as _;
 
@@ -133,7 +133,7 @@ pub fn render_header_lines(
         .collect()
 }
 
-/// 渲染一行:左段串(依次拼接)、右段右对齐。
+/// 渲染一行:左段串、右段右对齐。
 fn render_row(
     config: &Config,
     elements: &[Element],
@@ -385,7 +385,7 @@ fn dir_seg_text(
     let mut s = String::new();
     let is_home = home.map(|h| cwd.starts_with(h)).unwrap_or(false);
     if is_home {
-        // home 前缀 `~`(anchor)。
+        // home 前缀 `~`。
         let st = seg.effective_style(Some("ANCHOR"), &config.defaults);
         s.push_str(&paint("~", &st));
         if !parts.is_empty() {

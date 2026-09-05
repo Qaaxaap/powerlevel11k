@@ -4,8 +4,8 @@
 //! 让 zle 的几何自洽。引擎不解析 pty 输出的 ANSI，只做字节透传 + 光标定位：
 //! - `render_header_cfg`：在占位符透传之前画多行 header（行内容由
 //!   [`crate::render::render_header_lines`] 按 KDL 配置生成）。
-//! - `render_prompt`：在占位符透传之后，用 `\r` + 前缀覆盖占位符（输入行
-//!   这一行延后绘制）。前缀可见宽度与占位符恒等，zle 重绘列偏移对齐。
+//! - `render_prompt`：在占位符透传之后，用 `\r` + 前缀覆盖占位符。前缀可见
+//!   宽度与占位符恒等，zle 重绘列偏移对齐。
 
 use std::io::{self, Write};
 
@@ -15,7 +15,7 @@ pub struct HeaderInfo {
     pub cwd: String,
     /// 上一条命令耗时(秒,引擎计时:回车 → 本次 precmd);首 prompt 为 0。
     pub exec_seconds: f64,
-    /// 后台任务数(shell 宣告)。
+    /// 后台任务数。
     pub jobs: usize,
 }
 
@@ -66,7 +66,7 @@ pub fn render_header_cleared_cfg(
     render_header_cfg(out, cols, config, info, vcs)
 }
 
-/// resize 后重画 header(用配置):保存输入行光标、上移到 header 行 1、重画、
+/// resize 后重画 header:保存输入行光标、上移到 header 行 1、重画、
 /// 恢复。上移行数 = 配置 header 行数;不碰输入行(用户可能已在打字)。
 pub fn redraw_header_cfg(
     out: &mut dyn Write,
@@ -91,7 +91,7 @@ pub fn redraw_header_cfg(
 /// 被恢复到 buffer 末尾，不与 zle 的光标模型冲突。
 pub fn render_prompt(out: &mut dyn Write, prefix: &str) -> io::Result<()> {
     write!(out, "\x1b[s\r{prefix}\x1b[u")?;
-    // OSC 133 B：prompt 结束标记，告知终端光标已停在输入位置（prompt 就绪），
+    // OSC 133 B：prompt 结束标记，告知终端光标已停在输入位置，
     // 关窗不再弹"有程序在运行"的确认框（对齐 p10k _p9k_prompt_suffix）。
     write!(out, "\x1b]133;B\x07")?;
     Ok(())

@@ -7,10 +7,10 @@
 //!    pty 输出的 ANSI，shell 渲染什么（命令输出、zle、占位 prompt、补全
 //!    菜单）引擎一概不管。
 //! 3. prompt 窗口由 announce 驱动的两笔绘制：
-//!    - `h`（precmd 宣告）：画多行 header（"上面的行"按原来顺序渲染），
+//!    - `h`（precmd 宣告）：画多行 header，
 //!      touch ack 放行 shell 输出占位 prompt。
 //!    - `p`（zle-line-init 宣告，zle 已渲染完占位 prompt）：回行首画真实
-//!      前缀覆盖占位符（输入行这一行延后绘制）。前缀只覆盖占位符所在列，
+//!      前缀覆盖占位符。前缀只覆盖占位符所在列，
 //!      即使引擎稍慢、用户已开始输入也不受影响。
 //!
 //! 几何协议：PROMPT 使用 "__" 占位。precmd 写 announce 后轮询 ack，保证
@@ -131,7 +131,7 @@ const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap —— 协议层 + 用�
 _p11k_status=0
 _p11k_pwd=$PWD
 
-# precmd：记录退出码和目录，宣告 `h`（绘制 header）后等引擎 ack 才返回，
+# precmd：记录退出码和目录，宣告 `h` 后等引擎 ack 才返回，
 # 使 header 先画、占位 prompt 后输出，顺序保证。
 # precmd 不是 zle hook，sleep 轮询安全。
 _p11k_precmd() {
@@ -146,7 +146,7 @@ _p11k_precmd() {
 # zle hook 里不能跑外部命令，只写文件，引擎异步处理（poll ~5ms）。
 # 引擎的前缀只覆盖占位符所在列，即使引擎稍慢、用户已输入，也不会碰到输入内容。
 _p11k_line_init() {
-  # 续行（多行命令的 PS2）不是主 prompt：不发 p，让 zsh 默认续行符 '> '
+  # 续行不是主 prompt：不发 p，让 zsh 默认续行符 '> '
   # 原样显示（否则引擎会回行首画前缀，把续行符覆盖）。
   [[ ${CONTEXT:-start} == cont ]] && return
   if [[ -n "${_p11k_user_line_init:-}" ]] && (( $+functions[$_p11k_user_line_init] )); then
@@ -173,10 +173,10 @@ fi
 # PROMPT 是纯 ASCII 占位，zle 的几何由此自洽；真实 prompt 由引擎绘制。
 PROMPT='__'
 RPROMPT=''
-# 续行提示（多行命令）：zsh 用 PROMPT2，与 p10k 一致设 '> '；避免被用户配置或残留设置改掉。
+# 续行提示：zsh 用 PROMPT2，与 p10k 一致设 '> '；避免被用户配置或残留设置改掉。
 PROMPT2='> '
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
-# zle-line-init 单 handler：保留用户注册的（链式调用），再注册引擎宣告。
+# zle-line-init 单 handler：保留用户注册的，再注册引擎宣告。
 if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p11k_line_init ]]; then
   _p11k_user_line_init=${widgets[zle-line-init]#user:}
 fi
@@ -210,7 +210,7 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) —— 协议层 + 用户配置。
 PS1='__'
 
-# PROMPT_COMMAND 在 PS1 显示前执行：记录退出码、宣告 `h`（画 header）后等
+# PROMPT_COMMAND 在 PS1 显示前执行：记录退出码、宣告 `h` 后等
 # 引擎 ack 才返回。
 _p11k_prompt_command() {
   local _st=$?
@@ -247,18 +247,17 @@ trap '_p11k_winch' WINCH
 
 /// fish 协议层（XDG_CONFIG_HOME 重定向注入）。fish_prompt 占位 + 宣告。
 ///
-/// fish 没有 precmd/zle/PROMPT_COMMAND：宣告 h 放在 `fish_prompt`（渲染 prompt
-/// 时调用）里，等 ack 后返回占位；引擎字节匹配占位画前缀覆盖（同
+/// fish 没有 precmd/zle/PROMPT_COMMAND：宣告 h 放在 `fish_prompt`
+/// 里，等 ack 后返回占位；引擎字节匹配占位画前缀覆盖（同
 /// bash，无 `p` 宣告）。resize 用 `--on-signal WINCH`。
 const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) —— 协议层 + 用户配置。
 
 set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 
-# fish_prompt 在渲染主 prompt 时调用（含 resize 重绘时重新调用，见 fish 的
-# repaint 机制）。两种情形：
-# - 尺寸变化（resize 重绘）：宣告 `r`（引擎重画 header+前缀）。
-# - 正常 prompt：宣告 `h`（画 header）后等引擎 ack 才返回。
+# fish_prompt 在渲染主 prompt 时调用。两种情形：
+# - 尺寸变化（resize 重绘）：宣告 `r`。
+# - 正常 prompt：宣告 `h` 后等引擎 ack 才返回。
 function fish_prompt
     set -l _st $status
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
@@ -322,10 +321,10 @@ fn main() -> anyhow::Result<()> {
     }
 
     let shell = detect_shell();
-    // 先加载配置以算输入行前缀宽度,再据此生成等宽占位符(几何自洽)。
+    // 先加载配置以算输入行前缀宽度,再据此生成等宽占位符。
     let config = load_config();
-    // prompt_char 各态(正常/ERROR)提示符必须等宽(占位符协议按启动期宽度生成)。
-    // 不等宽是配置错误,直接在真实终端报错(stderr),再 exec 干净 shell
+    // prompt_char 各态(正常/ERROR)提示符必须等宽。
+    // 不等宽是配置错误,直接在真实终端报错,再 exec 干净 shell
     if let Err(e) = crate::render::check_prompt_char_widths(&config) {
         eprintln!("p11k: 配置错误: {e}");
         eprintln!(
@@ -477,14 +476,14 @@ fn main() -> anyhow::Result<()> {
     });
 
     let mut git_gen: u64 = 0; // 发起请求的序号，只使用最新结果
-    // 当前 cwd 的上次 git 状态（跨 prompt 复用）。
+    // 当前 cwd 的上次 git 状态。
     let mut last_vcs: Option<(String, Option<GitStatus>)> = None;
-    // 当前 prompt 的 info（异步结果回来时用它重画 header 行）。
+    // 当前 prompt 的 info。
     let mut current_info: Option<HeaderInfo> = None;
     // 光标是否停在输入行（p 宣告后、用户回车前），异步结果仅在此时重画，
     // 否则 redraw 的 \e[1A 会画到命令输出上。
     let mut at_prompt = false;
-    // 上次回车（命令开始）的时刻，用于下次 precmd 计算命令耗时。
+    // 上次回车的时刻，用于下次 precmd 计算命令耗时。
     let mut last_enter: Option<std::time::Instant> = None;
     // git 结果早于输入行就绪到达时（last_vcs 已更新但未 redraw），p 就绪时补重画。
     let mut vcs_dirty = false;
@@ -498,7 +497,7 @@ fn main() -> anyhow::Result<()> {
 
     // instant header：不等内部 shell 加载完较慢的用户 rc，立即用引擎 cwd 画
     // 占位 header + prompt，打开窗口即见 prompt；内部 shell 第一次 precmd 后
-    // 再清屏刷新成真正状态（exit/git）。
+    // 再清屏刷新成真正状态。
     let instant_info = HeaderInfo {
         exit_code: None,
         cwd: std::env::current_dir()
@@ -537,7 +536,7 @@ fn main() -> anyhow::Result<()> {
         // - `p`（zle-line-init 宣告）：回行首画前缀覆盖占位符。
         // - `r`（resize 宣告）：重画 prompt 窗口。
         for msg in drain_announce(&state.announce, &mut ann_processed) {
-            // 尺寸变了就同步给 pty（shell 重排），并让右对齐用新宽度。
+            // 尺寸变了就同步给 pty，并让右对齐用新宽度。
             let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
             if (r, c, xp, yp) != last_size {
                 pair.master.resize(PtySize {
@@ -610,7 +609,7 @@ fn main() -> anyhow::Result<()> {
                         )?;
                         stdout.flush()?;
                     }
-                    // 前缀按当前退出码动态生成（ERROR 态变色/变字符）。
+                    // 前缀按当前退出码动态生成。
                     let text = crate::render::input_prefix(
                         &config,
                         current_info.as_ref().and_then(|i| i.exit_code),
@@ -621,7 +620,7 @@ fn main() -> anyhow::Result<()> {
                     at_prompt = true; // 输入行就绪
                 }
                 AnnMsg::Resize => {
-                    // 尺寸检查在循环开头已 resize pty。先更新 header（新宽度），
+                    // 尺寸检查在循环开头已 resize pty。先更新 header，
                     // 延迟 ~60ms 再补画 prompt（等 zle 重绘 占位prompt+buffer 透传完）。
                     if at_prompt {
                         log("r: redraw header, defer prompt");
@@ -672,7 +671,7 @@ fn main() -> anyhow::Result<()> {
             match stdin.read(&mut buf) {
                 Ok(0) => break, // 真实终端关闭
                 Ok(n) => {
-                    // 用户回车（提交命令）→ 光标离开输入行，异步 git 结果
+                    // 用户回车 → 光标离开输入行，异步 git 结果
                     // 不再重画 header（否则 \e[1A 会画错行）。
                     if buf[..n].iter().any(|&b| b == b'\r' || b == b'\n') {
                         at_prompt = false;
@@ -686,7 +685,7 @@ fn main() -> anyhow::Result<()> {
         }
 
         // pty 输出 → 真实终端：透传。
-        // 主题由 announce 驱动的两笔绘制完成（h → header 行；p → 输入行前缀二次绘制覆盖占位符）。
+        // 主题由 announce 驱动的两笔绘制完成。
         if fds[1].revents & (libc::POLLIN | libc::POLLHUP) != 0 {
             let mut buf = [0u8; 8192];
             match reader.read(&mut buf) {
@@ -824,28 +823,28 @@ impl StateDir {
 
 /// announce 消息：prompt 窗口的绘制与 resize。
 enum AnnMsg {
-    /// `h\t<exit>\t<cwd>`：precmd 宣告（zsh 在等 ack），画 header 行。
+    /// `h\t<exit>\t<cwd>`：precmd 宣告，画 header。
     Header(HeaderInfo),
-    /// `p`：zle-line-init 宣告（占位 prompt 已显示），画输入行前缀覆盖。
+    /// `p`：zle-line-init 宣告，画输入行前缀覆盖。
     Prompt,
-    /// `r`：TRAPWINCH 宣告（尺寸变化），resize pty + 清屏重画。
+    /// `r`：TRAPWINCH 宣告，resize pty + 清屏重画。
     Resize,
 }
 
-/// 异步 git 请求（主循环 → worker 线程）。
+/// 异步 git 请求。
 struct GitRequest {
     generation: u64,
     cwd: String,
 }
 
-/// 异步 git 结果（worker 线程 → 主循环）。
+/// 异步 git 结果。
 struct GitResult {
     generation: u64,
     status: Option<GitStatus>,
 }
 
 /// 读 announce 文件的新行并解析为 prompt 消息。
-/// 行格式：`h\t<exit_code>\t<cwd>`（precmd）或 `p`（zle-line-init）。
+/// 行格式：`h\t<exit_code>\t<cwd>` 或 `p`。
 fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
     let mut out = Vec::new();
     let Ok(mut f) = OpenOptions::new().read(true).open(path) else {
@@ -907,7 +906,7 @@ fn log(msg: &str) {
     }
 }
 
-/// 在 `haystack` 里找子切片 `needle` 的首位置（字节匹配）。
+/// 在 `haystack` 里找子切片 `needle` 的首位置。
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
