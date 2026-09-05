@@ -12,6 +12,7 @@ use std::fmt::Write as _;
 use crate::config::{AttachText, Color, Config, Element, Style};
 use crate::theme::{GitStatus, HeaderInfo};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 
 /// 输入行前缀:`frame.last_prefix` + `prompt_char` 内容;`width` 是它的显示宽度,
@@ -224,6 +225,16 @@ fn render_segment(
         "host" => paint(&host_text(), &style),
         "root_indicator" => paint(&root_indicator_text(), &style),
         "date" => paint(&date_text(seg), &style),
+        // 工具链版本段:跑 `cmd --version` 解析版本,有命令才显示。
+        "go_version" => paint(&go_version(), &style),
+        "rust_version" => paint(&rust_version(), &style),
+        "node_version" => paint(&node_version(), &style),
+        "php_version" => paint(&php_version(), &style),
+        "java_version" => paint(&java_version(), &style),
+        "dotnet_version" => paint(&dotnet_version(), &style),
+        "swift_version" => paint(&swift_version(), &style),
+        "terraform_version" => paint(&terraform_version(), &style),
+        "cpu_arch" => paint(&cpu_arch(), &style),
         // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
         // 整段隐藏。
         "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
@@ -305,11 +316,19 @@ fn vcs_remote_icon(config: &Config, remote_url: &str) -> String {
 fn default_icon(name: &str) -> Option<String> {
     match name {
         "os" | "os_icon" => Some(os_icon()),
-        "dir" => Some("\u{f07c}".into()),             // 
-        "vcs" => Some("\u{f1d3}".into()),             // 
-        "time" => Some("\u{f017}".into()),            // 
-        "background_jobs" => Some("\u{f013}".into()), // 齿轮 
-        "date" => Some("\u{f073}".into()),            // 日历 
+        "dir" => Some("\u{f07c}".into()),               // 
+        "vcs" => Some("\u{f1d3}".into()),               // 
+        "time" => Some("\u{f017}".into()),              // 
+        "background_jobs" => Some("\u{f013}".into()),   // 齿轮 
+        "date" => Some("\u{f073}".into()),              // 日历 
+        "go_version" => Some("\u{e626}".into()),        // Go
+        "rust_version" => Some("\u{e7a8}".into()),      // Rust
+        "node_version" => Some("\u{e617}".into()),      // Node
+        "php_version" => Some("\u{e608}".into()),       // PHP
+        "java_version" => Some("\u{e738}".into()),      // Java
+        "dotnet_version" => Some("\u{e77f}".into()),    // .NET
+        "terraform_version" => Some("\u{f1bb}".into()), // Terraform
+        "cpu_arch" => Some("\u{e266}".into()),          // 芯片
         // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
         "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
         "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
@@ -493,6 +512,113 @@ fn strftime_now(fmt: &str) -> String {
     } else {
         String::from_utf8_lossy(&buf[..n]).into_owned()
     }
+}
+
+// 工具链版本段:跑 `cmd --version` 缓存输出并解析版本号,有命令才显示。
+thread_local! {
+    static CMD_CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+}
+
+fn run_cmd(cmd: &str, args: &[&str]) -> Option<String> {
+    let key = format!("{cmd} {}", args.join(" "));
+    CMD_CACHE.with(|c| {
+        if let Some(v) = c.borrow().get(&key) {
+            return v.clone();
+        }
+        let out = std::process::Command::new(cmd)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        c.borrow_mut().insert(key.clone(), out.clone());
+        out
+    })
+}
+
+fn go_version() -> String {
+    // "go version go1.27.0-X:nodwarf5 linux/amd64" → "go1.27.0"
+    run_cmd("go", &["version"])
+        .and_then(|s| {
+            Some(
+                s.split_whitespace()
+                    .nth(2)?
+                    .split('-')
+                    .next()
+                    .unwrap_or("")
+                    .to_string(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn rust_version() -> String {
+    // "rustc 1.97.1 (…)" → "1.97.1"
+    run_cmd("rustc", &["--version"])
+        .and_then(|s| Some(s.split_whitespace().nth(1)?.to_string()))
+        .unwrap_or_default()
+}
+
+fn node_version() -> String {
+    // "v26.8.1" → "26.8.1"
+    run_cmd("node", &["--version"])
+        .map(|s| s.trim_start_matches('v').to_string())
+        .unwrap_or_default()
+}
+
+fn php_version() -> String {
+    // "PHP 8.2.0 (cli)" → "8.2.0"
+    run_cmd("php", &["--version"])
+        .and_then(|s| Some(s.split_whitespace().nth(1)?.to_string()))
+        .unwrap_or_default()
+}
+
+fn java_version() -> String {
+    // '"17.0.9" ...' → "17.0.9"(截到首个 `-`)
+    run_cmd("java", &["-fullversion"])
+        .and_then(|s| {
+            let s = s.split('"').nth(1)?;
+            Some(s.split('-').next().unwrap_or(s).to_string())
+        })
+        .unwrap_or_default()
+}
+
+fn dotnet_version() -> String {
+    run_cmd("dotnet", &["--version"]).unwrap_or_default()
+}
+
+fn swift_version() -> String {
+    // "Apple Swift version 5.9 (…)" → 取首个数字开头词
+    run_cmd("swift", &["--version"])
+        .and_then(|s| {
+            Some(
+                s.split_whitespace()
+                    .find(|w| {
+                        w.chars()
+                            .next()
+                            .map(|c| c.is_ascii_digit())
+                            .unwrap_or(false)
+                    })?
+                    .trim_matches('.')
+                    .to_string(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+fn terraform_version() -> String {
+    // "Terraform v1.6.0" → "1.6.0"
+    run_cmd("terraform", &["--version"])
+        .map(|s| s.trim_start_matches("Terraform v").to_string())
+        .unwrap_or_default()
+}
+
+fn cpu_arch() -> String {
+    std::fs::read_to_string("/proc/sys/kernel/arch")
+        .ok()
+        .or_else(|| run_cmd("uname", &["-m"]))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 fn detect_os_icon() -> String {
@@ -1234,5 +1360,16 @@ mod tests {
         unsafe {
             std::env::remove_var("http_proxy");
         }
+    }
+
+    #[test]
+    fn version_segments_resolve() {
+        // cpu_arch 从 /proc 或 uname 恒有;不存在的命令 → 段隐藏(None)。
+        assert!(
+            !cpu_arch().is_empty(),
+            "cpu_arch 应有值,实际:{:?}",
+            cpu_arch()
+        );
+        assert_eq!(run_cmd("no-such-cmd-p11k-test", &["--version"]), None);
     }
 }

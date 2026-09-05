@@ -91,6 +91,11 @@ What the built-in segments render:
 - `host` — hostname, shown in SSH or as root.
 - `root_indicator` — `#` as root, hidden otherwise.
 - `date` — current date, formatted via `date-format` (strftime, default `%d.%m.%y`).
+- `go_version` / `rust_version` / `node_version` / `php_version` /
+  `java_version` / `dotnet_version` / `swift_version` / `terraform_version` —
+  toolchain version parsed from `<cmd> --version`, shown only when the command
+  is available (output cached).
+- `cpu_arch` — CPU architecture from `/proc/sys/kernel/arch` (fallback `uname -m`).
 - `ssh` — indicator that the session is SSH (icon only).
 - `proxy` — host:port of the first set proxy env var (`all_proxy`/`http_proxy`/…).
 - `docker_machine` — `$DOCKER_MACHINE_NAME`.
@@ -216,6 +221,10 @@ behavior attributes accumulate.
 - `host` — 主机名,SSH 或 root 时显示。
 - `root_indicator` — root 时显示 `#`,否则隐藏。
 - `date` — 当前日期,由 `date-format`(strftime,默认 `%d.%m.%y`)格式化。
+- `go_version` / `rust_version` / `node_version` / `php_version` /
+  `java_version` / `dotnet_version` / `swift_version` / `terraform_version` —
+  从 `<cmd> --version` 解析的工具链版本,命令存在才显示(输出有缓存)。
+- `cpu_arch` — 从 `/proc/sys/kernel/arch` 读的 CPU 架构(回退 `uname -m`)。
 - `ssh` — 当前处于 SSH 会话的指示(仅图标)。
 - `proxy` — 第一个已设代理环境变量的 host:port(`all_proxy`/`http_proxy`/…)。
 - `docker_machine` — `$DOCKER_MACHINE_NAME`。
