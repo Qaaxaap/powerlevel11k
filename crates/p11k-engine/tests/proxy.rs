@@ -7,7 +7,7 @@
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 const COLS: u16 = 100;
 
@@ -100,10 +100,7 @@ fn placeholder_overwritten_by_prefix() {
     wait_ready(&master, &mut reader);
     // 真正 prompt：占位符先透传，随后 \r + 输入前缀(❯)顶掉。
     let out = read_until(&master, &mut reader, "❯", Duration::from_secs(5));
-    assert!(
-        out.contains("__"),
-        "占位符应原样透传，实际输出：{out:?}"
-    );
+    assert!(out.contains("__"), "占位符应原样透传，实际输出：{out:?}");
     assert!(
         out.contains('\r') && out.contains('❯'),
         "透传后应回行首画前缀顶掉占位符，实际输出：{out:?}"
@@ -122,7 +119,12 @@ fn command_output_passthrough_and_next_prompt() {
 
     writer.write_all(b"echo hello-from-shell\n").unwrap();
     writer.flush().unwrap();
-    let out = read_until(&master, &mut reader, "hello-from-shell", Duration::from_secs(5));
+    let out = read_until(
+        &master,
+        &mut reader,
+        "hello-from-shell",
+        Duration::from_secs(5),
+    );
     assert!(out.contains("hello-from-shell"), "命令输出应透传");
 
     // 下一个 prompt 也该出现（命令执行完 → precmd → header 重画带 ✓）。
@@ -151,7 +153,12 @@ fn prompt_char_turns_error_color_on_failure() {
 
     writer.write_all(b"false\n").unwrap();
     writer.flush().unwrap();
-    let out = read_until(&master, &mut reader, "\x1b[38;5;196m", Duration::from_secs(5));
+    let out = read_until(
+        &master,
+        &mut reader,
+        "\x1b[38;5;196m",
+        Duration::from_secs(5),
+    );
     assert!(
         out.contains("\x1b[38;5;196m❯"),
         "失败后 prompt_char 应进 ERROR state 变红(196)，实际：{out:?}"

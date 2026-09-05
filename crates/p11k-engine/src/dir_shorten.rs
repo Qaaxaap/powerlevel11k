@@ -1,11 +1,9 @@
-//! `dir` 段截断策略 `truncate_to_unique`(对齐 p10k,见 p10k.zsh P:1896-1992)。
+//! `dir` 段截断策略 `truncate_to_unique`(对齐 p10k)。
 //!
-//! 从当前目录往回,把每个**非锚定**部件缩短到"它在自己目录兄弟中的最短唯一前缀";
-//! 锚点(home `~`/根、末尾 `shortenlen` 级、含 marker 文件的祖先)不缩;缩短后无省略符
-//! (lean 置空 SHORTEN_DELIMITER)。
+//! 从当前目录往回,把每个**非锚定**部件缩短到"它在目录兄弟中的最短唯一前缀";
+//! 锚点(home `~`/根、末尾 `shortenlen` 级、含 marker 文件的祖先)不缩;缩短后无省略符。
 //!
-//! 返回按类别标记的部件([`DirPart`]),render 据此逐部件上色:
-//! 缩短=103、锚=39(粗体)、普通=31,`/` 分隔符本色。
+//! 返回按类别标记的部件([`DirPart`]),render 据此映射到 state 上色。
 //!
 //! # 性能(对齐 p10k 的 mtime 缓存)
 //!
@@ -70,10 +68,17 @@ fn fold(parts: &[String], shortenlen: usize, base: &Path) -> Vec<DirPart> {
         let abs = join(base, &parts[..=i]);
         let is_anchor = i >= n - anchor_tail || has_marker_in(&abs);
         if is_anchor {
-            out.push(DirPart { text: parts[i].clone(), class: Class::Anchor });
+            out.push(DirPart {
+                text: parts[i].clone(),
+                class: Class::Anchor,
+            });
         } else {
             let text = shorten_component(&abs, &parts[i]);
-            let class = if text != parts[i] { Class::Shortened } else { Class::Normal };
+            let class = if text != parts[i] {
+                Class::Shortened
+            } else {
+                Class::Normal
+            };
             out.push(DirPart { text, class });
         }
     }
@@ -108,24 +113,32 @@ fn shorten_component(abs: &Path, name: &str) -> String {
         }
     }
     CACHE.with(|c| {
-        c.borrow_mut().insert((abs.to_path_buf(), parent_mtime), best.clone());
+        c.borrow_mut()
+            .insert((abs.to_path_buf(), parent_mtime), best.clone());
     });
     best
 }
 
 /// 该绝对路径前缀是否含 marker 文件的祖先。
 fn has_marker_in(abs: &Path) -> bool {
-    const MARKERS: &[&str] = &[".git", ".hg", ".svn", "Cargo.toml", "package.json", "go.mod"];
-    MARKERS.iter().any(|m| abs.join(m).exists() || abs.join(m).is_dir())
+    const MARKERS: &[&str] = &[
+        ".git",
+        ".hg",
+        ".svn",
+        "Cargo.toml",
+        "package.json",
+        "go.mod",
+    ];
+    MARKERS
+        .iter()
+        .any(|m| abs.join(m).exists() || abs.join(m).is_dir())
 }
 
 fn list_dir(path: &Path) -> Option<Vec<String>> {
-    std::fs::read_dir(path)
-        .ok()
-        .map(|rd| {
-            rd.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
-                .collect()
-        })
+    std::fs::read_dir(path).ok().map(|rd| {
+        rd.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+            .collect()
+    })
 }
 
 fn file_mtime(path: &Path) -> Option<i64> {

@@ -167,7 +167,10 @@ pub struct FramePiece {
 
 impl Default for FramePiece {
     fn default() -> Self {
-        FramePiece { text: String::new(), style: None }
+        FramePiece {
+            text: String::new(),
+            style: None,
+        }
     }
 }
 
@@ -249,7 +252,7 @@ pub struct Segment {
     pub suffix: Option<String>,
     /// 是否显示(`disabled` 置 false)。
     pub shown: bool,
-    /// 其它行为属性(shorten-strategy、threshold-seconds、clean-foreground …)。
+    /// 其它行为属性(如 `shorten-dir-length`、`threshold-seconds`,由段渲染函数按需读)。
     pub props: BTreeMap<String, Prop>,
 }
 
@@ -360,18 +363,25 @@ impl Config {
                 _ => {} // 未知顶层忽略(向前兼容)
             }
         }
-        Ok(Config { layout, segments, defaults, separators, frame, vcs_remote_icons })
+        Ok(Config {
+            layout,
+            segments,
+            defaults,
+            separators,
+            frame,
+            vcs_remote_icons,
+        })
     }
 }
 
 /// 内置 vcs 远端图标表(对齐 p10k 默认 `VCS_GIT_REMOTE_ICONS`;aur/archlinux 用 )。
 fn default_remote_icons() -> Vec<(String, String)> {
     vec![
-        ("github".into(), "\u{f113}".into()),       // 
-        ("gitlab".into(), "\u{f296}".into()),       // 
-        ("bitbucket".into(), "\u{f171}".into()),    // 
+        ("github".into(), "\u{f113}".into()),            // 
+        ("gitlab".into(), "\u{f296}".into()),            // 
+        ("bitbucket".into(), "\u{f171}".into()),         // 
         ("aur.archlinux.org".into(), "\u{f303}".into()), // 
-        ("archlinux.org".into(), "\u{f303}".into()), // 
+        ("archlinux.org".into(), "\u{f303}".into()),     // 
     ]
 }
 
@@ -434,14 +444,23 @@ fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
 /// 解析 `frame` 节点:frame 级样式(节点属性 fg/bg/bold)+ first/newline/last 的
 /// prefix/suffix(子节点,值字符串;子节点自己的 fg/bg/bold 覆盖帧级)。
 fn parse_frame(node: &KdlNode) -> Frame {
-    let mut f = Frame { style: Style::from_entries(node.entries()), ..Frame::default() };
+    let mut f = Frame {
+        style: Style::from_entries(node.entries()),
+        ..Frame::default()
+    };
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
-            let Some(v) = first_value(child) else { continue };
+            let Some(v) = first_value(child) else {
+                continue;
+            };
             let Some(text) = str_val(v) else { continue };
             let st = Style::from_entries(child.entries());
             // 子节点没写样式属性 → None(回退帧级);写了 → Some(覆盖)。
-            let style = if st == Style::default() { None } else { Some(st) };
+            let style = if st == Style::default() {
+                None
+            } else {
+                Some(st)
+            };
             let piece = FramePiece { text, style };
             match child.name().value() {
                 "first-prefix" => f.first_prefix = piece,
@@ -529,7 +548,8 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
             "suffix" => seg.suffix = str_val(e.value()),
             "disabled" => seg.shown = !bool_val(e.value()),
             _ => {
-                seg.props.insert(name.value().to_string(), prop_val(e.value()));
+                seg.props
+                    .insert(name.value().to_string(), prop_val(e.value()));
             }
         }
     }
@@ -543,14 +563,23 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                     // state 覆盖 = 样式(fg/bg/bold)+ 可选 char(该态下的显示字符)。
                     let st = Style::from_entries(child.entries());
                     let ch = named_str(child, "char");
-                    seg.states.insert(nm, StateSpec { style: st, char: ch });
+                    seg.states.insert(
+                        nm,
+                        StateSpec {
+                            style: st,
+                            char: ch,
+                        },
+                    );
                 }
                 // 附加文字槽:左/中/右。位置字符串是文本,`fg` 可选(缺省跟段走)。
                 "text-left" | "text-middle" | "text-right" => {
                     let Some(text) = first_state_name(child) else {
                         return Err(format!("{} 需要文本(位置字符串)", child.name().value()));
                     };
-                    let attach = AttachText { text, fg: named_color(child, "fg") };
+                    let attach = AttachText {
+                        text,
+                        fg: named_color(child, "fg"),
+                    };
                     match child.name().value() {
                         "text-left" => seg.text_left = Some(attach),
                         "text-middle" => seg.text_middle = Some(attach),
@@ -583,7 +612,10 @@ fn named_color(node: &KdlNode, name: &str) -> Option<Color> {
 
 /// 节点的首个位置参数值(条目无 name 的那个)。
 fn first_value(node: &KdlNode) -> Option<&KdlValue> {
-    node.entries().iter().find(|e| e.name().is_none()).map(|e| e.value())
+    node.entries()
+        .iter()
+        .find(|e| e.name().is_none())
+        .map(|e| e.value())
 }
 
 /// state 节点的名字 = 首个位置参数(字符串)。
@@ -599,7 +631,9 @@ fn parse_separators(node: &KdlNode) -> Separators {
     let mut s = Separators::default();
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
-            let Some(v) = first_value(child) else { continue };
+            let Some(v) = first_value(child) else {
+                continue;
+            };
             let Some(ch) = str_val(v) else { continue };
             match child.name().value() {
                 "segment" => s.segment = ch,
@@ -645,7 +679,11 @@ segments {
 "#;
 
 static EMPTY_SEG: Segment = Segment {
-    style: Style { fg: Color::Default, bg: Color::Default, bold: false },
+    style: Style {
+        fg: Color::Default,
+        bg: Color::Default,
+        bold: false,
+    },
     states: BTreeMap::new(),
     content: None,
     icon: None,
@@ -661,8 +699,16 @@ static EMPTY_SEG: Segment = Segment {
 /// 合并:上层非 Default 字段覆盖下层(三段回退末端)。
 fn merge_style(over: &Style, base: &Style) -> Style {
     Style {
-        fg: if over.fg == Color::Default { base.fg.clone() } else { over.fg.clone() },
-        bg: if over.bg == Color::Default { base.bg.clone() } else { over.bg.clone() },
+        fg: if over.fg == Color::Default {
+            base.fg.clone()
+        } else {
+            over.fg.clone()
+        },
+        bg: if over.bg == Color::Default {
+            base.bg.clone()
+        } else {
+            over.bg.clone()
+        },
         bold: over.bold || base.bold,
     }
 }
@@ -715,7 +761,10 @@ mod tests {
     #[test]
     fn parses_joined_element_and_disabled() {
         // "dir_joined" 同底贴合; 显式 #false 的段被跳过。
-        let c = Config::parse("layout {\n  left {\n    line { dir_joined #true; vcs #true; time #false }\n  }\n}").unwrap();
+        let c = Config::parse(
+            "layout {\n  left {\n    line { dir_joined #true; vcs #true; time #false }\n  }\n}",
+        )
+        .unwrap();
         assert_eq!(c.layout.left[0][0], Element::Joined("dir".into()));
         assert_eq!(c.layout.left[0].len(), 2, "#false 的 time 应被跳过");
     }
@@ -732,7 +781,10 @@ mod tests {
         .unwrap();
         let d = c.segment("dir");
         assert_eq!(d.style.fg, Color::Xterm(39));
-        assert_eq!(d.props["shorten-strategy"], Prop::Str("truncate_to_unique".into()));
+        assert_eq!(
+            d.props["shorten-strategy"],
+            Prop::Str("truncate_to_unique".into())
+        );
         assert_eq!(d.states["SHORTENED"].style.fg, Color::Xterm(103));
         assert!(d.states["ANCHOR"].style.bold);
     }
@@ -745,9 +797,20 @@ mod tests {
                segments { dir fg=39 { state SHORTENED fg=103 } }"#,
         )
         .unwrap();
-        assert_eq!(c.segment("dir").effective_style(Some("SHORTENED"), &c.defaults).fg, Color::Xterm(103));
-        assert_eq!(c.segment("dir").effective_style(None, &c.defaults).fg, Color::Xterm(39));
-        assert_eq!(c.segment("nope").effective_style(None, &c.defaults).fg, Color::Xterm(200));
+        assert_eq!(
+            c.segment("dir")
+                .effective_style(Some("SHORTENED"), &c.defaults)
+                .fg,
+            Color::Xterm(103)
+        );
+        assert_eq!(
+            c.segment("dir").effective_style(None, &c.defaults).fg,
+            Color::Xterm(39)
+        );
+        assert_eq!(
+            c.segment("nope").effective_style(None, &c.defaults).fg,
+            Color::Xterm(200)
+        );
     }
 
     #[test]
@@ -755,12 +818,28 @@ mod tests {
         let c = Config::default_lean().unwrap();
         assert!(!c.segments.is_empty());
         assert_eq!(c.layout.left.len(), 1, "lean 左侧 header 只一行");
-        assert_eq!(c.layout.left[0], vec![Element::Seg("dir".into()), Element::Seg("vcs".into())]);
-        assert_eq!(c.layout.right[0], vec![Element::Seg("status".into()), Element::Seg("command_execution_time".into()), Element::Seg("background_jobs".into())]);
+        assert_eq!(
+            c.layout.left[0],
+            vec![Element::Seg("dir".into()), Element::Seg("vcs".into())]
+        );
+        assert_eq!(
+            c.layout.right[0],
+            vec![
+                Element::Seg("status".into()),
+                Element::Seg("command_execution_time".into()),
+                Element::Seg("background_jobs".into())
+            ]
+        );
         assert!(c.segment("dir").props.contains_key("shorten-strategy"));
         // prompt_char 段仍在(供输入行前缀上色),但不在 header 布局里。
         assert_eq!(c.segment("prompt_char").style.fg, Color::Xterm(76));
-        assert!(!c.layout.left.iter().flatten().any(|e| matches!(e, Element::Seg(s) if s == "prompt_char")));
+        assert!(
+            !c.layout
+                .left
+                .iter()
+                .flatten()
+                .any(|e| matches!(e, Element::Seg(s) if s == "prompt_char"))
+        );
         assert!(c.layout.add_newline);
     }
 

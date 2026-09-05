@@ -1,21 +1,21 @@
-//! 渲染器(第一单元):把 KDL 配置驱动成多行 header 文本。
+//! 渲染器：把 KDL 配置驱动成多行 header 文本。
 //!
-//! 本单元只做最小闭环,不接分隔符/背景块/帧/图标(那些是后续单元):
-//! - **几何**:按 [`Config::layout`] 的行结构,逐行"左段串 + 右段右对齐"。
-//! - **段**:只有 `dir`/`vcs`/`status`/`prompt_char` 四个的最简内容(纯文本)。
-//! - **色**:用配置的 `fg`/`bg`(三段回退),产出 256/真彩/粗体 ANSI。
+//! - **几何**：按 [`Config::layout`] 的行结构，逐行「左段串 + 右段右对齐」。
+//! - **段**：内置段（dir/vcs/status/time/command_execution_time/background_jobs/
+//!   prompt_char/os/text）按配置渲染，可叠加左/中/右附加文字。
+//! - **色**：配置的 `fg`/`bg`（三段回退）+ 段间 powerline 分隔符与背景块。
 //!
-//! 输入:配置 + 当前状态(cwd/git/exit)。输出:header 的 ANSI 字符串。
+//! 输入：配置 + 当前状态（cwd/git/exit）。输出：header 的 ANSI 字符串。
 
 use std::fmt::Write as _;
 
-use std::cell::RefCell;
-use unicode_width::UnicodeWidthChar;
 use crate::config::{AttachText, Color, Config, Element, Style};
 use crate::theme::{GitStatus, HeaderInfo};
+use std::cell::RefCell;
+use unicode_width::UnicodeWidthChar;
 
-/// 输入行前缀(配置驱动):`frame.last_prefix` + `prompt_char` 内容;`width` 是它的
-/// 显示宽度,engine 用它生成等宽占位符(占位符宽度 = 前缀宽度,几何自洽)。
+/// 输入行前缀:`frame.last_prefix` + `prompt_char` 内容;`width` 是它的显示宽度,
+/// 引擎据此生成等宽占位符。
 pub struct InputPrefix {
     pub text: String,
     pub width: usize,
@@ -58,8 +58,8 @@ pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
 }
 
 /// 校验 prompt_char:凡配了 char 的 state(如 ERROR)必须与正常态等宽。
-/// 提示符宽度在启动期就得确定(占位符协议按它生成),不等宽会破几何;
-/// 调用方(引擎启动)收到 Err 后应报错并回退默认提示符。
+/// 提示符宽度在启动期就得确定(占位符协议按它生成),不等宽会破坏几何,
+/// 由引擎启动期报错处理。
 pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
     let pc = config.segment("prompt_char");
     let base = prefix_width(config, None);
@@ -84,7 +84,12 @@ struct SegmentText {
 
 /// 渲染 header 为**逐行内容**(每行=左段串+右段右对齐,不含光标/清屏/换行)。
 /// 供 theme 层逐行 `\r\e[K` + 内容 + `\r\n` 画到终端。
-pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitStatus>, cols: usize) -> Vec<String> {
+pub fn render_header_lines(
+    config: &Config,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+    cols: usize,
+) -> Vec<String> {
     let layout = &config.layout;
     let left = &layout.left;
     let right = &layout.right;
@@ -92,8 +97,14 @@ pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitS
     let frame = &config.frame;
     (0..lines)
         .map(|i| {
-            let l = left.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
-            let r = right.get(i).map(|seg| render_row(config, seg, info, vcs)).unwrap_or_default();
+            let l = left
+                .get(i)
+                .map(|seg| render_row(config, seg, info, vcs))
+                .unwrap_or_default();
+            let r = right
+                .get(i)
+                .map(|seg| render_row(config, seg, info, vcs))
+                .unwrap_or_default();
             // 每行帧:首行 first,其余 header 行 newline。
             let (prefix, suffix) = if i == 0 {
                 (&frame.first_prefix, &frame.first_suffix)
@@ -107,7 +118,12 @@ pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitS
                 row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
             }
             // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
-            let body = assemble_row(&l, &r, cols.saturating_sub(pre_w + suf_w), &config.separators);
+            let body = assemble_row(
+                &l,
+                &r,
+                cols.saturating_sub(pre_w + suf_w),
+                &config.separators,
+            );
             row.push_str(&body);
             if !suffix.text.is_empty() {
                 row.push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
@@ -118,14 +134,21 @@ pub fn render_header_lines(config: &Config, info: &HeaderInfo, vcs: Option<&GitS
 }
 
 /// 渲染一行:左段串(依次拼接)、右段右对齐。
-fn render_row(config: &Config, elements: &[Element], info: &HeaderInfo, vcs: Option<&GitStatus>) -> Vec<SegmentText> {
+fn render_row(
+    config: &Config,
+    elements: &[Element],
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+) -> Vec<SegmentText> {
     elements
         .iter()
         .map(|el| match el {
             Element::Seg(name) => render_segment(config, name, info, vcs),
             Element::Joined(name) => render_segment(config, name, info, vcs),
             Element::Text(t) => {
-                let mut style = config.segment("text").effective_style(None, &config.defaults);
+                let mut style = config
+                    .segment("text")
+                    .effective_style(None, &config.defaults);
                 if style.bg == Color::Default {
                     style.bg = if config.defaults.bg != Color::Default {
                         config.defaults.bg.clone()
@@ -133,14 +156,22 @@ fn render_row(config: &Config, elements: &[Element], info: &HeaderInfo, vcs: Opt
                         Color::Xterm(0)
                     };
                 }
-                SegmentText { text: paint(&expand_env(t), &style), style }
+                SegmentText {
+                    text: paint(&expand_env(t), &style),
+                    style,
+                }
             }
         })
         .collect()
 }
 
 /// 渲染单个段。返回的 `text` 已是**上色后的 ANSI**;`style` 供段间分隔符/块背景。
-fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&GitStatus>) -> SegmentText {
+fn render_segment(
+    config: &Config,
+    name: &str,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+) -> SegmentText {
     let seg = config.segment(name);
     let mut style = seg.effective_style(None, &config.defaults);
     // 保证段都有背景(哪怕默认色):无显式 bg → defaults.bg → 内置默认背景。
@@ -153,7 +184,13 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
     }
     let text = match name {
         "dir" => dir_seg_text(config, info, seg, &style),
-        "vcs" => if seg.content.is_some() { paint(&value_of(seg.content.as_deref(), vcs_text(vcs)), &style) } else { paint(&vcs_text(vcs), &style) },
+        "vcs" => {
+            if seg.content.is_some() {
+                paint(&value_of(seg.content.as_deref(), vcs_text(vcs)), &style)
+            } else {
+                paint(&vcs_text(vcs), &style)
+            }
+        }
         "status" => paint(&status_text(info), &style),
         "prompt_char" => {
             // 提示符字符随退出码进 ERROR state(char/样式都可按态配)。
@@ -182,8 +219,8 @@ fn render_segment(config: &Config, name: &str, info: &HeaderInfo, vcs: Option<&G
         }
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
-    // 段图标(VISUAL_IDENTIFIER):配置 `icon` 优先,否则按段名内置默认;vcs 段按
-    // 远端域名选图标(如 github 、aur )。图标+空格前缀,用段样式上色。
+    // 段图标:配置 `icon` 优先,否则按段名内置默认;vcs 段按
+    // 远端域名选图标(如 github 、aur )。图标 + 空格前缀,用段样式上色。
     let icon = seg.icon.clone().filter(|i| !i.is_empty()).or_else(|| {
         if name == "vcs" {
             vcs.as_ref().map(|v| vcs_remote_icon(config, &v.remote_url))
@@ -237,9 +274,9 @@ fn vcs_remote_icon(config: &Config, remote_url: &str) -> String {
 fn default_icon(name: &str) -> Option<String> {
     match name {
         "os" | "os_icon" => Some(os_icon()),
-        "dir" => Some("\u{f07c}".into()),            // 
-        "vcs" => Some("\u{f1d3}".into()),            // 
-        "time" => Some("\u{f017}".into()),           // 
+        "dir" => Some("\u{f07c}".into()),             // 
+        "vcs" => Some("\u{f1d3}".into()),             // 
+        "time" => Some("\u{f017}".into()),            // 
         "background_jobs" => Some("\u{f013}".into()), // 齿轮 
         _ => None,
     }
@@ -263,18 +300,21 @@ fn detect_os_icon() -> String {
     let uname = std::env::consts::OS;
     if uname != "linux" {
         return match uname {
-            "macos" => "\u{f179}".into(),  // 
+            "macos" => "\u{f179}".into(),   // 
             "windows" => "\u{f17a}".into(), // 
-            _ => "\u{f17c}".into(),        // 默认 linux 图标
+            _ => "\u{f17c}".into(),         // 默认 linux 图标
         };
     }
     // Linux:读 /etc/os-release 的 ID(子串匹配,对齐 p10k case *arch* 等)。
     let id = std::fs::read_to_string("/etc/os-release")
         .ok()
         .and_then(|s| {
-            s.lines()
-                .find(|l| l.starts_with("ID="))
-                .map(|l| l.trim_start_matches("ID=").trim().trim_matches('"').to_string())
+            s.lines().find(|l| l.starts_with("ID=")).map(|l| {
+                l.trim_start_matches("ID=")
+                    .trim()
+                    .trim_matches('"')
+                    .to_string()
+            })
         })
         .unwrap_or_default();
     let icon = if id.contains("arch") {
@@ -328,10 +368,15 @@ fn format_duration(secs: f64) -> String {
 }
 
 /// `dir` 段文本:折叠(truncate_to_unique)+ 逐部件按类别上色。
-/// - 锚(`~`/当前目录/marker 祖先):`ANCHOR` state(39 粗体)
-/// - 缩短: `SHORTENED` state(103)
+/// - 锚(`~`/当前目录/marker 祖先):`ANCHOR` state
+/// - 缩短: `SHORTENED` state
 /// - 普通:段默认;`/` 分隔符本色(不随部件)。
-fn dir_seg_text(config: &Config, info: &HeaderInfo, seg: &crate::config::Segment, default: &Style) -> String {
+fn dir_seg_text(
+    config: &Config,
+    info: &HeaderInfo,
+    seg: &crate::config::Segment,
+    default: &Style,
+) -> String {
     let shorten = shorten_len(seg);
     let cwd = std::path::Path::new(&info.cwd);
     let home = std::env::var("HOME").ok();
@@ -410,7 +455,7 @@ fn expand_env(s: &str) -> String {
     out
 }
 
-/// git 文本:分支 + 计数(最简,图标/分色留给后续单元)。
+/// git 文本:分支 + 计数。
 fn vcs_text(vcs: Option<&GitStatus>) -> String {
     let Some(v) = vcs else { return String::new() };
     let mut s = String::new();
@@ -447,7 +492,7 @@ fn vcs_text(vcs: Option<&GitStatus>) -> String {
     s
 }
 
-/// 退出码状态:✓ / ✘ N(最简)。
+/// 退出码状态:✓ / ✘ N。
 fn status_text(info: &HeaderInfo) -> String {
     match info.exit_code {
         None => String::new(),
@@ -462,7 +507,12 @@ fn value_of<'a>(content: Option<&'a str>, default: impl Into<String>) -> String 
 }
 
 /// 把一行拼成 ANSI:左段串(段间 `sub`/`segment` 分隔、末段 `end` 端符)+ 右段右对齐。
-fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: &crate::config::Separators) -> String {
+fn assemble_row(
+    left: &[SegmentText],
+    right: &[SegmentText],
+    cols: usize,
+    seps: &crate::config::Separators,
+) -> String {
     let mut out = String::new();
     let mut prev_bg = Color::Default;
     let mut has_left = false;
@@ -503,7 +553,11 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
     if !parts.is_empty() {
         // 右段行首端符(左三角 ):前景=右段**背景色**(指向右段);画在 gap 上。
         if !seps.right_start.is_empty() {
-            right_str.push_str(&arrow(&seps.right_start, parts[0].style.bg.clone(), Color::Default));
+            right_str.push_str(&arrow(
+                &seps.right_start,
+                parts[0].style.bg.clone(),
+                Color::Default,
+            ));
         }
         for (i, s) in parts.iter().enumerate() {
             if i > 0 {
@@ -518,7 +572,11 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
                             right_str.push_str(&paint(&seps.right_sub, &s.style));
                         }
                     } else if !seps.right_segment.is_empty() {
-                        right_str.push_str(&arrow(&seps.right_segment, s.style.bg.clone(), prev_bg));
+                        right_str.push_str(&arrow(
+                            &seps.right_segment,
+                            s.style.bg.clone(),
+                            prev_bg,
+                        ));
                     }
                 }
             }
@@ -530,7 +588,11 @@ fn assemble_row(left: &[SegmentText], right: &[SegmentText], cols: usize, seps: 
         if cols > rw {
             let start = cols - rw; // 右段起点(0-based)
             if start > lw {
-                let gap_char = if seps.gap.is_empty() { " ".to_string() } else { seps.gap.clone() };
+                let gap_char = if seps.gap.is_empty() {
+                    " ".to_string()
+                } else {
+                    seps.gap.clone()
+                };
                 out.push_str(&gap_char.repeat(start - lw));
             }
         }
@@ -585,7 +647,7 @@ fn paint(text: &str, style: &Style) -> String {
     s
 }
 
-/// 几个常用名字色映射到 256(第一单元最小;完整色表后续)。
+/// 标准 16 色名映射到 256 色索引。
 fn named_256(name: &str) -> u8 {
     match name {
         "black" => 0,
@@ -633,7 +695,12 @@ mod tests {
     use super::*;
 
     fn info(cwd: &str, code: Option<i32>) -> HeaderInfo {
-        HeaderInfo { exit_code: code, cwd: cwd.to_string(), exec_seconds: 0.0, jobs: 0 }
+        HeaderInfo {
+            exit_code: code,
+            cwd: cwd.to_string(),
+            exec_seconds: 0.0,
+            jobs: 0,
+        }
     }
 
     #[test]
@@ -643,7 +710,10 @@ mod tests {
         // header 只一行行:含目录 + ✓;prompt_char(❯)不在 header(由 render_prompt 画)。
         assert!(h.contains("tmp"), "header 应含目录,实际：{h:?}");
         assert!(h.contains("✓"));
-        assert!(!h.contains('❯'), "输入行前缀 ❯ 由 render_prompt 画，不应在 header");
+        assert!(
+            !h.contains('❯'),
+            "输入行前缀 ❯ 由 render_prompt 画，不应在 header"
+        );
         assert_eq!(h.split("\r\n").count(), 1, "lean header 一行");
     }
 
@@ -664,17 +734,19 @@ mod tests {
         )
         .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(h.contains("some text"), "line 里的 text 静态文本应渲染，实际：{h:?}");
+        assert!(
+            h.contains("some text"),
+            "line 里的 text 静态文本应渲染，实际：{h:?}"
+        );
     }
 
     #[test]
     fn line_text_expands_env() {
         // text 里的 ${VAR}/$VAR 展开为环境变量。
         let home = std::env::var("HOME").unwrap_or_default();
-        let cfg = Config::parse(
-            "layout {\n  left {\n    line { text \"home=${HOME} $USER\" }\n  }\n}",
-        )
-        .unwrap();
+        let cfg =
+            Config::parse("layout {\n  left {\n    line { text \"home=${HOME} $USER\" }\n  }\n}")
+                .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(h.contains(&home), "text 应展开环境变量，实际：{h:?}");
     }
@@ -698,7 +770,11 @@ mod tests {
         )
         .unwrap();
         let p = input_prefix(&cfg, None);
-        assert_eq!(p.width, 4, "╰─❯ 空格 应宽4, 实际 width={} text={:?}", p.width, p.text);
+        assert_eq!(
+            p.width, 4,
+            "╰─❯ 空格 应宽4, 实际 width={} text={:?}",
+            p.width, p.text
+        );
         assert!(p.text.contains('╰'), "前缀应含帧 last-prefix");
         assert!(p.text.contains('❯'), "前缀应含 prompt_char");
         assert!(p.text.ends_with(' '), "前缀应以空格收尾");
@@ -726,7 +802,8 @@ mod tests {
     }
 
     #[test]
-    fn background_blocks_and_powerline_arrow() {        // dir/vcs 都有背景,且不同 → 段间画 ``(fg=前段bg, bg=后段bg)。
+    fn background_blocks_and_powerline_arrow() {
+        // dir/vcs 都有背景,且不同 → 段间画 ``(fg=前段bg, bg=后段bg)。
         let cfg = Config::parse(
             "layout { left { line { dir #true; vcs #true } } }\n\
              segments { dir { bg 39 } }\n",
@@ -739,7 +816,11 @@ mod tests {
         cfg.segments.insert(
             "vcs".into(),
             crate::config::Segment {
-                style: crate::config::Style { fg: Color::Xterm(0), bg: Color::Xterm(76), bold: false },
+                style: crate::config::Style {
+                    fg: Color::Xterm(0),
+                    bg: Color::Xterm(76),
+                    bold: false,
+                },
                 ..Default::default()
             },
         );
@@ -759,7 +840,10 @@ mod tests {
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
         assert!(h.contains("\x1b[48;5;39m"), "dir 应有背景块 39");
         assert!(h.contains("\x1b[48;5;76m"), "vcs 应有背景块 76");
-        assert!(h.contains('\u{e0b0}'), "异底段间应画可配置的 segment 分隔符()");
+        assert!(
+            h.contains('\u{e0b0}'),
+            "异底段间应画可配置的 segment 分隔符()"
+        );
     }
 
     #[test]
@@ -771,7 +855,10 @@ mod tests {
         )
         .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(h.contains("\x1b[38;5;76m╭─"), "首行前缀用帧级 fg,实际:{h:?}");
+        assert!(
+            h.contains("\x1b[38;5;76m╭─"),
+            "首行前缀用帧级 fg,实际:{h:?}"
+        );
         // 输入行前缀:last-prefix 用子节点色(196),prompt_char ❯ 缺省无色。
         let p = input_prefix(&cfg, None);
         assert!(
@@ -862,7 +949,10 @@ mod tests {
         )
         .unwrap();
         let h = render_header_lines(&only_icon, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(!h.contains('M'), "仅 icon 无文字时 text-middle 应不渲染,实际:{h:?}");
+        assert!(
+            !h.contains('M'),
+            "仅 icon 无文字时 text-middle 应不渲染,实际:{h:?}"
+        );
 
         let only_text = Config::parse(
             "layout { left { line { foo #true } } }\n\
@@ -870,7 +960,10 @@ mod tests {
         )
         .unwrap();
         let h = render_header_lines(&only_text, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(!h.contains('M'), "仅文字无 icon 时 text-middle 应不渲染,实际:{h:?}");
+        assert!(
+            !h.contains('M'),
+            "仅文字无 icon 时 text-middle 应不渲染,实际:{h:?}"
+        );
     }
 
     #[test]

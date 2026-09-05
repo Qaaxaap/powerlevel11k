@@ -211,9 +211,9 @@ impl Index {
             for pair in self.splits.windows(2) {
                 let (from, to) = (pair[0], pair[1]);
                 let (shard, tail) = std::mem::take(&mut rest).split_at_mut(to - from);
-                handles.push(scope.spawn(move || {
-                    scan::scan_dirs(shard, entries, root_fd, caps, opts)
-                }));
+                handles.push(
+                    scope.spawn(move || scan::scan_dirs(shard, entries, root_fd, caps, opts)),
+                );
                 rest = tail;
             }
             for h in handles {

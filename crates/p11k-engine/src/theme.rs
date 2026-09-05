@@ -1,10 +1,10 @@
 //! 主题绘制：引擎在 prompt 钩子时刻向真实终端输出主题 header。
 //!
-//! 分工（B 架构核心）：shell 只给一个占位 prompt（宽度 = 引擎前缀宽度），
+//! 分工：shell 只给一个占位 prompt（宽度 = 引擎前缀宽度），
 //! 让 zle 的几何自洽。引擎不解析 pty 输出的 ANSI，只做字节透传 + 光标定位：
 //! - `render_header_cfg`：在占位符透传之前画多行 header（行内容由
 //!   [`crate::render::render_header_lines`] 按 KDL 配置生成）。
-//! - `render_prompt`：在占位符透传之后，用 `\r` + 前缀顶掉占位符（输入行
+//! - `render_prompt`：在占位符透传之后，用 `\r` + 前缀覆盖占位符（输入行
 //!   这一行延后绘制）。前缀可见宽度与占位符恒等，zle 重绘列偏移对齐。
 
 use std::io::{self, Write};
@@ -13,7 +13,7 @@ use std::io::{self, Write};
 pub struct HeaderInfo {
     pub exit_code: Option<i32>,
     pub cwd: String,
-    /// 上一条命令耗时(秒,engine 计时:回车→本次 precmd);首 prompt 为 0。
+    /// 上一条命令耗时(秒,引擎计时:回车 → 本次 precmd);首 prompt 为 0。
     pub exec_seconds: f64,
     /// 后台任务数(shell 宣告)。
     pub jobs: usize,
@@ -83,7 +83,7 @@ pub fn redraw_header_cfg(
     Ok(())
 }
 
-/// 顶掉占位 prompt：保存光标、`\r` 回输入行行首画 `prefix`、恢复光标。
+/// 覆盖占位 prompt：保存光标、`\r` 回输入行行首画 `prefix`、恢复光标。
 ///
 /// 触发时机：`p` 宣告（zle-line-init）——zle 已渲染完占位 prompt，光标停在
 /// 占位符之后。`\e[s` 保存光标、`\r` 回列 0 逐列覆盖占位符字符、`\e[u` 恢复
@@ -91,7 +91,7 @@ pub fn redraw_header_cfg(
 /// 被恢复到 buffer 末尾，不与 zle 的光标模型冲突。
 pub fn render_prompt(out: &mut dyn Write, prefix: &str) -> io::Result<()> {
     write!(out, "\x1b[s\r{prefix}\x1b[u")?;
-    // OSC 133 B：prompt 结束标记，告诉 kitty 光标已停在输入位置（prompt 就绪），
+    // OSC 133 B：prompt 结束标记，告知终端光标已停在输入位置（prompt 就绪），
     // 关窗不再弹"有程序在运行"的确认框（对齐 p10k _p9k_prompt_suffix）。
     write!(out, "\x1b]133;B\x07")?;
     Ok(())
@@ -108,11 +108,11 @@ mod tests {
         let s = String::from_utf8_lossy(&out);
         assert!(
             s.starts_with("\x1b[s\r❯ "),
-            "应保存光标、回行首画前缀顶掉占位符、再恢复光标"
+            "应保存光标、回行首画前缀覆盖占位符、再恢复光标"
         );
         assert!(
             s.ends_with("\x1b]133;B\x07"),
-            "应以 OSC 133 B 标记结尾（告知 kitty prompt 就绪）"
+            "应以 OSC 133 B 标记结尾（告知终端 prompt 就绪）"
         );
     }
 }
