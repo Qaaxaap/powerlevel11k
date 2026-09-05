@@ -99,11 +99,11 @@ pub fn render_header_lines(
         .map(|i| {
             let l = left
                 .get(i)
-                .map(|seg| render_row(config, seg, info, vcs))
+                .map(|seg| render_row(config, seg, info, vcs, false))
                 .unwrap_or_default();
             let r = right
                 .get(i)
-                .map(|seg| render_row(config, seg, info, vcs))
+                .map(|seg| render_row(config, seg, info, vcs, true))
                 .unwrap_or_default();
             // 每行帧:首行 first,其余 header 行 newline。
             let (prefix, suffix) = if i == 0 {
@@ -139,12 +139,13 @@ fn render_row(
     elements: &[Element],
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
+    right: bool,
 ) -> Vec<SegmentText> {
     elements
         .iter()
         .map(|el| match el {
-            Element::Seg(name) => render_segment(config, name, info, vcs),
-            Element::Joined(name) => render_segment(config, name, info, vcs),
+            Element::Seg(name) => render_segment(config, name, info, vcs, right),
+            Element::Joined(name) => render_segment(config, name, info, vcs, right),
             Element::Text(t) => {
                 let mut style = config
                     .segment("text")
@@ -171,6 +172,7 @@ fn render_segment(
     name: &str,
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
+    right: bool,
 ) -> SegmentText {
     let seg = config.segment(name);
     let mut style = seg.effective_style(None, &config.defaults);
@@ -256,7 +258,9 @@ fn render_segment(
     if let Some(l) = &seg.text_left {
         out.push_str(&paint_attach(&style, l));
     }
-    out.push_str(&icon_text);
+    if !right {
+        out.push_str(&icon_text);
+    }
     if let Some(m) = &seg.text_middle {
         if !icon_text.is_empty() && !text.is_empty() {
             out.push_str(&paint_attach(&style, m));
@@ -265,6 +269,9 @@ fn render_segment(
     out.push_str(&text);
     if let Some(r) = &seg.text_right {
         out.push_str(&paint_attach(&style, r));
+    }
+    if right {
+        out.push_str(&icon_text);
     }
     SegmentText { text: out, style }
 }
