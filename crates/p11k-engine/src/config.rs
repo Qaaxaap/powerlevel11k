@@ -123,6 +123,8 @@ pub struct Layout {
     pub add_newline: bool,
     /// 宽松布局:连续 prompt 之间留一个空行(p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`)。
     pub prompt_add_newline: bool,
+    /// transient prompt:命令提交时收起(清空)header,只留输入行(p10k `TRANSIENT_PROMPT`)。
+    pub transient_prompt: bool,
 }
 
 /// 分隔符/端符族(可配置字符,powerline 风格)。
@@ -491,6 +493,9 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
                 }
                 "prompt-add-newline" => {
                     layout.prompt_add_newline = first_value(child).map(bool_val).unwrap_or(false);
+                }
+                "transient-prompt" => {
+                    layout.transient_prompt = first_value(child).map(bool_val).unwrap_or(false);
                 }
                 _ => {}
             }

@@ -205,6 +205,17 @@ if [[ -n "${widgets[zle-keymap-select]:-}" && "${widgets[zle-keymap-select]}" !=
   _p11k_user_vi_mode=${widgets[zle-keymap-select]#user:}
 fi
 zle -N zle-keymap-select _p11k_vi_mode
+# transient:命令提交(zle-line-finish)时宣告 e,引擎据此折叠(清空)header。
+_p11k_line_finish() {
+  if [[ -n "${_p11k_user_line_finish:-}" && "${widgets[zle-line-finish]}" == user:_p11k_line_finish ]]; then
+    "$_p11k_user_line_finish"
+  fi
+  print -r -- "e" >> "$P11K_ANNOUNCE"
+}
+if [[ -n "${widgets[zle-line-finish]:-}" && "${widgets[zle-line-finish]}" != user:_p11k_line_finish ]]; then
+  _p11k_user_line_finish=${widgets[zle-line-finish]#user:}
+fi
+zle -N zle-line-finish _p11k_line_finish
 # resize 宣告：SIGWINCH → zsh 延迟执行 TRAPWINCH，
 # 检测到变化宣告 `r`，引擎清屏重画 prompt 窗口。
 _p11k_last_cols=$COLUMNS
@@ -554,9 +565,30 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        // prompt 窗口（announce 驱动）。在 poll/透传之前处理：fish 的
-        // resize 里 `r` 宣告和占位符输出几乎同时，先 drain 让 pending 就位，
-        // 再透传 pty 时字节匹配占位符（否则占位符先透传、pending 后设，漏匹配）。
+        let mut fds = [
+            libc::pollfd {
+                fd: libc::STDIN_FILENO,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: master_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        // 5ms 超时：兼作 announce 文件的轮询节奏。
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, 5) };
+        if n < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err.into());
+        }
+
+        // prompt 窗口（announce 驱动）。在透传之前处理：先 drain 让 h/p/r/v/e 就位，
+        // 尤其 transient 的 `e` 必须早于 pty 透传(否则命令输出抢先上屏)。
         // - `h`（precmd 宣告，shell 在等 ack）：画 header，touch ack 放行。
         // - `p`（zle-line-init 宣告）：回行首画前缀覆盖占位符。
         // - `r`（resize 宣告）：重画 prompt 窗口。
@@ -683,29 +715,21 @@ fn main() -> anyhow::Result<()> {
                         stdout.flush()?;
                     }
                 }
+                AnnMsg::Exec => {
+                    // transient prompt:命令提交后清空 header 行(折叠成空白),只留输入行。
+                    if config.layout.transient_prompt {
+                        let n = config.layout.left.len().max(config.layout.right.len());
+                        if n > 0 {
+                            write!(stdout, "\x1b[s\x1b[{}A\r", n)?;
+                            for _ in 0..n {
+                                write!(stdout, "\x1b[K\x1b[1B")?;
+                            }
+                            write!(stdout, "\x1b[u")?;
+                            stdout.flush()?;
+                        }
+                    }
+                }
             }
-        }
-
-        let mut fds = [
-            libc::pollfd {
-                fd: libc::STDIN_FILENO,
-                events: libc::POLLIN,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: master_fd,
-                events: libc::POLLIN,
-                revents: 0,
-            },
-        ];
-        // 5ms 超时：兼作 announce 文件的轮询节奏。
-        let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, 5) };
-        if n < 0 {
-            let err = io::Error::last_os_error();
-            if err.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(err.into());
         }
 
         // 真实终端输入 → pty。
@@ -875,6 +899,8 @@ enum AnnMsg {
     Resize,
     /// `v\t<keymap>`：zle-keymap-select 宣告，更新编辑模式并重画 header。
     VimMode(String),
+    /// `e`：zle-line-finish 宣告(命令已提交)，transient 时清空 header。
+    Exec,
 }
 
 /// 异步 git 请求。
@@ -947,6 +973,7 @@ fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
                     .unwrap_or_default();
                 out.push(AnnMsg::VimMode(mode));
             }
+            Some("e") => out.push(AnnMsg::Exec),
             _ => continue,
         }
     }

@@ -35,6 +35,8 @@ are ignored (forward-compatible) and skipped.
 - For an empty row, declare `line {}`.
 - `layout { prompt-add-newline #true … }` inserts a blank line between
   consecutive prompts (p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`, "loose" layout).
+- `layout { transient-prompt #true … }` folds the header to a blank line on
+  command submit, leaving only the input line (p10k `TRANSIENT_PROMPT`).
 
 ## Segments
 
@@ -210,6 +212,8 @@ behavior attributes accumulate.
 - 如果您需要空行，请用 `line {}` 进行声明。
 - `layout { prompt-add-newline #true … }` 在连续 prompt 之间插入一个空行
   （p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`，即「宽松」布局）。
+- `layout { transient-prompt #true … }` 命令提交后把 header 折叠成空白行，
+  只留输入行（p10k `TRANSIENT_PROMPT`）。
 
 ## 段
 
