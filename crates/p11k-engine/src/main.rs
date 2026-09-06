@@ -138,6 +138,8 @@ _p11k_pwd=$PWD
 _p11k_precmd() {
   _p11k_status=$?
   _p11k_pwd=$PWD
+  # transient 折叠后 PROMPT 是单行 ❯;这里恢复多行占位(几何回到 header 行数)。
+  PROMPT='__'
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
@@ -206,6 +208,23 @@ if [[ -n "${widgets[zle-keymap-select]:-}" && "${widgets[zle-keymap-select]}" !=
   _p11k_user_vi_mode=${widgets[zle-keymap-select]#user:}
 fi
 zle -N zle-keymap-select _p11k_vi_mode
+# transient:命令提交时把多行 header 折叠成单行 ❯(zsh 独占,依赖 zle reset-prompt)。
+# 时序上 reset-prompt 是同步的,引擎异步画 ❯ 赶不上 zsh 回显,所以这里的单行
+# ❯ 用引擎预计算的 %F 转义(P11K_TRANSIENT_PROMPT)由 zsh 自己渲染。
+_p11k_line_finish() {
+  if [[ -n "${_p11k_user_line_finish:-}" ]] && (( $+functions[$_p11k_user_line_finish] )); then
+    "$_p11k_user_line_finish"
+  fi
+  if [[ -n "${P11K_TRANSIENT_PROMPT:-}" ]]; then
+    PROMPT="$P11K_TRANSIENT_PROMPT"
+    RPROMPT=''
+    zle reset-prompt
+  fi
+}
+if [[ -n "${widgets[zle-line-finish]:-}" && "${widgets[zle-line-finish]}" != user:_p11k_line_finish ]]; then
+  _p11k_user_line_finish=${widgets[zle-line-finish]#user:}
+fi
+zle -N zle-line-finish _p11k_line_finish
 # resize 宣告：SIGWINCH → zsh 延迟执行 TRAPWINCH，
 # 检测到变化宣告 `r`，引擎清屏重画 prompt 窗口。
 _p11k_last_cols=$COLUMNS
@@ -422,6 +441,14 @@ fn main() -> anyhow::Result<()> {
     cmd.cwd(std::env::current_dir()?);
     // 递归标志：内部 shell 及其子进程若再 exec p11k，入口检测到即降级，
     cmd.env("P11K_ENGINE", "1");
+    // transient 是 zsh 独占能力:把引擎预计算的单行提示符(zsh %F 转义)交给 shell,
+    // zle-line-finish 里换 PROMPT + reset-prompt 同步折叠。bash/fish 不读这个变量。
+    if config.layout.transient_prompt && shell == Shell::Zsh {
+        cmd.env(
+            "P11K_TRANSIENT_PROMPT",
+            crate::render::transient_prompt_zsh(&config),
+        );
+    }
 
     // double-fork 孤儿化：内部 shell 脱离引擎进程树（父变 init）。kitty 关闭
     // 窗口时检测的是它 child 的子孙进程，孤儿不在树里 → 不弹"确认关闭"。

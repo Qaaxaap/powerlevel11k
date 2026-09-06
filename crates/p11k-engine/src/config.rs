@@ -123,6 +123,9 @@ pub struct Layout {
     pub add_newline: bool,
     /// 宽松布局:连续 prompt 之间留一个空行(p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`)。
     pub prompt_add_newline: bool,
+    /// 瞬态 prompt:命令提交后把多行 header 折叠成单行 `❯`(p10k `TRANSIENT_PROMPT`)。
+    /// 仅 zsh 支持(依赖 zle reset-prompt),bash/fish 忽略。
+    pub transient_prompt: bool,
 }
 
 /// 分隔符/端符族(可配置字符,powerline 风格)。
@@ -491,6 +494,9 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
                 }
                 "prompt-add-newline" => {
                     layout.prompt_add_newline = first_value(child).map(bool_val).unwrap_or(false);
+                }
+                "transient-prompt" => {
+                    layout.transient_prompt = first_value(child).map(bool_val).unwrap_or(false);
                 }
                 _ => {}
             }

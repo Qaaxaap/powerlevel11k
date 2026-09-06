@@ -35,6 +35,10 @@ are ignored (forward-compatible) and skipped.
 - For an empty row, declare `line {}`.
 - `layout { prompt-add-newline #true … }` inserts a blank line between
   consecutive prompts (p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`, "loose" layout).
+- `layout { transient-prompt #true … }` folds the multi-line header down to
+  a single-line `❯` the moment a command is submitted (p10k
+  `TRANSIENT_PROMPT`). zsh-only: it depends on `zle reset-prompt`, so
+  bash/fish ignore it.
 
 ## Segments
 
@@ -210,6 +214,9 @@ behavior attributes accumulate.
 - 如果您需要空行，请用 `line {}` 进行声明。
 - `layout { prompt-add-newline #true … }` 在连续 prompt 之间插入一个空行
   （p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`，即「宽松」布局）。
+- `layout { transient-prompt #true … }` 在命令提交瞬间把多行 header 折叠成
+  单行 `❯`（p10k `TRANSIENT_PROMPT`）。仅 zsh 支持：依赖 `zle reset-prompt`，
+  bash/fish 会忽略此项。
 
 ## 段
 

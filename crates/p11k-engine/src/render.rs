@@ -61,6 +61,32 @@ pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
     InputPrefix { text, width }
 }
 
+/// transient 折叠时的单行提示符(zsh 格式)。引擎预计算 zsh 的 prompt 转义,
+/// zsh 在 zle-line-finish 里换 PROMPT + reset-prompt 同步折叠(时序实验证明
+/// 引擎异步画赶不上 zsh 的回显)。用 `%F{...}` 原生转义(zsh 自动算零宽度),
+/// 条件表达式 `%(?\x01OK\x01ERR)` 按上一条命令退出码选色。
+pub fn transient_prompt_zsh(config: &Config) -> String {
+    let pc = config.segment("prompt_char");
+    let ch = pc.char_for(None, "❯");
+    let ok = pc.effective_style(None, &config.defaults);
+    let err = pc.effective_style(Some("ERROR"), &config.defaults);
+    // ❯ 后补一个空格,与正常态输入行前缀的间距一致(否则命令回显紧贴 ❯)。
+    let ok_prompt = format!("{}{} ", zsh_fg(&ok.fg), ch);
+    let err_prompt = format!("{}{} ", zsh_fg(&err.fg), ch);
+    format!("%(?\u{1}{}\u{1}{})%f", ok_prompt, err_prompt)
+}
+
+/// Color → zsh 的 `%F{...}` 前景色转义(transient prompt 用)。zsh 原生认识
+/// 这些转义并自动算零宽度,不需要 `%{...%}` 包裹 ANSI。
+fn zsh_fg(c: &Color) -> String {
+    match c {
+        Color::Default => "%f".into(),
+        Color::Xterm(n) => format!("%F{{{n}}}"),
+        Color::Rgb(r, g, b) => format!("%F{{#{r:02x}{g:02x}{b:02x}}}"),
+        Color::Named(n) => format!("%F{{{}}}", named_256(n)),
+    }
+}
+
 /// 校验 prompt_char:凡配了 char 的 state(如 ERROR)必须与正常态等宽。
 /// 提示符宽度在启动期就得确定(占位符协议按它生成),不等宽会破坏几何,
 /// 由引擎启动期报错处理。
@@ -1899,6 +1925,37 @@ mod tests {
         );
         let none = input_prefix(&cfg, None);
         assert!(none.text.contains('>'), "无退出码(首 prompt)按正常态");
+    }
+
+    #[test]
+    fn transient_prompt_zsh_conditional_colors() {
+        // transient 是 zsh 独占:引擎预计算 zsh 的 %F 转义 + 条件换色,❯ 后带空格。
+        let cfg = Config::parse(
+            "layout { left { line { dir #true } } }\n\
+             segments { prompt_char fg=76 {\n  state ERROR fg=196\n} }",
+        )
+        .unwrap();
+        let s = transient_prompt_zsh(&cfg);
+        assert_eq!(
+            s,
+            "%(?\u{1}%F{76}❯ \u{1}%F{196}❯ )%f",
+            "transient 应生成 zsh 条件换色,实际:{s:?}"
+        );
+    }
+
+    #[test]
+    fn transient_prompt_zsh_default_color_no_leading_space() {
+        // prompt_char 没配 fg → Default → %f,不应产生前导空格(否则 ❯ 前多一个空格)。
+        let cfg = Config::parse(
+            "layout { left { line { dir #true } } }\nsegments { prompt_char }",
+        )
+        .unwrap();
+        let s = transient_prompt_zsh(&cfg);
+        assert_eq!(
+            s,
+            "%(?\u{1}%f❯ \u{1}%f❯ )%f",
+            "fg 缺省应生成 %f 且无前导空格,实际:{s:?}"
+        );
     }
 
     #[test]
