@@ -278,6 +278,14 @@ fn render_segment(
         "package" => paint(&package_text(&info.cwd), &style),
         "asdf" => paint(&asdf_text(&info.cwd), &style),
         "fvm" => paint(&fvm_text(&info.cwd), &style),
+        // 云子类/框架/待办:命令存在或文件命中才显示。
+        "google_app_cred" => paint(&google_app_cred_text(), &style),
+        "aws_eb_env" => paint(&aws_eb_env_text(), &style),
+        "laravel_version" => paint(&laravel_version_text(&info.cwd), &style),
+        "rspec_stats" => paint(&rspec_stats_text(&info.cwd), &style),
+        "todo" => paint(&todo_text(), &style),
+        "taskwarrior" => paint(&taskwarrior_text(), &style),
+        "dropbox" => paint(&dropbox_text(), &style),
         // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
         // 整段隐藏。
         "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
@@ -405,6 +413,15 @@ fn default_icon(name: &str) -> Option<String> {
         "haskell_stack" => (!haskell_stack_text().is_empty()).then(|| "\u{e61f}".into()),
         "package" => (!package_text(&current_dir()).is_empty()).then(|| "\u{f8d6}".into()),
         "fvm" => (!fvm_text(&current_dir()).is_empty()).then(|| "F".into()), // Flutter
+        "google_app_cred" => (!google_app_cred_text().is_empty()).then(|| "\u{f7b7}".into()),
+        "aws_eb_env" => (!aws_eb_env_text().is_empty()).then(|| "\u{f1bd}".into()),
+        "laravel_version" => {
+            (!laravel_version_text(&current_dir()).is_empty()).then(|| "\u{e73f}".into())
+        }
+        "rspec_stats" => (!rspec_stats_text(&current_dir()).is_empty()).then(|| "\u{f188}".into()),
+        "todo" => (!todo_text().is_empty()).then(|| "\u{2611}".into()),
+        "taskwarrior" => (!taskwarrior_text().is_empty()).then(|| "\u{f4a0}".into()),
+        "dropbox" => (!dropbox_text().is_empty()).then(|| "\u{f16b}".into()),
         // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
         "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
         "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
@@ -873,7 +890,11 @@ fn package_text(cwd: &str) -> String {
 fn json_str_field(content: &str, key: &str) -> Option<String> {
     let pos = content.find(key)?;
     let rest = &content[pos + key.len()..];
-    let rest = rest.trim_start();
+    let rest = rest
+        .trim_start()
+        .strip_prefix(':')
+        .unwrap_or(rest)
+        .trim_start();
     Some(rest.strip_prefix('"')?.split('"').next()?.to_string())
 }
 
@@ -901,6 +922,95 @@ fn fvm_text(cwd: &str) -> String {
         }
     }
     String::new()
+}
+
+// 批次8:云子类 / 框架 / 待办命令段。
+
+/// 找 cwd 祖先含 `filename` 的目录。
+fn find_up_dir(cwd: &str, filename: &str) -> Option<String> {
+    let mut dir = std::path::Path::new(cwd);
+    loop {
+        if dir.join(filename).exists() {
+            return Some(dir.to_string_lossy().into_owned());
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => return None,
+        }
+    }
+}
+
+/// GCP 服务账号 JSON 的 project_id。
+fn google_app_cred_text() -> String {
+    let Some(path) = env_var("GOOGLE_APPLICATION_CREDENTIALS") else {
+        return String::new();
+    };
+    let Some(content) = std::fs::read_to_string(&path).ok() else {
+        return String::new();
+    };
+    json_str_field(&content, "\"project_id\"").unwrap_or_default()
+}
+
+/// Elastic Beanstalk 环境名(eb list 中带 `* ` 的当前环境行)。
+fn aws_eb_env_text() -> String {
+    run_cmd("eb", &["list"])
+        .unwrap_or_default()
+        .lines()
+        .find(|l| l.trim_start().starts_with("* "))
+        .map(|l| l.trim_start_matches("* ").trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Laravel 版本:祖先含 artisan 时跑 `php artisan --version`。
+fn laravel_version_text(cwd: &str) -> String {
+    let Some(dir) = find_up_dir(cwd, "artisan") else {
+        return String::new();
+    };
+    run_cmd("php", &[&format!("{dir}/artisan"), "--version"])
+        .and_then(|s| s.split_whitespace().nth(2).map(|v| v.to_string()))
+        .unwrap_or_default()
+}
+
+fn count_rs(dir: &std::path::Path) -> usize {
+    let mut n = 0;
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                n += count_rs(&p);
+            } else if p.extension().map(|x| x == "rb").unwrap_or(false) {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// RSpec 完成度:app 与 spec 里 .rb 的比例。
+fn rspec_stats_text(cwd: &str) -> String {
+    let app = count_rs(&std::path::Path::new(cwd).join("app"));
+    let spec = count_rs(&std::path::Path::new(cwd).join("spec"));
+    let total = app + spec;
+    if total == 0 {
+        return String::new();
+    }
+    format!("RSpec: {}%", app * 100 / total)
+}
+
+fn todo_text() -> String {
+    run_cmd("todo.sh", &["-p", "ls"])
+        .and_then(|s| s.lines().last().map(|l| l.to_string()))
+        .unwrap_or_default()
+}
+
+fn taskwarrior_text() -> String {
+    run_cmd("task", &["+PENDING", "count"]).unwrap_or_default()
+}
+
+fn dropbox_text() -> String {
+    run_cmd("dropbox-cli", &["filestatus", "."])
+        .and_then(|s| s.lines().next().map(|l| l.to_string()))
+        .unwrap_or_default()
 }
 
 /// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。

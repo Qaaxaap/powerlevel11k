@@ -124,6 +124,12 @@ What the built-in segments render:
 - `package` — `name@version` from `package.json`.
 - `asdf` — first `.tool-versions` entry.
 - `fvm` — Flutter version from `.fvm/flutter_sdk`.
+- `google_app_cred` — GCP project_id from `GOOGLE_APPLICATION_CREDENTIALS`.
+- `aws_eb_env` — Elastic Beanstalk environment (`eb list`).
+- `laravel_version` — Laravel version (`php artisan --version`).
+- `rspec_stats` — RSpec coverage ratio of `app/` vs `spec/` `.rb`.
+- `todo` / `taskwarrior` / `dropbox` — command-driven segment (hidden when the
+  tool isn't installed).
 - `ssh` — indicator that the session is SSH (icon only).
 - `proxy` — host:port of the first set proxy env var (`all_proxy`/`http_proxy`/…).
 - `docker_machine` — `$DOCKER_MACHINE_NAME`.
@@ -282,6 +288,11 @@ behavior attributes accumulate.
 - `package` — `package.json` 的 `name@version`。
 - `asdf` — `.tool-versions` 首行。
 - `fvm` — `.fvm/flutter_sdk` 的 Flutter 版本。
+- `google_app_cred` — `GOOGLE_APPLICATION_CREDENTIALS` 的 project_id。
+- `aws_eb_env` — Elastic Beanstalk 环境名(`eb list`)。
+- `laravel_version` — Laravel 版本(`php artisan --version`)。
+- `rspec_stats` — `app/` 与 `spec/` `.rb` 比例。
+- `todo` / `taskwarrior` / `dropbox` — 命令驱动段(工具未装时隐藏)。
 - `ssh` — 当前处于 SSH 会话的指示(仅图标)。
 - `proxy` — 第一个已设代理环境变量的 host:port(`all_proxy`/`http_proxy`/…)。
 - `docker_machine` — `$DOCKER_MACHINE_NAME`。
