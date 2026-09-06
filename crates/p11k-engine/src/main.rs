@@ -718,6 +718,18 @@ fn main() -> anyhow::Result<()> {
                     // 用户回车 → 光标离开输入行，异步 git 结果
                     // 不再重画 header（否则 \e[1A 会画错行）。
                     if buf[..n].iter().any(|&b| b == b'\r' || b == b'\n') {
+                        // transient prompt:命令提交瞬间先清掉 header,再放行回车。
+                        if config.layout.transient_prompt && at_prompt && shell == Shell::Zsh {
+                            let nl = config.layout.left.len().max(config.layout.right.len());
+                            if nl > 0 {
+                                write!(stdout, "\x1b[s\x1b[{}A\r", nl)?;
+                                for _ in 0..nl {
+                                    write!(stdout, "\x1b[K\x1b[1B")?;
+                                }
+                                write!(stdout, "\x1b[u")?;
+                                stdout.flush()?;
+                            }
+                        }
                         at_prompt = false;
                         last_enter = Some(std::time::Instant::now()); // 命令开始计时
                     }
