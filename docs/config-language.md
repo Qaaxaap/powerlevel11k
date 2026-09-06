@@ -19,8 +19,19 @@ rules below bind any change to config parsing or rendering.
 ## Structure
 
 Top-level nodes today: `layout` (required), `segments`, `defaults`,
-`separators`, `frame`, `vcs-remote-icons`. Unrecognized top-level nodes
-are ignored (forward-compatible) and skipped.
+`separators`, `frame`, `vcs-remote-icons`, `mode`. Unrecognized top-level
+nodes are ignored (forward-compatible) and skipped.
+
+## Icon mode
+
+- `mode "nerdfont-complete"` (default) / `mode "nerdfont-fontconfig"` /
+  `mode "compatible"` / `mode "ascii"` pick the character set for built-in
+  segment icons (p10k `POWERLEVEL9K_MODE`).
+- `nerdfont-complete` and `nerdfont-fontconfig` use the same Nerd Font
+  glyphs (in p10k they share one case branch), so there are three distinct
+  icon sets. `compatible` uses standard Unicode + Powerline glyphs; `ascii`
+  uses plain text (e.g. `dir` → no icon, `status` → `ok`/`err`, `go` → `go`).
+- User-configured `icon` / `separators` / `frame` always win over the mode.
 
 ## Layout
 
@@ -199,8 +210,19 @@ behavior attributes accumulate.
 ## 结构
 
 目前的顶层节点为:`layout`(必写)、`segments`、`defaults`、
-`separators`、`frame`、`vcs-remote-icons`。未识别的顶层节点会被忽略
+`separators`、`frame`、`vcs-remote-icons`、`mode`。未识别的顶层节点会被忽略
 (向前兼容)并跳过渲染。
+
+## 图标模式
+
+- `mode "nerdfont-complete"`(默认) / `mode "nerdfont-fontconfig"` /
+  `mode "compatible"` / `mode "ascii"` 选择内置段图标的字符集
+  (对齐 p10k `POWERLEVEL9K_MODE`)。
+- `nerdfont-complete` 与 `nerdfont-fontconfig` 用同一套 Nerd Font 字形
+  (p10k 里二者共用一个 case 分支)，因此实际是三套图标集。`compatible`
+  用标准 Unicode + Powerline 字形；`ascii` 用纯文本(如 `dir` 无图标、
+  `status` 显示 `ok`/`err`、`go` 显示 `go`)。
+- 用户显式配置的 `icon` / `separators` / `frame` 始终优先于 mode。
 
 ## 布局
 

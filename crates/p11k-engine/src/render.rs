@@ -218,12 +218,15 @@ fn render_segment(
         "dir" => dir_seg_text(config, info, seg, &style),
         "vcs" => {
             if seg.content.is_some() {
-                paint(&value_of(seg.content.as_deref(), vcs_text(vcs)), &style)
+                paint(
+                    &value_of(seg.content.as_deref(), vcs_text(vcs, &config.mode)),
+                    &style,
+                )
             } else {
-                paint(&vcs_text(vcs), &style)
+                paint(&vcs_text(vcs, &config.mode), &style)
             }
         }
-        "status" => paint(&status_text(info), &style),
+        "status" => paint(&status_text(info, &config.mode), &style),
         "prompt_char" => {
             // 提示符字符随退出码进 ERROR state(char/样式都可按态配)。
             let state = prompt_state(info.exit_code);
@@ -338,7 +341,7 @@ fn render_segment(
         if name == "vcs" {
             vcs.as_ref().map(|v| vcs_remote_icon(config, &v.remote_url))
         } else {
-            default_icon(name)
+            default_icon(name, &config.mode)
         }
     });
     let icon_text = match icon {
@@ -394,94 +397,151 @@ fn vcs_remote_icon(config: &Config, remote_url: &str) -> String {
     "\u{f1d3}".to_string() //  默认 git
 }
 
-/// 内置段图标(无配置 `icon` 时的默认;nerd font)。os 段按发行版动态。
-fn default_icon(name: &str) -> Option<String> {
+/// 一个段的内置图标在三种字体档位下的字符。`nerdfont-complete` 与
+/// `nerdfont-fontconfig` 在 p10k 源码(`internal/icons.zsh`)里是同一 case 分支、
+/// 字形完全相同,故合并为一档 `nerdfont`;`compatible` 用标准 Unicode + Powerline
+/// 字体,`ascii` 纯 ASCII。图标数据集中在 [`icon_triple`] 一张表里。
+#[derive(Clone, Copy)]
+struct IconEntry {
+    nerdfont: &'static str,
+    compatible: &'static str,
+    ascii: &'static str,
+}
+
+/// 内置段图标(无配置 `icon` 时的默认)。按 `mode` 从图标表选字符集。os 段按
+/// 发行版动态,单独分派。
+fn default_icon(name: &str, mode: &crate::config::IconMode) -> Option<String> {
+    if name == "os" || name == "os_icon" {
+        return Some(os_icon(mode));
+    }
+    let e = icon_triple(name)?;
+    Some(icon_by_mode(&e, mode))
+}
+
+/// 图标表按 mode 取一档。
+fn icon_by_mode(e: &IconEntry, mode: &crate::config::IconMode) -> String {
+    match mode {
+        crate::config::IconMode::NerdfontComplete | crate::config::IconMode::NerdfontFontconfig => {
+            e.nerdfont
+        }
+        crate::config::IconMode::Compatible => e.compatible,
+        crate::config::IconMode::Ascii => e.ascii,
+    }
+    .to_string()
+}
+
+/// 图标表构造辅助:三档字符 → [`IconEntry`]。
+const fn icon(n: &'static str, c: &'static str, a: &'static str) -> IconEntry {
+    IconEntry {
+        nerdfont: n,
+        compatible: c,
+        ascii: a,
+    }
+}
+
+/// 每段的内置图标表(nerdfont / compatible / ascii 三档)。条件段(环境不满足)
+/// 返回 None,配合空文本整段隐藏。字符严格对齐 p10k `internal/icons.zsh` 的三套表。
+fn icon_triple(name: &str) -> Option<IconEntry> {
     match name {
-        "os" | "os_icon" => Some(os_icon()),
-        "dir" => Some("\u{f07c}".into()),               // 
-        "vcs" => Some("\u{f1d3}".into()),               // 
-        "time" => Some("\u{f017}".into()),              // 
-        "background_jobs" => Some("\u{f013}".into()),   // 齿轮 
-        "date" => Some("\u{f073}".into()),              // 日历 
-        "go_version" => Some("\u{e626}".into()),        // Go
-        "rust_version" => Some("\u{e7a8}".into()),      // Rust
-        "node_version" => Some("\u{e617}".into()),      // Node
-        "php_version" => Some("\u{e608}".into()),       // PHP
-        "java_version" => Some("\u{e738}".into()),      // Java
-        "dotnet_version" => Some("\u{e77f}".into()),    // .NET
-        "terraform_version" => Some("\u{f1bb}".into()), // Terraform
-        "cpu_arch" => Some("\u{e266}".into()),          // 芯片
-        "virtualenv" | "anaconda" | "pyenv" => Some("\u{e73c}".into()), // Python
-        "nodeenv" | "nodenv" | "nvm" => Some("\u{e617}".into()), // Node
-        "rbenv" | "chruby" | "rvm" => Some("\u{f219}".into()), // Ruby
-        "goenv" => Some("\u{e626}".into()),             // Go
-        "jenv" => Some("\u{e738}".into()),              // Java
-        "phpenv" => Some("\u{e608}".into()),            // PHP
-        "luaenv" => Some("\u{e620}".into()),            // Lua
-        "plenv" | "perlbrew" => Some("\u{e769}".into()), // Perl
-        "scalaenv" => Some("\u{e737}".into()),          // Scala
-        "load" => Some("\u{f080}".into()),              // 负载
-        "ram" => Some("\u{f0e4}".into()),               // 内存
-        "swap" => Some("\u{f464}".into()),              // swap
-        "battery" => Some("\u{f240}".into()),           // 电池
-        "disk_usage" => Some("\u{f0a0}".into()),        // 磁盘
-        "aws" => Some("\u{f270}".into()),               // AWS
-        "azure" => Some("\u{fd03}".into()),             // Azure
-        "gcloud" => Some("\u{f7b7}".into()),            // GCloud
-        "kubecontext" => Some("\u{2388}".into()),       // ⎈ k8s
-        "terraform" => Some("\u{f1bb}".into()),         // Terraform
-        "ip" => Some("\u{f50d}".into()),                // 网络
-        "vpn_ip" => Some("\u{f023}".into()),            // VPN
-        "wifi" => Some("\u{f1eb}".into()),              // WiFi
-        "public_ip" => Some("\u{f0ac}".into()),         // 公网
-        "toolbox" => (!toolbox_text().is_empty()).then(|| "\u{e20f}".into()), // 容器
+        "dir" => Some(icon("\u{f07c}", "", "")),                       // 
+        "vcs" => Some(icon("\u{f1d3}", "", "")),                       // 
+        "time" => Some(icon("\u{f017}", "", "")),                      // 
+        "background_jobs" => Some(icon("\u{f013}", "\u{2699}", "%%")), // 齿轮 ⚙ %%
+        "date" => Some(icon("\u{f073}", "", "")),                      // 日历
+        "go_version" => Some(icon("\u{e626}", "Go", "go")),
+        "rust_version" => Some(icon("\u{e7a8}", "R", "rust")),
+        "node_version" => Some(icon("\u{e617}", "Node", "node")),
+        "php_version" => Some(icon("\u{e608}", "php", "php")),
+        "java_version" => Some(icon("\u{e738}", "\u{2615}", "java")), // ☕
+        "dotnet_version" => Some(icon("\u{e77f}", ".NET", ".net")),
+        "terraform_version" => Some(icon("\u{f1bb}", "tf", "tf")),
+        "cpu_arch" => Some(icon("\u{e266}", "arch", "arch")),
+        "virtualenv" | "anaconda" | "pyenv" => Some(icon("\u{e73c}", "Py", "py")),
+        "nodeenv" | "nodenv" | "nvm" => Some(icon("\u{e617}", "Node", "node")),
+        "rbenv" | "chruby" | "rvm" => Some(icon("\u{f219}", "Ruby", "rb")),
+        "goenv" => Some(icon("\u{e626}", "Go", "go")),
+        "jenv" => Some(icon("\u{e738}", "\u{2615}", "java")), // ☕(compatible)/java(ascii)
+        "phpenv" => Some(icon("\u{e608}", "php", "php")),
+        "luaenv" => Some(icon("\u{e620}", "lua", "lua")),
+        "plenv" | "perlbrew" => Some(icon("\u{e769}", "perl", "perl")),
+        "scalaenv" => Some(icon("\u{e737}", "scala", "scala")),
+        "load" => Some(icon("\u{f080}", "L", "cpu")),
+        "ram" => Some(icon("\u{f0e4}", "RAM", "ram")),
+        "swap" => Some(icon("\u{f464}", "SWP", "swap")),
+        "battery" => Some(icon("\u{f240}", "\u{1F50B}", "battery")), // 🔋
+        "disk_usage" => Some(icon("\u{f0a0}", "hdd", "disk")),
+        "aws" => Some(icon("\u{f270}", "AWS", "aws")),
+        "azure" => Some(icon("\u{fd03}", "\u{2601}", "az")), // ☁
+        "gcloud" => Some(icon("\u{f7b7}", "G", "gcloud")),
+        "kubecontext" => Some(icon("\u{2388}", "\u{2388}", "kube")), // ⎈
+        "terraform" => Some(icon("\u{f1bb}", "tf", "tf")),
+        "ip" => Some(icon("\u{f50d}", "IP", "ip")),
+        "vpn_ip" => Some(icon("\u{f023}", "vpn", "vpn")),
+        "wifi" => Some(icon("\u{f1eb}", "WiFi", "wifi")),
+        "public_ip" => Some(icon("\u{f0ac}", "IP", "ip")),
+        "toolbox" => {
+            (!toolbox_text().is_empty()).then(|| icon("\u{e20f}", "\u{2b22}", "toolbox")) // ⬢
+        }
         "dir_writable" => {
-            (!dir_writable_text(&current_dir()).is_empty()).then(|| "\u{f023}".into())
+            (!dir_writable_text(&current_dir()).is_empty())
+                .then(|| icon("\u{f023}", "\u{e0a2}", "!w"))
         }
         "per_directory_history" => {
-            (!per_directory_history_text().is_empty()).then(|| "\u{f1da}".into())
+            (!per_directory_history_text().is_empty()).then(|| icon("\u{f1da}", "hist", "hist"))
         }
-        "haskell_stack" => (!haskell_stack_text().is_empty()).then(|| "\u{e61f}".into()),
-        "package" => (!package_text(&current_dir()).is_empty()).then(|| "\u{f8d6}".into()),
-        "fvm" => (!fvm_text(&current_dir()).is_empty()).then(|| "F".into()), // Flutter
-        "google_app_cred" => (!google_app_cred_text().is_empty()).then(|| "\u{f7b7}".into()),
-        "aws_eb_env" => (!aws_eb_env_text().is_empty()).then(|| "\u{f1bd}".into()),
+        "haskell_stack" => {
+            (!haskell_stack_text().is_empty()).then(|| icon("\u{e61f}", "hs", "hs"))
+        }
+        "package" => {
+            (!package_text(&current_dir()).is_empty()).then(|| icon("\u{f8d6}", "pkg", "pkg"))
+        }
+        "fvm" => (!fvm_text(&current_dir()).is_empty()).then(|| icon("F", "F", "flutter")),
+        "google_app_cred" => {
+            (!google_app_cred_text().is_empty()).then(|| icon("\u{f7b7}", "G", "gcloud"))
+        }
+        "aws_eb_env" => {
+            (!aws_eb_env_text().is_empty()).then(|| icon("\u{f1bd}", "\u{1F331}", "eb")) // 🌱
+        }
         "laravel_version" => {
-            (!laravel_version_text(&current_dir()).is_empty()).then(|| "\u{e73f}".into())
+            (!laravel_version_text(&current_dir()).is_empty()).then(|| icon("\u{e73f}", "", ""))
         }
-        "rspec_stats" => (!rspec_stats_text(&current_dir()).is_empty()).then(|| "\u{f188}".into()),
-        "todo" => (!todo_text().is_empty()).then(|| "\u{2611}".into()),
-        "taskwarrior" => (!taskwarrior_text().is_empty()).then(|| "\u{f4a0}".into()),
-        "dropbox" => (!dropbox_text().is_empty()).then(|| "\u{f16b}".into()),
+        "rspec_stats" => {
+            (!rspec_stats_text(&current_dir()).is_empty()).then(|| icon("\u{f188}", "", ""))
+        }
+        "todo" => (!todo_text().is_empty()).then(|| icon("\u{2611}", "\u{2206}", "todo")), // ☑ ∆
+        "taskwarrior" => {
+            (!taskwarrior_text().is_empty()).then(|| icon("\u{f4a0}", "task", "task"))
+        }
+        "dropbox" => (!dropbox_text().is_empty()).then(|| icon("\u{f16b}", "Dropbox", "dropbox")),
         // 环境指示段:图标同样按条件给,条件不满足 → None,配合空文本整段隐藏。
-        "ssh" => env().ssh.then(|| "\u{f489}".into()), // SSH 会话
-        "proxy" => env_has_proxy().then(|| "\u{2194}".into()), // ↔
-        "docker_machine" => env_var("DOCKER_MACHINE_NAME").map(|_| "\u{f0ae}".into()), // 服务器
-        "ranger" => level_icon("RANGER_LEVEL", "\u{f00b}"), // 文件列表
-        "yazi" => level_icon("YAZI_LEVEL", "\u{f00b}"),
-        "nnn" => level_icon("NNNLVL", "nnn"),
-        "lf" => level_icon("LF_LEVEL", "lf"),
-        "nix_shell" => in_nix_shell().then(|| "\u{f313}".into()), // 雪花
-        "xplr" => env_var("XPLR_PID").map(|_| "xplr".into()),
-        "midnight_commander" => env_var("MC_TMPDIR").map(|_| "mc".into()),
-        "vim_shell" => env_var("VIMRUNTIME").map(|_| "\u{e62b}".into()), // vim
-        "direnv" => env_var("DIRENV_DIR").map(|_| "\u{25bc}".into()),    // ▼
-        "chezmoi_shell" => env_var("CHEZMOI").map(|_| "\u{f015}".into()), // 家
+        "ssh" => env().ssh.then(|| icon("\u{f489}", "ssh", "ssh")),
+        "proxy" => env_has_proxy().then(|| icon("\u{2194}", "\u{2194}", "proxy")), // ↔
+        "docker_machine" => env_var("DOCKER_MACHINE_NAME").map(|_| icon("\u{f0ae}", "", "")),
+        "ranger" => level_icon("RANGER_LEVEL", "\u{f00b}")
+            .map(|_| icon("\u{f00b}", "\u{2b50}", "ranger")),
+        "yazi" => level_icon("YAZI_LEVEL", "\u{f00b}").map(|_| icon("\u{f00b}", "\u{2b50}", "yazi")),
+        "nnn" => level_icon("NNNLVL", "nnn").map(|_| icon("nnn", "nnn", "nnn")),
+        "lf" => level_icon("LF_LEVEL", "lf").map(|_| icon("lf", "lf", "lf")),
+        "nix_shell" => in_nix_shell().then(|| icon("\u{f313}", "nix", "nix")),
+        "xplr" => env_var("XPLR_PID").map(|_| icon("xplr", "xplr", "xplr")),
+        "midnight_commander" => env_var("MC_TMPDIR").map(|_| icon("mc", "mc", "mc")),
+        "vim_shell" => env_var("VIMRUNTIME").map(|_| icon("\u{e62b}", "vim", "vim")),
+        "direnv" => env_var("DIRENV_DIR").map(|_| icon("\u{25bc}", "\u{25bc}", "direnv")), // ▼
+        "chezmoi_shell" => env_var("CHEZMOI").map(|_| icon("\u{f015}", "Chez", "chezmoi")),
         _ => None,
     }
 }
 
 thread_local! {
-    static OS_ICON: RefCell<Option<String>> = const { RefCell::new(None) };
+    static OS_ICON: RefCell<Option<IconEntry>> = const { RefCell::new(None) };
 }
 
-/// os 图标:uname 大类 + /etc/os-release ID 匹配发行版(对齐 p10k `_p9k_set_os`)。
-fn os_icon() -> String {
+/// os 图标:uname 大类 + /etc/os-release ID 匹配发行版(对齐 p10k `_p9k_set_os`),
+/// 按 mode 三档返回。
+fn os_icon(mode: &crate::config::IconMode) -> String {
     OS_ICON.with(|c| {
-        if c.borrow().is_none() {
-            *c.borrow_mut() = Some(detect_os_icon());
-        }
-        c.borrow().as_ref().unwrap().clone()
+        let e = *c.borrow_mut().get_or_insert_with(detect_os_icon);
+        icon_by_mode(&e, mode)
     })
 }
 
@@ -1328,13 +1388,13 @@ fn perlbrew_text(_cwd: &str) -> String {
         .unwrap_or_default()
 }
 
-fn detect_os_icon() -> String {
+fn detect_os_icon() -> IconEntry {
     let uname = std::env::consts::OS;
     if uname != "linux" {
         return match uname {
-            "macos" => "\u{f179}".into(),   // 
-            "windows" => "\u{f17a}".into(), // 
-            _ => "\u{f17c}".into(),         // 默认 linux 图标
+            "macos" => icon("\u{f179}", "OSX", "mac"),   // 
+            "windows" => icon("\u{f17a}", "WIN", "win"), // 
+            _ => icon("\u{f17c}", "Lx", "linux"),        // 默认 linux 图标
         };
     }
     // Linux:读 /etc/os-release 的 ID(子串匹配,对齐 p10k case *arch* 等)。
@@ -1349,34 +1409,34 @@ fn detect_os_icon() -> String {
             })
         })
         .unwrap_or_default();
-    let icon = if id.contains("arch") {
-        "\u{f303}" // 
+    // 三档文本缩写对齐 p10k compatible/ascii 分支。
+    if id.contains("arch") {
+        icon("\u{f303}", "Arc", "arch")
     } else if id.contains("ubuntu") {
-        "\u{f31b}" // 
+        icon("\u{f31b}", "Ubu", "ubuntu")
     } else if id.contains("debian") {
-        "\u{f306}" // 
+        icon("\u{f306}", "Deb", "debian")
     } else if id.contains("fedora") {
-        "\u{f30a}" // 
+        icon("\u{f30a}", "Fed", "fedora")
     } else if id.contains("gentoo") {
-        "\u{f30d}" // 
+        icon("\u{f30d}", "Gen", "gentoo")
     } else if id.contains("nixos") {
-        "\u{f313}" // 
+        icon("\u{f313}", "Nix", "nixos")
     } else if id.contains("manjaro") {
-        "\u{f312}" // 
+        icon("\u{f312}", "Man", "manjaro")
     } else if id.contains("mint") {
-        "\u{f30e}" // 
+        icon("\u{f30e}", "LMi", "mint")
     } else if id.contains("alpine") {
-        "\u{f300}" // 
+        icon("\u{f300}", "Alp", "alpine")
     } else if id.contains("void") {
-        "\u{f32e}" // 
+        icon("\u{f32e}", "Vo", "void")
     } else if id.contains("artix") {
-        "\u{f31f}" // 
+        icon("\u{f31f}", "Art", "artix")
     } else if id.contains("opensuse") || id.contains("suse") {
-        "\u{f314}" // 
+        icon("\u{f314}", "OSu", "suse")
     } else {
-        "\u{f17c}" // 默认 
-    };
-    icon.to_string()
+        icon("\u{f17c}", "Lx", "linux")
+    }
 }
 
 /// 当前时间 HH:MM:SS(libc localtime)。
@@ -1488,11 +1548,18 @@ fn expand_env(s: &str) -> String {
 }
 
 /// git 文本:分支 + 计数。
-fn vcs_text(vcs: Option<&GitStatus>) -> String {
+fn vcs_text(vcs: Option<&GitStatus>, mode: &crate::config::IconMode) -> String {
     let Some(v) = vcs else { return String::new() };
     let mut s = String::new();
     if !v.branch.is_empty() {
-        s.push_str("\u{f126} "); // 分支图标 
+        // 分支图标三档对齐 p10k VCS_BRANCH_ICON:nerdfont ,compatible @,ascii 空。
+        let branch_icon = match mode {
+            crate::config::IconMode::NerdfontComplete
+            | crate::config::IconMode::NerdfontFontconfig => "\u{f126} ",
+            crate::config::IconMode::Compatible => "@",
+            crate::config::IconMode::Ascii => "",
+        };
+        s.push_str(branch_icon);
         s.push_str(&v.branch);
     }
     let mut parts: Vec<String> = Vec::new();
@@ -1524,12 +1591,19 @@ fn vcs_text(vcs: Option<&GitStatus>) -> String {
     s
 }
 
-/// 退出码状态:✓ / ✘ N。
-fn status_text(info: &HeaderInfo) -> String {
+/// 退出码状态:三档 OK/FAIL 图标对齐 p10k(nerdfont /,compatible ✔/✘,ascii ok/err)。
+fn status_text(info: &HeaderInfo, mode: &crate::config::IconMode) -> String {
+    let (ok, err) = match mode {
+        crate::config::IconMode::NerdfontComplete | crate::config::IconMode::NerdfontFontconfig => {
+            ("\u{f00c}", "\u{f00d}")
+        }
+        crate::config::IconMode::Compatible => ("\u{2714}", "\u{2718}"),
+        crate::config::IconMode::Ascii => ("ok", "err"),
+    };
     match info.exit_code {
         None => String::new(),
-        Some(0) => "✓".to_string(),
-        Some(n) => format!("✘ {n}"),
+        Some(0) => ok.to_string(),
+        Some(n) => format!("{err} {n}"),
     }
 }
 
@@ -1740,9 +1814,9 @@ mod tests {
     fn renders_pure_text_header_with_right_align() {
         let cfg = Config::default_lean().unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
-        // header 只一行行:含目录 + ✓;prompt_char(❯)不在 header(由 render_prompt 画)。
+        // header 只一行行:含目录 + 状态图标(nerdfont 默认 );prompt_char(❯)不在 header。
         assert!(h.contains("tmp"), "header 应含目录,实际：{h:?}");
-        assert!(h.contains("✓"));
+        assert!(h.contains("\u{f00c}"));
         assert!(
             !h.contains('❯'),
             "输入行前缀 ❯ 由 render_prompt 画，不应在 header"
@@ -1754,8 +1828,8 @@ mod tests {
     fn right_aligns_to_cols() {
         let cfg = Config::default_lean().unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
-        // 右段 ✓ 右对齐:gap 填充使整行显示宽度 = cols。
-        assert!(h.contains('✓'), "右段应存在,实际:{h:?}");
+        // 右段状态图标右对齐:gap 填充使整行显示宽度 = cols。
+        assert!(h.contains("\u{f00c}"), "右段应存在,实际:{h:?}");
         assert_eq!(display_width(&h), 80, "右对齐后行宽应为 80");
     }
 
@@ -1956,6 +2030,28 @@ mod tests {
             "%(?\u{1}%f❯ \u{1}%f❯ )%f",
             "fg 缺省应生成 %f 且无前导空格,实际:{s:?}"
         );
+    }
+
+    #[test]
+    fn icon_mode_switches_status_and_default_icons() {
+        // status 三档:nerdfont /,compatible ✔/✘,ascii ok/err。
+        let nf = crate::config::IconMode::NerdfontComplete;
+        let compat = crate::config::IconMode::Compatible;
+        let ascii = crate::config::IconMode::Ascii;
+        assert_eq!(status_text(&info("/tmp", Some(0)), &nf), "\u{f00c}");
+        assert_eq!(status_text(&info("/tmp", Some(0)), &compat), "\u{2714}");
+        assert_eq!(status_text(&info("/tmp", Some(0)), &ascii), "ok");
+        assert_eq!(status_text(&info("/tmp", Some(1)), &nf), "\u{f00d} 1");
+        assert_eq!(status_text(&info("/tmp", Some(1)), &compat), "\u{2718} 1");
+        assert_eq!(status_text(&info("/tmp", Some(1)), &ascii), "err 1");
+        // default_icon 三档:dir 段 nerdfont 有图标,compatible/ascii 空。
+        assert_eq!(default_icon("dir", &nf).unwrap(), "\u{f07c}");
+        assert_eq!(default_icon("dir", &compat).unwrap(), "");
+        assert_eq!(default_icon("dir", &ascii).unwrap(), "");
+        // 版本段三档:go nerdfont 私有区,compatible 文本,ascii 文本。
+        assert_eq!(default_icon("go_version", &nf).unwrap(), "\u{e626}");
+        assert_eq!(default_icon("go_version", &compat).unwrap(), "Go");
+        assert_eq!(default_icon("go_version", &ascii).unwrap(), "go");
     }
 
     #[test]

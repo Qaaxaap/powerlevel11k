@@ -70,10 +70,10 @@ fn read_until(
     acc
 }
 
-/// 等真正的第一个 prompt 就绪：instant header 没有退出码状态（无 ✓），只有
-/// 内部 shell 加载完、第一次 precmd 后清屏重画的真 header 才带 ✓。
+/// 等真正的第一个 prompt 就绪：instant header 没有退出码状态（无 ），只有
+/// 内部 shell 加载完、第一次 precmd 后清屏重画的真 header 才带 。
 fn wait_ready(master: &Box<dyn MasterPty + Send>, reader: &mut Box<dyn Read + Send>) -> String {
-    read_until(master, reader, "✓", Duration::from_secs(10))
+    read_until(master, reader, "\u{f00c}", Duration::from_secs(10))
 }
 
 #[test]
@@ -84,7 +84,7 @@ fn initial_prompt_shows_header_and_input_line() {
         out.contains('/') || out.contains('~'),
         "header 应含目录(~ 缩写或路径)，实际输出：{out:?}"
     );
-    assert!(out.contains('✓'), "真正 header 应含 ✓ 退出码状态");
+    assert!(out.contains('\u{f00c}'), "真正 header 应含  退出码状态");
     // instant header 已含输入行前缀 ❯;真 prompt 的前缀覆盖由
     // placeholder_overwritten_by_prefix 单独验证(❯ 在占位符 __ 之后)。
     assert!(out.contains('❯'), "输入行应含 ❯，实际输出：{out:?}");
@@ -130,9 +130,9 @@ fn command_output_passthrough_and_next_prompt() {
     );
     assert!(out.contains("hello-from-shell"), "命令输出应透传");
 
-    // 下一个 prompt 也该出现（命令执行完 → precmd → header 重画带 ✓）。
-    let out2 = read_until(&master, &mut reader, "✓", Duration::from_secs(5));
-    assert!(out2.contains('✓'), "命令后应出新 prompt，实际：{out2:?}");
+    // 下一个 prompt 也该出现（命令执行完 → precmd → header 重画带 ）。
+    let out2 = read_until(&master, &mut reader, "\u{f00c}", Duration::from_secs(5));
+    assert!(out2.contains('\u{f00c}'), "命令后应出新 prompt，实际：{out2:?}");
 }
 
 #[test]
@@ -140,11 +140,11 @@ fn exit_code_shows_in_status() {
     let (master, _child, mut reader, mut writer) = spawn_engine();
     wait_ready(&master, &mut reader);
 
-    // 失败命令 → header 右段显示红色 ✘ n。
+    // 失败命令 → header 右段显示红色  n。
     writer.write_all(b"false\n").unwrap();
     writer.flush().unwrap();
-    let out = read_until(&master, &mut reader, "✘", Duration::from_secs(5));
-    assert!(out.contains('✘'), "退出码状态应显示 ✘，实际：{out:?}");
+    let out = read_until(&master, &mut reader, "\u{f00d}", Duration::from_secs(5));
+    assert!(out.contains('\u{f00d}'), "退出码状态应显示 ，实际：{out:?}");
 }
 
 #[test]

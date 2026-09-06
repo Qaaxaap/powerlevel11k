@@ -293,6 +293,34 @@ impl Segment {
     }
 }
 
+/// 图标/字体模式(对齐 p10k `POWERLEVEL9K_MODE`)。决定内置段图标的字符集。
+/// `nerdfont-complete` 与 `nerdfont-fontconfig` 共用同一套 Nerd Font 字形
+/// (p10k 里也是同一 case 分支);`compatible` 用标准 Unicode + Powerline 字体,
+/// 不依赖 Nerd Font;`ascii` 纯 ASCII。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum IconMode {
+    /// Nerd Font(完整集)。缺省。
+    #[default]
+    NerdfontComplete,
+    /// Nerd Font(fontconfig 变体,字形码点与 complete 一致)。
+    NerdfontFontconfig,
+    /// 兼容模式:标准 Unicode + Powerline 字体,不依赖 Nerd Font。
+    Compatible,
+    /// 纯 ASCII。
+    Ascii,
+}
+
+impl IconMode {
+    fn from_str(s: &str) -> IconMode {
+        match s {
+            "ascii" => IconMode::Ascii,
+            "compatible" => IconMode::Compatible,
+            "nerdfont-fontconfig" => IconMode::NerdfontFontconfig,
+            _ => IconMode::NerdfontComplete, // 未知/缺省按 nerdfont-complete
+        }
+    }
+}
+
 /// 顶层配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
@@ -306,6 +334,8 @@ pub struct Config {
     pub frame: Frame,
     /// vcs 图标按远端域名选择(domain 子串 → icon 字符);按序匹配,未命中用 git 默认。
     pub vcs_remote_icons: Vec<(String, String)>,
+    /// 图标/字体模式。
+    pub mode: IconMode,
 }
 
 impl Config {
@@ -341,6 +371,7 @@ impl Config {
         let mut separators = Separators::default();
         let mut frame = Frame::default();
         let mut vcs_remote_icons = default_remote_icons();
+        let mut mode = IconMode::default();
 
         for node in doc.nodes() {
             match node.name().value() {
@@ -365,6 +396,11 @@ impl Config {
                 "separators" => separators = parse_separators(node),
                 "frame" => frame = parse_frame(node),
                 "vcs-remote-icons" => vcs_remote_icons = parse_remote_icons(node),
+                "mode" => {
+                    if let Some(s) = first_value(node).and_then(str_val) {
+                        mode = IconMode::from_str(&s);
+                    }
+                }
                 _ => {} // 未知顶层忽略(向前兼容)
             }
         }
@@ -375,6 +411,7 @@ impl Config {
             separators,
             frame,
             vcs_remote_icons,
+            mode,
         })
     }
 }
@@ -767,6 +804,20 @@ mod tests {
         // 右:一行
         assert_eq!(c.layout.right, vec![vec![Element::Seg("status".into())]]);
         assert!(c.layout.add_newline);
+    }
+
+    #[test]
+    fn parses_icon_mode() {
+        // mode 顶层节点:ascii/compatible/nerdfont-fontconfig 分别映射;缺省 nerdfont-complete。
+        let c = Config::parse("mode \"ascii\"\nlayout { left { line { dir #true } } }").unwrap();
+        assert_eq!(c.mode, IconMode::Ascii);
+        let c = Config::parse("mode \"compatible\"\nlayout { left { line { dir #true } } }").unwrap();
+        assert_eq!(c.mode, IconMode::Compatible);
+        let c = Config::parse("mode \"nerdfont-fontconfig\"\nlayout { left { line { dir #true } } }")
+            .unwrap();
+        assert_eq!(c.mode, IconMode::NerdfontFontconfig);
+        let c = Config::parse("layout { left { line { dir #true } } }").unwrap();
+        assert_eq!(c.mode, IconMode::NerdfontComplete);
     }
 
     #[test]
