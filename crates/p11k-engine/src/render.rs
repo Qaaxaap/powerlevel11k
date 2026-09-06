@@ -15,6 +15,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 
+/// 当前 zsh 编辑模式(由 zle hook 上报,引擎实时更新);非 zsh 或未上报为空。
+pub static CURRENT_VI_MODE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
 /// 输入行前缀:`frame.last_prefix` + `prompt_char` 内容;`width` 是它的显示宽度,
 /// 引擎据此生成等宽占位符。
 pub struct InputPrefix {
@@ -299,6 +302,8 @@ fn render_segment(
         "nnn" => paint(&level_text("NNNLVL"), &style),
         "lf" => paint(&level_text("LF_LEVEL"), &style),
         "nix_shell" => paint(&nix_shell_text(), &style),
+        "history" => paint(&info.history.to_string(), &style),
+        "vi_mode" => paint(&vi_mode_text(), &style),
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
     // 段图标:配置 `icon` 优先,否则按段名内置默认;vcs 段按
@@ -896,6 +901,21 @@ fn json_str_field(content: &str, key: &str) -> Option<String> {
         .unwrap_or(rest)
         .trim_start();
     Some(rest.strip_prefix('"')?.split('"').next()?.to_string())
+}
+
+/// vi_mode 段:当前 zsh 编辑模式 → 名称;非 zsh(未上报)为空。
+fn vi_mode_text() -> String {
+    let mode = CURRENT_VI_MODE
+        .lock()
+        .map(|m| m.clone())
+        .unwrap_or_default();
+    match mode.as_str() {
+        "vicmd" => "NORMAL".into(),
+        "viins" => "INSERT".into(),
+        "vis" | "viopp" => "VISUAL".into(),
+        "" | "main" => String::new(), // 未上报或 emacs(main)不显示
+        other => other.to_string(),
+    }
 }
 
 /// asdf 段:.tool-versions 第一个插件版本行(简化,显示首行)。
@@ -1686,6 +1706,7 @@ mod tests {
             cwd: cwd.to_string(),
             exec_seconds: 0.0,
             jobs: 0,
+            history: 0,
         }
     }
 

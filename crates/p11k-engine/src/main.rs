@@ -137,7 +137,7 @@ _p11k_pwd=$PWD
 _p11k_precmd() {
   _p11k_status=$?
   _p11k_pwd=$PWD
-  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}" >> "$P11K_ANNOUNCE"
+  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
 }
@@ -181,6 +181,14 @@ if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p
   _p11k_user_line_init=${widgets[zle-line-init]#user:}
 fi
 zle -N zle-line-init _p11k_line_init
+# vi_mode:zle-keymap-select 时把当前 keymap 上报给引擎(更新编辑模式段并重画)。
+_p11k_vi_mode() {
+  print -r -- "v"$'\t'"$KEYMAP" >> "$P11K_ANNOUNCE"
+}
+if [[ -n "${widgets[zle-keymap-select]:-}" && "${widgets[zle-keymap-select]}" != user:_p11k_vi_mode ]]; then
+  _p11k_user_vi_mode=${widgets[zle-keymap-select]#user:}
+fi
+zle -N zle-keymap-select _p11k_vi_mode
 # resize 宣告：SIGWINCH → zsh 延迟执行 TRAPWINCH，
 # 检测到变化宣告 `r`，引擎清屏重画 prompt 窗口。
 _p11k_last_cols=$COLUMNS
@@ -505,6 +513,7 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|_| "~".into()),
         exec_seconds: 0.0,
         jobs: 0,
+        history: 0,
     };
     theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
     theme::render_prompt(&mut stdout, &prefix.text)?;
@@ -637,6 +646,21 @@ fn main() -> anyhow::Result<()> {
                             Some(std::time::Instant::now() + std::time::Duration::from_millis(60));
                     } else {
                         log("r: skip redraw (not at prompt)");
+                    }
+                }
+                AnnMsg::VimMode(mode) => {
+                    *crate::render::CURRENT_VI_MODE.lock().unwrap() = mode;
+                    if at_prompt {
+                        log("v: update mode, redraw header");
+                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                        theme::redraw_header_cfg(
+                            &mut stdout,
+                            last_size.1 as usize,
+                            &config,
+                            current_info.as_ref().unwrap_or(&instant_info),
+                            vcs,
+                        )?;
+                        stdout.flush()?;
                     }
                 }
             }
@@ -829,6 +853,8 @@ enum AnnMsg {
     Prompt,
     /// `r`：TRAPWINCH 宣告，resize pty + 清屏重画。
     Resize,
+    /// `v\t<keymap>`：zle-keymap-select 宣告，更新编辑模式并重画 header。
+    VimMode(String),
 }
 
 /// 异步 git 请求。
@@ -880,15 +906,27 @@ fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
                     .next()
                     .and_then(|s| s.trim().parse::<usize>().ok())
                     .unwrap_or(0);
+                let history = parts
+                    .next()
+                    .and_then(|s| s.trim().parse::<usize>().ok())
+                    .unwrap_or(0);
                 out.push(AnnMsg::Header(HeaderInfo {
                     exit_code: code,
                     cwd,
                     exec_seconds: 0.0, // 由主循环用 last_enter 填入
                     jobs,
+                    history,
                 }));
             }
             Some("p") => out.push(AnnMsg::Prompt),
             Some("r") => out.push(AnnMsg::Resize),
+            Some("v") => {
+                let mode = parts
+                    .next()
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                out.push(AnnMsg::VimMode(mode));
+            }
             _ => continue,
         }
     }

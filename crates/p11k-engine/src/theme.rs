@@ -9,7 +9,7 @@
 
 use std::io::{self, Write};
 
-/// prompt 窗口需要的信息，由宣告行（`h\t<exit>\t<cwd>[\t<jobs>]`）解析而来。
+/// prompt 窗口需要的信息，由宣告行（`h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`）解析而来。
 pub struct HeaderInfo {
     pub exit_code: Option<i32>,
     pub cwd: String,
@@ -17,6 +17,8 @@ pub struct HeaderInfo {
     pub exec_seconds: f64,
     /// 后台任务数。
     pub jobs: usize,
+    /// zsh 历史命令号(`HISTCMD`),bash/fish 无则 0。
+    pub history: usize,
 }
 
 /// 当前目录的 git 状态（由 p11k-gitstatus 的 API 计算，随 header 一起画）。
