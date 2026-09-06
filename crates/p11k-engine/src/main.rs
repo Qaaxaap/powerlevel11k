@@ -153,6 +153,13 @@ _p11k_line_init() {
     "$_p11k_user_line_init"   # 用户注册的 handler（如 autosuggestions）先跑
   fi
   print -r -- "p" >> "$P11K_ANNOUNCE"
+  # 上报当前 keymap:vi 模式(prompt 就绪时 zle 重置为 viins)报 viins → INSERT;
+  # emacs(main)报 main → vi_mode 段隐藏。切换(NORMAL/VISUAL)由 keymap-select 上报。
+  if [[ ${options[vi]} == on ]]; then
+    print -r -- "v"$'\t'"viins" >> "$P11K_ANNOUNCE"
+  else
+    print -r -- "v"$'\t'"main" >> "$P11K_ANNOUNCE"
+  fi
   # prompt 已就绪，清掉防递归标记：用户手动 exec zsh 重载配置时，新 zsh 无
   # P11K_ENGINE，引导行会重新 exec p11k 进引擎。
   unset P11K_ENGINE
@@ -183,7 +190,16 @@ fi
 zle -N zle-line-init _p11k_line_init
 # vi_mode:zle-keymap-select 时把当前 keymap 上报给引擎(更新编辑模式段并重画)。
 _p11k_vi_mode() {
-  print -r -- "v"$'\t'"$KEYMAP" >> "$P11K_ANNOUNCE"
+  local m=$KEYMAP
+  if [[ ${options[vi]} == on ]]; then
+    case $KEYMAP in
+      vicmd|vis|viopp) m=$KEYMAP;;
+      *) m=viins;;  # zsh 在 insert 时可能报 main → 归一成 viins
+    esac
+  else
+    m=main
+  fi
+  print -r -- "v"$'\t'"$m" >> "$P11K_ANNOUNCE"
 }
 if [[ -n "${widgets[zle-keymap-select]:-}" && "${widgets[zle-keymap-select]}" != user:_p11k_vi_mode ]]; then
   _p11k_user_vi_mode=${widgets[zle-keymap-select]#user:}
