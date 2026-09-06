@@ -1,11 +1,15 @@
 //! 主题绘制：引擎在 prompt 钩子时刻向真实终端输出主题 header。
 //!
-//! 分工：shell 只给一个占位 prompt（宽度 = 引擎前缀宽度），
-//! 让 zle 的几何自洽。引擎不解析 pty 输出的 ANSI，只做字节透传 + 光标定位：
-//! - `render_header_cfg`：在占位符透传之前画多行 header（行内容由
-//!   [`crate::render::render_header_lines`] 按 KDL 配置生成）。
-//! - `render_prompt`：在占位符透传之后，用 `\r` + 前缀覆盖占位符。前缀可见
-//!   宽度与占位符恒等，zle 重绘列偏移对齐。
+//! 分工：shell 给一个多行占位 prompt（header 行数个换行 + 宽度 = 引擎前缀
+//! 宽度的占位符），让 shell 的几何把 header 行也算进去。引擎不解析 pty 输出
+//! 的 ANSI，只做字节透传 + 光标定位：
+//! - `prompt_start`：`h` 宣告时先发 OSC133A（早于 shell 的多行占位）。
+//! - `redraw_header_cfg`：占位透传后上移 header 行数回填真实 header（行内容
+//!   由 [`crate::render::render_header_lines`] 按 KDL 配置生成），并恢复光标。
+//! - `render_prompt`：用 `\r` + 前缀覆盖占位符。前缀可见宽度与占位符恒等，
+//!   shell 重绘列偏移对齐。
+//! - `render_header_cfg`：仅 instant header（引擎尚未 spawn shell）用，直接画
+//!   完整 header + 前缀。
 
 use std::io::{self, Write};
 
@@ -37,17 +41,15 @@ pub struct GitStatus {
     pub remote_url: String,
 }
 
-/// 用 KDL 配置渲染 header(多行,行数由配置决定)。逐行清屏 + OSC133A;
-/// 最后 `\r\n` 把光标送到输入行(跟随占位符,由 render_prompt 替换)。
-pub fn render_header_cfg(
-    out: &mut dyn Write,
-    cols: usize,
-    config: &crate::config::Config,
-    info: &HeaderInfo,
-    vcs: Option<&GitStatus>,
-) -> io::Result<()> {
-    write!(out, "\x1b]133;A\x07")?;
-    let lines = crate::render::render_header_lines(config, info, vcs, cols);
+/// OSC 133 A：prompt 开始标记(shell integration)。占位协议下由引擎在 `h`
+/// 宣告时单独输出(早于 shell 渲染的多行占位),回填/重画 header 时不再重复。
+pub fn prompt_start(out: &mut dyn Write) -> io::Result<()> {
+    write!(out, "\x1b]133;A\x07")
+}
+
+/// 逐行输出 header 内容:每行 `\r\x1b[K` 清行 + 内容 + `\r\n`,把光标推进到
+/// 下一行行首。不含 OSC133A——它由 [`prompt_start`] 在占位之前单独发。
+fn header_body(out: &mut dyn Write, lines: &[String]) -> io::Result<()> {
     for line in lines {
         write!(out, "\r\x1b[K")?;
         out.write_all(line.as_bytes())?;
@@ -56,20 +58,25 @@ pub fn render_header_cfg(
     Ok(())
 }
 
-/// 配置渲染 + 清屏(首次 precmd 用,把 instant header 刷新成真正状态)。
-pub fn render_header_cleared_cfg(
+/// 用 KDL 配置渲染完整 header(多行,行数由配置决定):OSC133A + 逐行内容。
+/// 仅 instant header(引擎尚未 spawn shell、占位还没出现)用;正常 prompt
+/// 周期改走「占位先行 + redraw_header_cfg 回填」。
+pub fn render_header_cfg(
     out: &mut dyn Write,
     cols: usize,
     config: &crate::config::Config,
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
 ) -> io::Result<()> {
-    write!(out, "\x1b[2J\x1b[H")?;
-    render_header_cfg(out, cols, config, info, vcs)
+    prompt_start(out)?;
+    let lines = crate::render::render_header_lines(config, info, vcs, cols);
+    header_body(out, &lines)
 }
 
-/// resize 后重画 header:保存输入行光标、上移到 header 行 1、重画、
-/// 恢复。上移行数 = 配置 header 行数;不碰输入行(用户可能已在打字)。
+/// 回填/重画 header:保存输入行光标、上移到 header 行 1、逐行重画、恢复。
+/// 上移行数 = 配置 header 行数;不碰输入行(用户可能已在打字)。
+/// 占位协议下,shell 已先渲染出 header 行数的空行占位,这里把真实内容覆盖上去,
+/// 最后 `\x1b[u` 回到输入行光标。resize 重画与 `p` 宣告后的首次回填复用同一段。
 pub fn redraw_header_cfg(
     out: &mut dyn Write,
     cols: usize,
@@ -80,7 +87,7 @@ pub fn redraw_header_cfg(
     let lines = crate::render::render_header_lines(config, info, vcs, cols);
     let n = lines.len().max(1);
     write!(out, "\x1b[s\x1b[{}A", n)?;
-    render_header_cfg(out, cols, config, info, vcs)?;
+    header_body(out, &lines)?;
     write!(out, "\x1b[u")?;
     Ok(())
 }

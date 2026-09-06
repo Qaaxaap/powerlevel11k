@@ -85,10 +85,9 @@ fn initial_prompt_shows_header_and_input_line() {
         "header 应含目录(~ 缩写或路径)，实际输出：{out:?}"
     );
     assert!(out.contains('✓'), "真正 header 应含 ✓ 退出码状态");
-    // 等输入行前缀 ❯（占位 aa 之后、zle-line-init 宣告 p 后画）。
-    let out2 = read_until(&master, &mut reader, "❯", Duration::from_secs(5));
-    assert!(out2.contains('❯'), "输入行应含 ❯，实际输出：{out2:?}");
-    // 时间 HH:MM 右对齐存在（用 \e[..G 定位过）。
+    // instant header 已含输入行前缀 ❯;真 prompt 的前缀覆盖由
+    // placeholder_overwritten_by_prefix 单独验证(❯ 在占位符 __ 之后)。
+    assert!(out.contains('❯'), "输入行应含 ❯，实际输出：{out:?}");
     assert!(out.contains('\x1b'), "header 应含 ANSI 颜色/定位序列");
 }
 
@@ -97,18 +96,22 @@ fn initial_prompt_shows_header_and_input_line() {
 #[test]
 fn placeholder_overwritten_by_prefix() {
     let (master, _child, mut reader, _writer) = spawn_engine();
-    wait_ready(&master, &mut reader);
-    // 真正 prompt：占位符先透传，随后 \r + 输入前缀(❯)顶掉。
-    let out = read_until(&master, &mut reader, "❯", Duration::from_secs(5));
-    assert!(out.contains("__"), "占位符应原样透传，实际输出：{out:?}");
-    assert!(
-        out.contains('\r') && out.contains('❯'),
-        "透传后应回行首画前缀顶掉占位符，实际输出：{out:?}"
-    );
-    // 占位符出现在前缀之前：先透传后顶掉。
-    let ph = out.find("__").expect("占位符存在");
-    let px = out.find('❯').expect("前缀存在");
-    assert!(ph < px, "占位符应先透传再被顶掉，实际输出：{out:?}");
+    let mut full = wait_ready(&master, &mut reader);
+    // 占位协议：shell 渲染的多行占位(换行 + 占位符 __)先透传,引擎随后 \r + 前缀
+    // (❯)回行首顶掉。instant 的 ❯ 在 __ 之前,不算;真 prompt 的 ❯ 一定在 __ 之后。
+    assert!(full.contains("__"), "占位符应原样透传，实际输出：{full:?}");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let ph = full.find("__").expect("占位符存在");
+        if full[ph..].contains('❯') {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "占位符 __ 之后应出现前缀 ❯，实际输出：{full:?}"
+        );
+        full.push_str(&read_until(&master, &mut reader, "❯", Duration::from_secs(1)));
+    }
 }
 
 #[test]

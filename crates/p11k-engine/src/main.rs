@@ -7,14 +7,15 @@
 //!    pty 输出的 ANSI，shell 渲染什么（命令输出、zle、占位 prompt、补全
 //!    菜单）引擎一概不管。
 //! 3. prompt 窗口由 announce 驱动的两笔绘制：
-//!    - `h`（precmd 宣告）：画多行 header，
-//!      touch ack 放行 shell 输出占位 prompt。
-//!    - `p`（zle-line-init 宣告，zle 已渲染完占位 prompt）：回行首画真实
-//!      前缀覆盖占位符。前缀只覆盖占位符所在列，
-//!      即使引擎稍慢、用户已开始输入也不受影响。
+//!    - `h`（precmd 宣告）：发 OSC133A 标记 + touch ack 放行 shell 输出占位，
+//!      header 内容不在此时画。
+//!    - `p`（zle-line-init 宣告，zle 已渲染完占位 prompt）：上移 header 行数
+//!      回填真实 header，再回行首画真实前缀覆盖占位符。前缀只覆盖占位符
+//!      所在列，即使引擎稍慢、用户已开始输入也不受影响。
 //!
-//! 几何协议：PROMPT 使用 "__" 占位。precmd 写 announce 后轮询 ack，保证
-//! header 先画、占位 prompt 后输出。
+//! 几何协议：PROMPT 带 header 行数个换行 + "__" 占位符，让 shell 的 prompt
+//! 几何把 header 行也算进去（zsh 才能用 reset-prompt 干净折叠 transient）。
+//! precmd 写 announce 后轮询 ack，保证占位先输出、header 后回填。
 //!
 //! 部署：将 exec 启动加入用户 rc，并通过 P11K_ENGINE 避免递归
 //! `[[ -z "$P11K_ENGINE" ]] && exec p11k --shell zsh`（见 README）。
@@ -366,7 +367,12 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
     let prefix = crate::render::input_prefix(&config, None);
-    let placeholder = "_".repeat(prefix.width.max(1));
+    // 占位符带 header 行数个换行:shell 的 prompt 几何因此把 header 行也算进去,
+    // zsh 才能用 reset-prompt 干净折叠 transient(对齐 p10k 的多行 PROMPT)。
+    // marker 是换行之后那段可见占位字节,bash/fish 靠匹配它定位「占位已输出」。
+    let header_rows = config.layout.left.len().max(config.layout.right.len());
+    let marker = "_".repeat(prefix.width.max(1));
+    let placeholder = format!("{}{}", "\n".repeat(header_rows), marker);
     let state = StateDir::create(shell, &placeholder)?;
     log(&format!(
         "engine start: dir={} announce={} ack={} placeholder={:?} shell={:?}",
@@ -509,8 +515,6 @@ fn main() -> anyhow::Result<()> {
     let mut at_prompt = false;
     // 上次回车的时刻，用于下次 precmd 计算命令耗时。
     let mut last_enter: Option<std::time::Instant> = None;
-    // git 结果早于输入行就绪到达时（last_vcs 已更新但未 redraw），p 就绪时补重画。
-    let mut vcs_dirty = false;
     // resize 后延迟补画 prompt：等 zle 重绘 占位符+buffer 透传完（约 60ms）再画前缀，
     // 避免画 prompt 早于 zle 重绘被占位符覆盖、或光标停在 buffer 前。
     let mut resize_prompt_at: Option<std::time::Instant> = None;
@@ -583,29 +587,19 @@ fn main() -> anyhow::Result<()> {
                         .take()
                         .map(|t| t.elapsed().as_secs_f64())
                         .unwrap_or(0.0);
-                    at_prompt = false; // 新 prompt 周期：画 header 前光标不在输入行
-                    // 立即用缓存的旧状态画 header；cwd 匹配才有，否则空。
-                    let vcs = last_vcs
-                        .as_ref()
-                        .filter(|(cwd, _)| cwd == &info.cwd)
-                        .and_then(|(_, s)| s.as_ref());
+                    at_prompt = false; // 新 prompt 周期：header 回填前光标不在输入行
                     if instant_drawn {
-                        // 第一次 precmd：清屏把 instant header 刷新成真正状态
+                        // 第一次 precmd：清屏把 instant header 抹掉;真正的 header
+                        // 等 shell 渲染多行占位后由 `p`/marker 回填(见 Prompt 分支)。
                         instant_drawn = false;
-                        theme::render_header_cleared_cfg(
-                            &mut stdout,
-                            c as usize,
-                            &config,
-                            &info,
-                            vcs,
-                        )?;
-                    } else {
-                        // 宽松布局：连续 prompt 之间留一个空行(画 header 前先空一行)。
-                        if config.layout.prompt_add_newline {
-                            write!(stdout, "\r\n\r\n")?;
-                        }
-                        theme::render_header_cfg(&mut stdout, c as usize, &config, &info, vcs)?;
+                        write!(stdout, "\x1b[2J\x1b[H")?;
+                    } else if config.layout.prompt_add_newline {
+                        // 宽松布局：连续 prompt 之间留一个空行(header 前先空一行)。
+                        write!(stdout, "\r\n\r\n")?;
                     }
+                    // 先发 prompt 开始标记(早于 shell 的多行占位);header 内容不在这
+                    // 画,否则会与占位自带换行重复推进光标。
+                    theme::prompt_start(&mut stdout)?;
                     stdout.flush()?;
                     File::create(&state.ack)?; // 放行 precmd → shell 输出占位符
                     // bash/fish 无 `p` 宣告：ack 后 shell 打印占位 prompt，
@@ -623,21 +617,21 @@ fn main() -> anyhow::Result<()> {
                     log("drew header, acked");
                 }
                 AnnMsg::Prompt => {
-                    log("p: draw prompt prefix");
-                    // git 结果早于输入行就绪到达 → last_vcs 已更新但 header 未含 vcs；
-                    // 这里先补重画 header（含 vcs），再画 prompt。
-                    if vcs_dirty {
-                        vcs_dirty = false;
-                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                        theme::redraw_header_cfg(
-                            &mut stdout,
-                            last_size.1 as usize,
-                            &config,
-                            current_info.as_ref().unwrap_or(&instant_info),
-                            vcs,
-                        )?;
-                        stdout.flush()?;
-                    }
+                    log("p: fill header + draw prompt prefix");
+                    // zle 已渲染完多行占位(header 行数空行 + 占位符),光标停在占位符后:
+                    // 上移 header 行数回填真实 header,再回行首覆盖占位符为前缀。
+                    let info = current_info.as_ref().unwrap_or(&instant_info);
+                    let vcs = last_vcs
+                        .as_ref()
+                        .filter(|(cwd, _)| cwd == &info.cwd)
+                        .and_then(|(_, s)| s.as_ref());
+                    theme::redraw_header_cfg(
+                        &mut stdout,
+                        last_size.1 as usize,
+                        &config,
+                        info,
+                        vcs,
+                    )?;
                     // 前缀按当前退出码动态生成。
                     let text = crate::render::input_prefix(
                         &config,
@@ -737,9 +731,23 @@ fn main() -> anyhow::Result<()> {
                 Ok(n) => {
                     if pending_placeholder {
                         placeholder_buf.extend_from_slice(&buf[..n]);
-                        if let Some(pos) = find_bytes(&placeholder_buf, placeholder.as_bytes()) {
-                            let end = pos + placeholder.len();
+                        if let Some(pos) = find_bytes(&placeholder_buf, marker.as_bytes()) {
+                            let end = pos + marker.len();
+                            // 先透传占位(多行空行 + 占位符),光标推进到占位符后。
                             stdout.write_all(&placeholder_buf[..end])?;
+                            // 上移 header 行数回填真实 header,再回行首覆盖占位符。
+                            let info = current_info.as_ref().unwrap_or(&instant_info);
+                            let vcs = last_vcs
+                                .as_ref()
+                                .filter(|(cwd, _)| cwd == &info.cwd)
+                                .and_then(|(_, s)| s.as_ref());
+                            theme::redraw_header_cfg(
+                                &mut stdout,
+                                last_size.1 as usize,
+                                &config,
+                                info,
+                                vcs,
+                            )?;
                             let text = crate::render::input_prefix(
                                 &config,
                                 current_info.as_ref().and_then(|i| i.exit_code),
@@ -788,9 +796,8 @@ fn main() -> anyhow::Result<()> {
                     )?;
                     stdout.flush()?;
                 }
-            } else {
-                vcs_dirty = true; // 结果先到（输入行未就绪），p 就绪时补重画 header
             }
+            // 结果先到(输入行未就绪):last_vcs 已更新,`p`/marker 回填时自然带上,无需补画。
         }
 
         // resize 后延迟补画 prompt（等 zle 重绘占位符+buffer 透传完，避免被覆盖）。
