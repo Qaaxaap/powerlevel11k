@@ -245,8 +245,6 @@ pub struct Segment {
     pub states: BTreeMap<String, StateSpec>,
     /// 内容文本(可选;缺省由段渲染函数生成)。
     pub content: Option<String>,
-    /// 图标字符。
-    pub icon: Option<String>,
     /// 段左缘附加文字(icon 之前)。
     pub text_left: Option<AttachText>,
     /// 段中间附加文字(icon 与内容之间;仅当段既有 icon 又有文字时渲染)。
@@ -321,6 +319,21 @@ impl IconMode {
     }
 }
 
+/// 顶层 `icon {}` 里一个图标名的覆盖。
+///
+/// 字段语义(对齐用户约定):
+/// - `all`:字符被引擎**识别类别**后自动落到它能显示的档位 —— NF 私有区字符
+///   只落 nf 档,标准 Unicode(如 ✔)落 nf + compat,纯 ASCII 三档全落。
+/// - `nf` / `compat` / `ascii`:精确覆盖对应档位,**不识别**,配什么用什么。
+///   缺省字段 = 该档不覆盖,回退内置默认表(随 mode)。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IconOverride {
+    pub all: Option<String>,
+    pub nf: Option<String>,
+    pub compat: Option<String>,
+    pub ascii: Option<String>,
+}
+
 /// 顶层配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
@@ -336,6 +349,8 @@ pub struct Config {
     pub vcs_remote_icons: Vec<(String, String)>,
     /// 图标/字体模式。
     pub mode: IconMode,
+    /// 顶层 `icon{}` 覆盖表(图标名 → 覆盖;段渲染时按它引用的图标名查)。
+    pub icon_overrides: BTreeMap<String, IconOverride>,
 }
 
 impl Config {
@@ -372,6 +387,7 @@ impl Config {
         let mut frame = Frame::default();
         let mut vcs_remote_icons = default_remote_icons();
         let mut mode = IconMode::default();
+        let mut icon_overrides: BTreeMap<String, IconOverride> = BTreeMap::new();
 
         for node in doc.nodes() {
             match node.name().value() {
@@ -401,6 +417,7 @@ impl Config {
                         mode = IconMode::from_str(&s);
                     }
                 }
+                "icon" => icon_overrides = parse_icon_table(node),
                 _ => {} // 未知顶层忽略(向前兼容)
             }
         }
@@ -412,8 +429,37 @@ impl Config {
             frame,
             vcs_remote_icons,
             mode,
+            icon_overrides,
         })
     }
+}
+
+/// 解析顶层 `icon` 节点:每个子节点 = 一个图标名的覆盖;覆盖字段是它的子节点
+/// (如 `ok { all "✔" ascii "V" }`,all/nf/compat/ascii 各一)。
+fn parse_icon_table(node: &KdlNode) -> BTreeMap<String, IconOverride> {
+    let mut out = BTreeMap::new();
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            let name = child.name().value().to_string();
+            let mut ov = IconOverride::default();
+            if let Some(fields) = child.children() {
+                for f in fields.nodes() {
+                    let Some(v) = first_value(f).and_then(str_val) else {
+                        continue;
+                    };
+                    match f.name().value() {
+                        "all" => ov.all = Some(v),
+                        "nf" => ov.nf = Some(v),
+                        "compat" => ov.compat = Some(v),
+                        "ascii" => ov.ascii = Some(v),
+                        _ => {}
+                    }
+                }
+            }
+            out.insert(name, ov);
+        }
+    }
+    out
 }
 
 /// 内置 vcs 远端图标表(对齐 p10k 默认 `VCS_GIT_REMOTE_ICONS`;aur/archlinux 用 )。
@@ -440,9 +486,6 @@ fn merge_segment(a: &mut Segment, b: Segment) {
     }
     if b.content.is_some() {
         a.content = b.content;
-    }
-    if b.icon.is_some() {
-        a.icon = b.icon;
     }
     if b.text_left.is_some() {
         a.text_left = b.text_left;
@@ -591,7 +634,6 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
         match name.value() {
             "fg" | "bg" | "bold" => {}
             "content" => seg.content = str_val(e.value()),
-            "icon" => seg.icon = str_val(e.value()),
             "prefix" => seg.prefix = str_val(e.value()),
             "suffix" => seg.suffix = str_val(e.value()),
             "disabled" => seg.shown = !bool_val(e.value()),
@@ -734,7 +776,6 @@ static EMPTY_SEG: Segment = Segment {
     },
     states: BTreeMap::new(),
     content: None,
-    icon: None,
     text_left: None,
     text_middle: None,
     text_right: None,

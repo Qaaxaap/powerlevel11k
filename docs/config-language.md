@@ -19,7 +19,8 @@ rules below bind any change to config parsing or rendering.
 ## Structure
 
 Top-level nodes today: `layout` (required), `segments`, `defaults`,
-`separators`, `frame`, `vcs-remote-icons`, `mode`. Unrecognized top-level
+`separators`, `frame`, `vcs-remote-icons`, `mode`, `icon`. Unrecognized
+top-level
 nodes are ignored (forward-compatible) and skipped.
 
 ## Icon mode
@@ -31,7 +32,27 @@ nodes are ignored (forward-compatible) and skipped.
   glyphs (in p10k they share one case branch), so there are three distinct
   icon sets. `compatible` uses standard Unicode + Powerline glyphs; `ascii`
   uses plain text (e.g. `dir` → no icon, `status` → `ok`/`err`, `go` → `go`).
-- User-configured `icon` / `separators` / `frame` always win over the mode.
+- Top-level `icon {}` overrides a named icon's character per mode. Icon
+  names follow the glyph's meaning (`folder`, `go`, `ok`, `error`,
+  `branch`…) and are shared by segments, so `python` covers
+  `virtualenv`/`anaconda`/`pyenv` at once:
+
+  ```kdl
+  icon {
+      ok     { all "V" }              // ASCII → applies to all three modes
+      error  { all "X" }              // ASCII → all three
+      folder { nf "\u{f07c}" compat "" ascii "" }  // exact per mode
+  }
+  ```
+
+  - `all` auto-detects the glyph class: Nerd Font private-use chars apply
+    only to `nf`; standard Unicode (e.g. ✔) applies to `nf` + `compat`;
+    pure ASCII applies to all three modes.
+  - `nf` / `compat` / `ascii` apply exactly to that mode, verbatim (empty
+    string = explicitly no icon). An omitted field falls back to the
+    engine default table (which follows `mode`).
+- Engine defaults are taken verbatim from p10k `internal/icons.zsh`.
+  User `icon {}` / `separators` / `frame` win over mode defaults.
 
 ## Layout
 
@@ -210,7 +231,7 @@ behavior attributes accumulate.
 ## 结构
 
 目前的顶层节点为:`layout`(必写)、`segments`、`defaults`、
-`separators`、`frame`、`vcs-remote-icons`、`mode`。未识别的顶层节点会被忽略
+`separators`、`frame`、`vcs-remote-icons`、`mode`、`icon`。未识别的顶层节点会被忽略
 (向前兼容)并跳过渲染。
 
 ## 图标模式
@@ -222,7 +243,24 @@ behavior attributes accumulate.
   (p10k 里二者共用一个 case 分支)，因此实际是三套图标集。`compatible`
   用标准 Unicode + Powerline 字形；`ascii` 用纯文本(如 `dir` 无图标、
   `status` 显示 `ok`/`err`、`go` 显示 `go`)。
-- 用户显式配置的 `icon` / `separators` / `frame` 始终优先于 mode。
+- 顶层 `icon {}` 按**图标名**逐档覆盖某个图标的字符。图标名跟着字形语义走
+  (`folder`、`go`、`ok`、`error`、`branch`…)，多个段共享一个图标名时一处
+  生效(如 `python` 同时覆盖 `virtualenv`/`anaconda`/`pyenv`)：
+
+  ```kdl
+  icon {
+      ok     { all "V" }              // 纯 ASCII → 三档全落
+      error  { all "X" }
+      folder { nf "\u{f07c}" compat "" ascii "" }  // 逐档精确
+  }
+  ```
+
+  - `all` 自动识别字符类别：Nerd Font 私有区字符只落 `nf` 档；标准
+    Unicode(如 ✔)落 `nf` + `compat`；纯 ASCII 三档全落。
+  - `nf` / `compat` / `ascii` 精确覆盖对应档，配什么用什么(空串=显式无
+    图标)；缺省字段回退引擎默认表(随 `mode` 变)。
+- 引擎默认字符逐字取自 p10k `internal/icons.zsh`。`icon {}` /
+  `separators` / `frame` 优先于 mode 默认。
 
 ## 布局
 
