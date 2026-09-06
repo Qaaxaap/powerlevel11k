@@ -600,6 +600,10 @@ fn main() -> anyhow::Result<()> {
                             vcs,
                         )?;
                     } else {
+                        // 宽松布局：连续 prompt 之间留一个空行(画 header 前先空一行)。
+                        if config.layout.prompt_add_newline {
+                            write!(stdout, "\r\n\r\n")?;
+                        }
                         theme::render_header_cfg(&mut stdout, c as usize, &config, &info, vcs)?;
                     }
                     stdout.flush()?;

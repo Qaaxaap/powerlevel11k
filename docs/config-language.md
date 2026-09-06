@@ -33,6 +33,8 @@ are ignored (forward-compatible) and skipped.
 - A line may also contain `text "…"` static text, styled with the `text`
   segment. `$VAR` / `${VAR}` inside expand to environment variables.
 - For an empty row, declare `line {}`.
+- `layout { prompt-add-newline #true … }` inserts a blank line between
+  consecutive prompts (p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`, "loose" layout).
 
 ## Segments
 
@@ -206,6 +208,8 @@ behavior attributes accumulate.
 - 行内允许 `text "…"` 静态文本，按 `text` 段样式渲染;其中
   `$VAR` / `${VAR}` 会展开成环境变量。
 - 如果您需要空行，请用 `line {}` 进行声明。
+- `layout { prompt-add-newline #true … }` 在连续 prompt 之间插入一个空行
+  （p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`，即「宽松」布局）。
 
 ## 段
 

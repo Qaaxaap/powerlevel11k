@@ -121,6 +121,8 @@ pub struct Layout {
     pub left: Vec<Vec<Element>>,
     pub right: Vec<Vec<Element>>,
     pub add_newline: bool,
+    /// 宽松布局:连续 prompt 之间留一个空行(p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`)。
+    pub prompt_add_newline: bool,
 }
 
 /// 分隔符/端符族(可配置字符,powerline 风格)。
@@ -486,6 +488,9 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
                 "right" => layout.right = parse_lines(child),
                 "add-newline" => {
                     layout.add_newline = first_value(child).map(bool_val).unwrap_or(false);
+                }
+                "prompt-add-newline" => {
+                    layout.prompt_add_newline = first_value(child).map(bool_val).unwrap_or(false);
                 }
                 _ => {}
             }
