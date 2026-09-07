@@ -6,9 +6,8 @@
 //! [`build`] 的默认参数。引擎能力未覆盖的 p10k 参数不搬。
 
 use crate::config::{
-    Color, Config, Element, Frame, FramePiece, Layout, Prop, Segment, Separators, StateSpec, Style,
+    Color, Config, Element, Frame, FramePiece, Prop, Segment, Separators, StateSpec, Style,
 };
-use std::collections::BTreeMap;
 
 /// classic 段背景四档（Lightest/Light/Dark/Darkest）。
 pub const BG_COLORS: [u8; 4] = [240, 238, 236, 234];

@@ -199,7 +199,7 @@ pub struct AttachText {
 }
 
 /// 单个段的配置。
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Segment {
     /// 段默认样式。
     pub style: Style,
@@ -219,6 +219,24 @@ pub struct Segment {
     pub shown: bool,
     /// 其它行为属性(如 `shorten-dir-length`、`threshold-seconds`,由段渲染函数按需读)。
     pub props: BTreeMap<String, Prop>,
+}
+
+impl Default for Segment {
+    /// 段默认显示（`shown=true`），与 `parse` 缺省一致。
+    fn default() -> Self {
+        Segment {
+            style: Style::default(),
+            states: BTreeMap::new(),
+            content: None,
+            text_left: None,
+            text_middle: None,
+            text_right: None,
+            prefix: None,
+            suffix: None,
+            shown: true,
+            props: BTreeMap::new(),
+        }
+    }
 }
 
 impl Segment {

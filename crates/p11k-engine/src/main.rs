@@ -32,6 +32,7 @@ mod dir_shorten;
 mod presets;
 mod render;
 mod theme;
+mod wizard;
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -345,6 +346,11 @@ end
 "#;
 
 fn main() -> anyhow::Result<()> {
+    // `p11k configure`：进入交互配置向导，不 spawn shell。
+    if std::env::args().any(|a| a == "configure") {
+        return crate::wizard::run();
+    }
+
     // 递归检测：P11K_ENGINE 已设 = 本引擎是被内部 shell 的 rc 引导再次调用的
     // 多余实例（用户 rc 里引导行忘了加判断，或写错）。降级为 exec 一个
     // 干净 shell，并提示用户修复。
