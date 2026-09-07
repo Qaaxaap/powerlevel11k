@@ -306,6 +306,22 @@ pub struct Config {
     pub icon_overrides: BTreeMap<String, IconOverride>,
 }
 
+impl Default for Config {
+    /// 空配置:`vcs_remote_icons` 用内置默认表(与 `parse` 缺省一致)。
+    fn default() -> Self {
+        Config {
+            layout: Layout::default(),
+            segments: BTreeMap::new(),
+            defaults: Style::default(),
+            separators: Separators::default(),
+            frame: Frame::default(),
+            vcs_remote_icons: default_remote_icons(),
+            mode: IconMode::NerdfontComplete,
+            icon_overrides: BTreeMap::new(),
+        }
+    }
+}
+
 impl Config {
     /// 解析 KDL 文本为配置。
     pub fn parse(src: &str) -> Result<Config, String> {
@@ -315,7 +331,7 @@ impl Config {
 
     /// 内置 lean 主题。
     pub fn default_lean() -> Result<Config, String> {
-        Self::parse(crate::presets::LEAN)
+        Ok(crate::presets::build(crate::presets::PresetKind::Lean))
     }
 
     /// 序列化为 KDL 文本;`parse(to_kdl(cfg))` 应得到等价配置(round-trip)。
@@ -1059,16 +1075,11 @@ mod tests {
 
     #[test]
     fn to_kdl_roundtrips_presets() {
-        for kdl in [
-            crate::presets::LEAN,
-            crate::presets::CLASSIC,
-            crate::presets::RAINBOW,
-            crate::presets::PURE,
-        ] {
-            let cfg = Config::parse(kdl).unwrap();
+        for kind in crate::presets::PresetKind::ALL {
+            let cfg = crate::presets::build(kind);
             let out = cfg.to_kdl();
             let cfg2 = Config::parse(&out).unwrap();
-            assert_eq!(cfg, cfg2, "round-trip 失败,输出:\n{out}");
+            assert_eq!(cfg, cfg2, "{} round-trip 失败,输出:\n{out}", kind.name());
         }
     }
 
@@ -1270,7 +1281,10 @@ icon {
                 .flatten()
                 .any(|e| matches!(e, Element::Seg(s) if s == "prompt_char"))
         );
-        assert!(c.layout.add_newline);
+        assert!(
+            !c.layout.add_newline && !c.layout.prompt_add_newline,
+            "lean 紧凑,无空行"
+        );
     }
 
     #[test]

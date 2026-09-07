@@ -111,11 +111,8 @@ fn load_config() -> Config {
         }
     }
     if let Some(name) = preset_from_args() {
-        if let Some(p) = presets::by_name(&name) {
-            return Config::parse(p.kdl).unwrap_or_else(|e| {
-                eprintln!("p11k: 预设 {name:?} 解析失败({e});回退内置 lean 主题");
-                fallback()
-            });
+        if let Some(kind) = presets::by_name(&name) {
+            return presets::build(kind);
         }
         eprintln!("p11k: 未知预设 {name:?}(可选 lean/classic/rainbow/pure);用内置 lean 主题");
     }
