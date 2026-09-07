@@ -1,9 +1,9 @@
 //! 渲染器：把 KDL 配置驱动成多行 header 文本。
 //!
-//! - **几何**：按 [`Config::layout`] 的行结构，逐行「左段串 + 右段右对齐」。
-//! - **段**：内置段（dir/vcs/status/time/command_execution_time/background_jobs/
+//! - 几何：按 [`Config::layout`] 的行结构，逐行「左段串 + 右段右对齐」。
+//! - 段：内置段（dir/vcs/status/time/command_execution_time/background_jobs/
 //!   prompt_char/os/text）按配置渲染，可叠加左/中/右附加文字。
-//! - **色**：配置的 `fg`/`bg`（三段回退）+ 段间 powerline 分隔符与背景块。
+//! - 色：配置的 `fg`/`bg`（三段回退）+ 段间 powerline 分隔符与背景块。
 //!
 //! 输入：配置 + 当前状态。输出：header 的 ANSI 字符串。
 
@@ -62,22 +62,21 @@ pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
 }
 
 /// transient 折叠时的单行提示符(zsh 格式)。引擎预计算 zsh 的 prompt 转义,
-/// zsh 在 zle-line-finish 里换 PROMPT + reset-prompt 同步折叠(时序实验证明
-/// 引擎异步画赶不上 zsh 的回显)。用 `%F{...}` 原生转义(zsh 自动算零宽度),
+/// zsh 在 zle-line-finish 里换 PROMPT + reset-prompt 同步折叠。
+/// 评估得出目前无法简单迁移到 bash/fish，遂使用 zsh 独占做法。
+/// 用 `%F{...}` 原生转义，
 /// 条件表达式 `%(?\x01OK\x01ERR)` 按上一条命令退出码选色。
 pub fn transient_prompt_zsh(config: &Config) -> String {
     let pc = config.segment("prompt_char");
     let ch = pc.char_for(None, "❯");
     let ok = pc.effective_style(None, &config.defaults);
     let err = pc.effective_style(Some("ERROR"), &config.defaults);
-    // ❯ 后补一个空格,与正常态输入行前缀的间距一致(否则命令回显紧贴 ❯)。
     let ok_prompt = format!("{}{} ", zsh_fg(&ok.fg), ch);
     let err_prompt = format!("{}{} ", zsh_fg(&err.fg), ch);
     format!("%(?\u{1}{}\u{1}{})%f", ok_prompt, err_prompt)
 }
 
-/// Color → zsh 的 `%F{...}` 前景色转义(transient prompt 用)。zsh 原生认识
-/// 这些转义并自动算零宽度,不需要 `%{...%}` 包裹 ANSI。
+/// Color → zsh 的 `%F{...}` 前景色转义(transient prompt 用)。
 fn zsh_fg(c: &Color) -> String {
     match c {
         Color::Default => "%f".into(),
@@ -106,13 +105,13 @@ pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
-/// 一段渲染结果:文本 + 它的样式(渲染期才装配 ANSI)。
+/// 一段渲染结果:文本 + 它的样式。
 struct SegmentText {
     text: String,
     style: Style,
 }
 
-/// 渲染 header 为**逐行内容**(每行=左段串+右段右对齐,不含光标/清屏/换行)。
+/// 渲染 header 为逐行内容(每行=左段串+右段右对齐,不含光标/清屏/换行)。
 /// 供 theme 层逐行 `\r\e[K` + 内容 + `\r\n` 画到终端。
 pub fn render_header_lines(
     config: &Config,
@@ -196,7 +195,7 @@ fn render_row(
         .collect()
 }
 
-/// 渲染单个段。返回的 `text` 已是**上色后的 ANSI**;`style` 供段间分隔符/块背景。
+/// 渲染单个段。返回的 `text` 已是上色后的 ANSI;`style` 供段间分隔符/块背景。
 fn render_segment(
     config: &Config,
     name: &str,
@@ -206,7 +205,7 @@ fn render_segment(
 ) -> SegmentText {
     let seg = config.segment(name);
     let mut style = seg.effective_style(None, &config.defaults);
-    // 保证段都有背景(哪怕默认色):无显式 bg → defaults.bg → 内置默认背景。
+    // 保证段都有背景:无显式 bg → defaults.bg → 内置默认背景。
     if style.bg == Color::Default {
         style.bg = if config.defaults.bg != Color::Default {
             config.defaults.bg.clone()
@@ -233,7 +232,7 @@ fn render_segment(
             paint(&status_text(info, &ok, &err), &style)
         }
         "prompt_char" => {
-            // 提示符字符随退出码进 ERROR state(char/样式都可按态配)。
+            // 提示符字符随退出码进 ERROR state。
             let state = prompt_state(info.exit_code);
             style = seg.effective_style(state, &config.defaults);
             paint(seg.char_for(state, "❯"), &style)
@@ -427,9 +426,8 @@ const fn icon(n: &'static str, c: &'static str, a: &'static str) -> IconEntry {
     }
 }
 
-/// 图标名 → 三种字体档位的默认字符。`nerdfont-complete` 与 `nerdfont-fontconfig`
-/// 在 p10k 源码(`internal/icons.zsh`)里是同一 case 分支、字形完全相同,故合并为
-/// 一档 `nerdfont`。字符严格照 p10k;段渲染经 [`segment_icon_key`] 引用图标名,
+/// 图标名 → 三种字体档位的默认字符。
+/// 段渲染经 [`segment_icon_key`] 引用图标名,
 /// 用户可在顶层 `icon{}` 里按图标名覆盖。
 fn icon_default(key: &str) -> Option<IconEntry> {
     match key {
@@ -579,7 +577,7 @@ fn icon_str(config: &Config, key: &str) -> Option<String> {
             crate::config::IconMode::Ascii => ov.ascii.as_ref(),
         };
         if let Some(c) = exact {
-            return Some(c.clone()); // 精确档:配什么用什么(空串=显式无图标)。
+            return Some(c.clone());
         }
         if let Some(a) = &ov.all {
             if all_covers(a, &config.mode) {
@@ -591,7 +589,7 @@ fn icon_str(config: &Config, key: &str) -> Option<String> {
     Some(icon_by_mode(&e, &config.mode))
 }
 
-/// `all` 字段的字符自动识别:NF 私有区字符只落 nf 档,标准 Unicode(如 ✔)落
+/// `all` 字段的字符自动识别:NF 私有区字符只落 nf 档,标准落
 /// nf+compat,纯 ASCII 三档全落。
 fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
     match mode {
@@ -993,8 +991,6 @@ fn public_ip_text() -> String {
     run_cmd("curl", &["-s", "--max-time", "4", "https://v4.ident.me/"]).unwrap_or_default()
 }
 
-// 补齐一批 p10k 常见段:虚拟化/容器/目录权限/history 作用域/语言栈工具/包管理器。
-
 fn detect_virt() -> String {
     run_cmd("systemd-detect-virt", &[])
         .filter(|v| v != "none")
@@ -1121,8 +1117,6 @@ fn fvm_text(cwd: &str) -> String {
     }
     String::new()
 }
-
-// 批次8:云子类 / 框架 / 待办命令段。
 
 /// 找 cwd 祖先含 `filename` 的目录。
 fn find_up_dir(cwd: &str, filename: &str) -> Option<String> {
@@ -1367,7 +1361,6 @@ fn cpu_arch() -> String {
 }
 
 // 环境管理器/*env 家族段:从环境变量或 cwd 祖先的 `.X-version` 文件取当前版本,
-// 沿用 p10k 的"环境变量 > 本地文件 > 全局"优先级,激活才显示。
 
 fn basename(p: &str) -> String {
     p.rsplit('/').next().unwrap_or(p).to_string()
@@ -1994,7 +1987,7 @@ mod tests {
 
     #[test]
     fn background_blocks_and_powerline_arrow() {
-        // dir/vcs 都有背景,且不同 → 段间画 ``(fg=前段bg, bg=后段bg)。
+        // dir/vcs 都有背景,且不同 → 段间画 ``。
         let cfg = Config::parse(
             "layout { left { line { dir #true; vcs #true } } }\n\
              segments { dir { bg 39 } }\n",
@@ -2102,7 +2095,6 @@ mod tests {
 
     #[test]
     fn transient_prompt_zsh_default_color_no_leading_space() {
-        // prompt_char 没配 fg → Default → %f,不应产生前导空格(否则 ❯ 前多一个空格)。
         let cfg = Config::parse("layout { left { line { dir #true } } }\nsegments { prompt_char }")
             .unwrap();
         let s = transient_prompt_zsh(&cfg);
@@ -2327,7 +2319,6 @@ mod tests {
 
     #[test]
     fn system_resource_segments_resolve() {
-        // /proc 数据源恒有(开发机为 Linux);battery 依赖硬件,不测。
         assert!(!load().is_empty(), "load 应从 /proc/loadavg 读出");
         assert!(!ram().is_empty(), "ram 应是 MemAvailable");
         assert!(!disk_usage("/tmp").is_empty(), "disk_usage 应有 df 结果");

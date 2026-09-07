@@ -121,24 +121,18 @@ fn detect_shell() -> Shell {
 }
 
 /// 生成给 shell 的 bootstrap .zshrc。
-///
-/// 结构：引擎协议（函数定义）→ source 用户配置（P11K_USER_ZSHRC，可选）
-/// → 重申协议不变量覆盖用户自定。
-/// 时序：precmd 宣告 `h` → 轮询 ack（引擎画完 header 才 touch）→ 返回后
-/// zsh 渲染占位 PROMPT（zle）→ zle-line-init 宣告 `p` → 引擎回行首画前缀
-/// 覆盖占位符。占位 prompt 由 zle 或其等价物渲染，主题均由引擎负责。
+/// 时序：precmd 宣告 `h` → 轮询 ack → 返回后 zsh 渲染占位 PROMPT（zle）
+/// → zle-line-init 宣告 `p` → 引擎回行首画前缀覆盖占位符。
+/// 占位 prompt 由 zle 或其等价物渲染，主题均由引擎负责。
 const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap —— 协议层 + 用户配置。
-# ===== 引擎协议：宣告钩子函数定义 =====
+# ===== 引擎协议 =====
 _p11k_status=0
 _p11k_pwd=$PWD
 
-# precmd：记录退出码和目录，宣告 `h` 后等引擎 ack 才返回，
-# 使 header 先画、占位 prompt 后输出，顺序保证。
-# precmd 不是 zle hook，sleep 轮询安全。
 _p11k_precmd() {
   _p11k_status=$?
   _p11k_pwd=$PWD
-  # transient 折叠后 PROMPT 是单行 ❯;这里恢复多行占位(几何回到 header 行数)。
+  # 用于恢复 transient 折叠后的 PROMPT
   PROMPT='__'
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
@@ -146,11 +140,8 @@ _p11k_precmd() {
 }
 
 # zle 渲染完占位 prompt 后宣告 `p`：引擎收到后回行首画真实前缀覆盖占位符。
-# zle hook 里不能跑外部命令，只写文件，引擎异步处理（poll ~5ms）。
-# 引擎的前缀只覆盖占位符所在列，即使引擎稍慢、用户已输入，也不会碰到输入内容。
+# zle hook 只写文件，引擎异步处理（poll ~5ms）。
 _p11k_line_init() {
-  # 续行不是主 prompt：不发 p，让 zsh 默认续行符 '> '
-  # 原样显示（否则引擎会回行首画前缀，把续行符覆盖）。
   [[ ${CONTEXT:-start} == cont ]] && return
   if [[ -n "${_p11k_user_line_init:-}" ]] && (( $+functions[$_p11k_user_line_init] )); then
     "$_p11k_user_line_init"   # 用户注册的 handler（如 autosuggestions）先跑
@@ -163,35 +154,30 @@ _p11k_line_init() {
   else
     print -r -- "v"$'\t'"main" >> "$P11K_ANNOUNCE"
   fi
-  # prompt 已就绪，清掉防递归标记：用户手动 exec zsh 重载配置时，新 zsh 无
-  # P11K_ENGINE，引导行会重新 exec p11k 进引擎。
+  # prompt 已就绪，清除防递归标记
   unset P11K_ENGINE
 }
 
-# ===== 用户配置（可选）：先于协议不变量加载 =====
+# ===== 用户配置 =====
 # 优先 $P11K_USER_ZSHRC，否则默认 $HOME/.zshrc。
-# 注意：真实 rc 里若加载主题（ZSH_THEME=p10k），主题 hook 会抢渲染——见
-# README，迁移到 p11k 后应注释掉 ZSH_THEME。下面的"协议不变量"只压回占位
-# PROMPT 并链式保留 precmd/zle hook，无法关掉主题自身的渲染逻辑。
 if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
   source "$P11K_USER_ZSHRC"
 elif [[ -r "$HOME/.zshrc" ]]; then
   source "$HOME/.zshrc"
 fi
 
-# ===== 协议不变量：source 后重申 =====
-# PROMPT 是纯 ASCII 占位，zle 的几何由此自洽；真实 prompt 由引擎绘制。
+# ===== 协议不变量 =====
+# PROMPT 为占位。
 PROMPT='__'
 RPROMPT=''
-# 续行提示：zsh 用 PROMPT2，与 p10k 一致设 '> '；避免被用户配置或残留设置改掉。
 PROMPT2='> '
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
-# zle-line-init 单 handler：保留用户注册的，再注册引擎宣告。
+# zle-line-init 单 handler，保留用户注册的，再注册引擎宣告。
 if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p11k_line_init ]]; then
   _p11k_user_line_init=${widgets[zle-line-init]#user:}
 fi
 zle -N zle-line-init _p11k_line_init
-# vi_mode:zle-keymap-select 时把当前 keymap 上报给引擎(更新编辑模式段并重画)。
+# vi_mode:zle-keymap-select 时把当前 keymap 上报给引擎。
 _p11k_vi_mode() {
   local m=$KEYMAP
   if [[ ${options[vi]} == on ]]; then
@@ -208,9 +194,8 @@ if [[ -n "${widgets[zle-keymap-select]:-}" && "${widgets[zle-keymap-select]}" !=
   _p11k_user_vi_mode=${widgets[zle-keymap-select]#user:}
 fi
 zle -N zle-keymap-select _p11k_vi_mode
-# transient:命令提交时把多行 header 折叠成单行 ❯(zsh 独占,依赖 zle reset-prompt)。
-# 时序上 reset-prompt 是同步的,引擎异步画 ❯ 赶不上 zsh 回显,所以这里的单行
-# ❯ 用引擎预计算的 %F 转义(P11K_TRANSIENT_PROMPT)由 zsh 自己渲染。
+# transient:命令提交时把多行 header 折叠成单行 ❯。
+# 使用 zsh 自行渲染折叠后的 prompt。
 _p11k_line_finish() {
   if [[ -n "${_p11k_user_line_finish:-}" ]] && (( $+functions[$_p11k_user_line_finish] )); then
     "$_p11k_user_line_finish"
@@ -250,7 +235,7 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 "#;
 
 /// bash 没有 `p` 宣告，引擎 ack 后 bash 直接打印 PS1（`__`），引擎靠字节匹配
-/// 画前缀覆盖（见主循环）。resize 用 trap WINCH 检测尺寸变化宣告 `r`。
+/// 画前缀覆盖。resize 用 trap WINCH 检测尺寸变化宣告 `r`。
 const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) —— 协议层 + 用户配置。
 PS1='__'
 
@@ -276,14 +261,14 @@ _p11k_winch() {
 }
 trap '_p11k_winch' WINCH
 
-# ===== 用户配置（可选）：先于协议不变量加载 =====
+# ===== 用户配置 =====
 if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
   source "$P11K_USER_ZSHRC"
 elif [[ -r "$HOME/.bashrc" ]]; then
   source "$HOME/.bashrc"
 fi
 
-# ===== 协议不变量：source 后重申 =====
+# ===== 协议不变量 =====
 PS1='__'
 PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
@@ -316,18 +301,17 @@ function fish_prompt
         sleep 0.005
     end
     rm -f $P11K_ACK
-    # 占位 prompt（不带换行）：引擎在透传流里匹配占位符绘制前缀覆盖。
     printf '__'
 end
 
-# ===== 用户配置（可选）：先于协议不变量加载 =====
+# ===== 用户配置 =====
 if test -n "$P11K_USER_ZSHRC"; and test -r "$P11K_USER_ZSHRC"
     source "$P11K_USER_ZSHRC"
 else if test -r "$HOME/.config/fish/config.fish"
     source "$HOME/.config/fish/config.fish"
 end
 
-# ===== 协议不变量：source 后重申 =====
+# ===== 协议不变量 =====
 set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 function fish_prompt
@@ -387,8 +371,8 @@ fn main() -> anyhow::Result<()> {
     }
     let prefix = crate::render::input_prefix(&config, None);
     // 占位符带 header 行数个换行:shell 的 prompt 几何因此把 header 行也算进去,
-    // zsh 才能用 reset-prompt 干净折叠 transient(对齐 p10k 的多行 PROMPT)。
-    // marker 是换行之后那段可见占位字节,bash/fish 靠匹配它定位「占位已输出」。
+    // zsh 才能用 reset-prompt 干净折叠 transient。
+    // marker 是换行之后那段可见占位字节,bash/fish 靠匹配它定位占位已输出。
     let header_rows = config.layout.left.len().max(config.layout.right.len());
     let marker = "_".repeat(prefix.width.max(1));
     let placeholder = format!("{}{}", "\n".repeat(header_rows), marker);
@@ -437,12 +421,11 @@ fn main() -> anyhow::Result<()> {
     cmd.env("P11K_ACK", &state.ack);
     // portable-pty 的 spawn_command 默认把 current_dir 设成 HOME；这里显式
     // 用引擎启动时的 cwd，让内部 shell 落在用户当初 `exec p11k` 的目录
-    // （git 状态等按此目录计算）。
     cmd.cwd(std::env::current_dir()?);
     // 递归标志：内部 shell 及其子进程若再 exec p11k，入口检测到即降级，
     cmd.env("P11K_ENGINE", "1");
-    // transient 是 zsh 独占能力:把引擎预计算的单行提示符(zsh %F 转义)交给 shell,
-    // zle-line-finish 里换 PROMPT + reset-prompt 同步折叠。bash/fish 不读这个变量。
+    // transient 是 zsh 独占能力，把引擎预计算的单行提示符(zsh %F 转义)交给 shell,
+    // zle-line-finish 里换 PROMPT + reset-prompt 同步折叠。
     if config.layout.transient_prompt && shell == Shell::Zsh {
         cmd.env(
             "P11K_TRANSIENT_PROMPT",
@@ -800,11 +783,10 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        // 异步 git 结果：只认最新 generation；且只在光标停在输入行时重画
-        // header（否则 redraw 的上移会踩到命令输出）。
+        // 异步 git 结果：只使用最新 generation；且只在光标停在输入行时重画 header
         while let Ok(res) = res_rx.try_recv() {
             if res.generation != git_gen {
-                continue; // 过期结果（期间又出了新 prompt）
+                continue; // 过期结果
             }
             let cwd = current_info
                 .as_ref()
@@ -824,10 +806,10 @@ fn main() -> anyhow::Result<()> {
                     stdout.flush()?;
                 }
             }
-            // 结果先到(输入行未就绪):last_vcs 已更新,`p`/marker 回填时自然带上,无需补画。
+            // 输入行未就绪:last_vcs 已更新,`p`/marker 回填时自然带上,无需补画。
         }
 
-        // resize 后延迟补画 prompt（等 zle 重绘占位符+buffer 透传完，避免被覆盖）。
+        // resize 后延迟补画 prompt。
         if let Some(deadline) = resize_prompt_at {
             if std::time::Instant::now() >= deadline {
                 resize_prompt_at = None;

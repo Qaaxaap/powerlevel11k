@@ -1,8 +1,7 @@
 //! 主题绘制：引擎在 prompt 钩子时刻向真实终端输出主题 header。
 //!
-//! 分工：shell 给一个多行占位 prompt（header 行数个换行 + 宽度 = 引擎前缀
-//! 宽度的占位符），让 shell 的几何把 header 行也算进去。引擎不解析 pty 输出
-//! 的 ANSI，只做字节透传 + 光标定位：
+//! 分工：shell 给一个多行占位 prompt，让 shell 的几何把 header 行也算进去。
+//! 引擎不解析 pty 输出的 ANSI，只做字节透传 + 光标定位：
 //! - `prompt_start`：`h` 宣告时先发 OSC133A（早于 shell 的多行占位）。
 //! - `redraw_header_cfg`：占位透传后上移 header 行数回填真实 header（行内容
 //!   由 [`crate::render::render_header_lines`] 按 KDL 配置生成），并恢复光标。
@@ -74,7 +73,7 @@ pub fn render_header_cfg(
 }
 
 /// 回填/重画 header:保存输入行光标、上移到 header 行 1、逐行重画、恢复。
-/// 上移行数 = 配置 header 行数;不碰输入行(用户可能已在打字)。
+/// 上移行数 = 配置 header 行数;不碰输入行。
 /// 占位协议下,shell 已先渲染出 header 行数的空行占位,这里把真实内容覆盖上去,
 /// 最后 `\x1b[u` 回到输入行光标。resize 重画与 `p` 宣告后的首次回填复用同一段。
 pub fn redraw_header_cfg(

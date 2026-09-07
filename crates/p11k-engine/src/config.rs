@@ -1,23 +1,20 @@
 //! 主题配置:KDL 解析 + 内置 lean 主题。
 //!
-//! 用成品 crate [`kdl`](kdl-rs,KDL 官方参考实现)解析;**KDL v2**,布尔字面量 =
-//! [`#true`/`#false`](v2 规范),数字/字符串/颜色原生。
+//! 用 crate [`kdl`](kdl-rs,KDL 官方参考实现)解析，使用 KDL v2
 //!
-//! # 泛用配置模型(对齐 p10k 抽象,用 KDL 表达)
-//!
-//! 布局用**行结构**表达多行(不是 p10k 元素序列里插 `newline` 标记):
-//! - **布局**:`layout { left { line {…} line {…} } right { line {…} } }`。
+//! 布局用行结构表达多行:
+//! - 布局:`layout { left { line {…} line {…} } right { line {…} } }`。
 //!   `left`/`right` 下每个 `line` 节点即一行;行内是段节点(`dir #true` 等,布尔原生,
 //!   `#false`/未列出则不启用,顺序=children 顺序);行与行之间就是换行。
-//! - **段**:`segments { dir fg=39 bold=#true shorten-strategy="t" … }`。
-//!   段节点带**属性**:`fg`、`bg`、`bold`、
+//! - 段:`segments { dir fg=39 bold=#true shorten-strategy="t" … }`。
+//!   段节点带属性:`fg`、`bg`、`bold`、
 //!   `content`/`icon`/`prefix`/`suffix`、`disabled`;其余进
 //!   [`Segment::props`](行为,段渲染函数按需读)。
-//! - **state 覆盖**:段节点下 `state <NAME> fg=…` 子节点;其样式覆盖段默认,
+//! - state 覆盖:段节点下 `state <NAME> fg=…` 子节点;其样式覆盖段默认,
 //!   即 p10k `SEG[_STATE]_ATTR` 三段回退(段STATE → 段 → [`Config::defaults`] 全局兜底)。
-//! - **默认**:顶层 `defaults { … }` 是全局回退样式。
+//! - 默认:顶层 `defaults { … }` 是全局回退样式。
 //!
-//! 段功能由代码实现,外观/布局全由配置驱动——换配置即换主题,不硬编码视觉。
+//! 段功能由代码实现,外观/布局全由配置驱动，换配置即换主题,不硬编码视觉。
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -291,9 +288,9 @@ impl Segment {
     }
 }
 
-/// 图标/字体模式(对齐 p10k `POWERLEVEL9K_MODE`)。决定内置段图标的字符集。
-/// `nerdfont-complete` 与 `nerdfont-fontconfig` 共用同一套 Nerd Font 字形
-/// (p10k 里也是同一 case 分支);`compatible` 用标准 Unicode + Powerline 字体,
+/// 图标/字体模式。决定内置段图标的字符集。
+/// `nerdfont-complete` 与 `nerdfont-fontconfig` 共用同一套 Nerd Font 字形，
+/// `compatible` 用标准 Unicode + Powerline 字体,
 /// 不依赖 Nerd Font;`ascii` 纯 ASCII。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum IconMode {
@@ -321,11 +318,10 @@ impl IconMode {
 
 /// 顶层 `icon {}` 里一个图标名的覆盖。
 ///
-/// 字段语义(对齐用户约定):
-/// - `all`:字符被引擎**识别类别**后自动落到它能显示的档位 —— NF 私有区字符
-///   只落 nf 档,标准 Unicode(如 ✔)落 nf + compat,纯 ASCII 三档全落。
-/// - `nf` / `compat` / `ascii`:精确覆盖对应档位,**不识别**,配什么用什么。
-///   缺省字段 = 该档不覆盖,回退内置默认表(随 mode)。
+/// 字段语义:
+/// - `all`:字符被引擎识别类别后自动落到它能显示的档位， NF 私有区字符
+///   只落 nf 档,标准 Unicode 落 nf + compat,纯 ASCII 三档全落。
+/// - `nf` / `compat` / `ascii`:覆盖对应档位。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct IconOverride {
     pub all: Option<String>,
@@ -386,8 +382,8 @@ impl Config {
         let mut separators = Separators::default();
         let mut frame = Frame::default();
         let mut vcs_remote_icons = default_remote_icons();
-        // 缺省 mode 看 locale:p10k 用 langinfo[CODESET],非 UTF-8 终端连标准
-        // Unicode 都显示不了,自动降级 ascii;用户显式写 `mode` 时覆盖(见下)。
+        // 缺省 mode 看 locale,非 UTF-8 终端无法
+        // 显示 Unicode ，自动降级 ascii;用户显式写 `mode` 时覆盖。
         let mut mode = if locale_is_utf8() {
             IconMode::NerdfontComplete
         } else {
@@ -468,7 +464,7 @@ fn parse_icon_table(node: &KdlNode) -> BTreeMap<String, IconOverride> {
     out
 }
 
-/// 内置 vcs 远端图标表(对齐 p10k 默认 `VCS_GIT_REMOTE_ICONS`;aur/archlinux 用 )。
+/// 内置 vcs 远端图标表。
 fn default_remote_icons() -> Vec<(String, String)> {
     vec![
         ("github".into(), "\u{f113}".into()),            // 
@@ -479,10 +475,6 @@ fn default_remote_icons() -> Vec<(String, String)> {
     ]
 }
 
-/// 当前 locale codeset 是否 UTF-8。p10k 用 zsh `langinfo[CODESET]` 判断:非
-/// UTF-8 终端(控制台/C locale)显示不了任何非 ASCII,自动降级 ascii。这里读
-/// LC_ALL/LC_CTYPE/LANG 的 codeset —— 引擎进程没 setlocale,C 库的 nl_langinfo
-/// 不反映环境变量,直接解析环境变量最可靠。
 fn locale_is_utf8() -> bool {
     for var in ["LC_ALL", "LC_CTYPE", "LANG"] {
         if let Ok(v) = std::env::var(var) {
@@ -774,9 +766,9 @@ fn parse_separators(node: &KdlNode) -> Separators {
     s
 }
 
-/// 内置 lean 主题(KDL v2)。放在仓库里,不硬编码进渲染逻辑。
+/// 内置 lean 主题(KDL v2)。
 pub const DEFAULT_LEAN: &str = r#"
-// p11k 内置 lean 主题。换文件即换主题。
+// p11k 内置 lean 主题。
 layout {
     left {
         line { dir; vcs }
