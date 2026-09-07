@@ -261,7 +261,7 @@ fn ask_style(out: &mut io::Stdout) -> io::Result<Step<PresetKind>> {
         for (i, k) in PresetKind::ALL.iter().enumerate() {
             line(out, &format!("({})  {}", i + 1, k.title()))?;
             for l in preview_lines(&presets::build(*k)) {
-                line(out, &format!("    {l}"))?;
+                line(out, &l)?;
             }
             line(out, "")?;
         }
