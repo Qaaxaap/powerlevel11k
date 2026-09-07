@@ -8,7 +8,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "GPL-3.0-or-later"
+license = "LGPL-3.0-or-later"
 rust-version = "1.85" # edition 2024 的最低支持版本
 
 # workspace 级依赖（各 crate 按需启用，见各 crate 的 Cargo.toml）。

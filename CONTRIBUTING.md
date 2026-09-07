@@ -82,11 +82,11 @@ redirected to Discussions; p10k's history is why this rule exists.
    does not compile or cannot run wastes review time; repeated low-quality
    submissions may lead to contribution restrictions.
 4. Follow the [AI policy](#ai-policy) above.
-5. By submitting a PR you license your contribution under GPLv3.
+5. By submitting a PR you license your contribution under LGPL-3.0-or-later.
 
 ## License
 
-Everything in this repository is GPLv3, including contributions.
+Everything in this repository is LGPL-3.0-or-later, including contributions.
 
 ---
 
@@ -160,8 +160,8 @@ p11k 版本、终端模拟器，以及能复现问题的最小 `.p10k.zsh`/配�
 3. 提交前至少在本地测试一次补丁。不能编译、不能运行的补丁浪费审查
    时间；持续提交低质量补丁可能导致贡献受限。
 4. 遵守上述 [AI 政策](#ai-政策)。
-5. 提交 PR 即表示你同意贡献以 GPLv3 授权。
+5. 提交 PR 即表示你同意贡献以 LGPL-3.0-or-later 授权。
 
 ## 许可证
 
-本仓库所有内容（包括贡献）均为 GPLv3。
+本仓库所有内容（包括贡献）均为 LGPL-3.0-or-later。
