@@ -125,6 +125,10 @@ pub struct Layout {
 /// - `segment`:异底段间箭头(如 powerline ``)。空=不画(纯文本空格)。
 /// - `sub`:同底段间细线(如 ``)。
 /// - `end`:左栏末尾端符(右三角 ``,指向前方/行尾)。
+/// - `left_tail`:左栏首段起始端符(p10k `LEFT_PROMPT_FIRST_SEGMENT_START_SYMBOL`),
+///   左三角 ``,画在最左段之前。
+/// - `right_tail`:右栏末段结束端符(p10k `RIGHT_PROMPT_LAST_SEGMENT_END_SYMBOL`),
+///   右三角 ``,画在最右段之后。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Separators {
     pub segment: String,
@@ -136,6 +140,10 @@ pub struct Separators {
     pub right_segment: String,
     /// 右段**同色**内部细线(如 ``)。
     pub right_sub: String,
+    /// 左栏首段起始端符(左三角 ``)。
+    pub left_tail: String,
+    /// 右栏末段结束端符(右三角 ``)。
+    pub right_tail: String,
     /// 行内左右栏之间的 gap 填充字符(如 `·`;空=空格)。
     pub gap: String,
 }
@@ -411,6 +419,8 @@ impl Config {
             ("right-start", &s.right_start),
             ("right-segment", &s.right_segment),
             ("right-sub", &s.right_sub),
+            ("left-tail", &s.left_tail),
+            ("right-tail", &s.right_tail),
             ("gap", &s.gap),
         ] {
             if !val.is_empty() {
@@ -1005,6 +1015,8 @@ fn parse_separators(node: &KdlNode) -> Separators {
                 "right-start" => s.right_start = ch,
                 "right-segment" => s.right_segment = ch,
                 "right-sub" => s.right_sub = ch,
+                "left-tail" => s.left_tail = ch,
+                "right-tail" => s.right_tail = ch,
                 "gap" => s.gap = ch,
                 _ => {}
             }
@@ -1107,6 +1119,8 @@ separators {
     right-start "\u{e0b2}"
     right-segment "\u{e0b2}"
     right-sub "\u{e0b3}"
+    left-tail "\u{e0b2}"
+    right-tail "\u{e0b0}"
     gap "·"
 }
 frame fg=240 {

@@ -237,7 +237,7 @@ fn render_segment(
             style = seg.effective_style(state, &config.defaults);
             paint(seg.char_for(state, "❯"), &style)
         }
-        "time" => paint(&now_hhmmss(), &style),
+        "time" => paint(&time_text(seg), &style),
         "command_execution_time" => {
             let threshold = match seg.prop("threshold-seconds") {
                 Some(crate::config::Prop::Int(n)) => (*n as f64).max(0.0),
@@ -1505,12 +1505,34 @@ fn detect_os_icon() -> IconEntry {
     }
 }
 
+/// `time` 段文本:读 `time-format` 属性,`"12h"` → `HH:MM:SS AM/PM`,缺省 24h。
+fn time_text(seg: &crate::config::Segment) -> String {
+    match seg.prop("time-format") {
+        Some(crate::config::Prop::Str(s)) if s == "12h" => now_hhmmss_12h(),
+        _ => now_hhmmss(),
+    }
+}
+
 /// 当前时间 HH:MM:SS(libc localtime)。
 fn now_hhmmss() -> String {
+    let tm = local_time();
+    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
+/// 12 小时制 `HH:MM:SS AM/PM`(对齐 p10k `%I:%M:%S %p`,01–12 计时)。
+fn now_hhmmss_12h() -> String {
+    let tm = local_time();
+    let hour12 = tm.tm_hour % 12;
+    let hour12 = if hour12 == 0 { 12 } else { hour12 };
+    let ampm = if tm.tm_hour < 12 { "AM" } else { "PM" };
+    format!("{hour12:02}:{:02}:{:02} {ampm}", tm.tm_min, tm.tm_sec)
+}
+
+fn local_time() -> libc::tm {
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&now, &mut tm) };
-    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+    tm
 }
 
 /// 命令时长格式(对齐 p10k lean PRECISION=0):<60s → `Ns`;否则 `Xm Ys`/`Xh Ym Zs`。
@@ -1677,6 +1699,18 @@ fn assemble_row(
     seps: &crate::config::Separators,
 ) -> String {
     let mut out = String::new();
+    // 左栏首段起始端符(左三角,画在最左段之前)。
+    if !seps.left_tail.is_empty() {
+        if let Some(first) = left.iter().find(|s| !s.text.is_empty()) {
+            if first.style.bg != Color::Default {
+                out.push_str(&arrow(
+                    &seps.left_tail,
+                    first.style.bg.clone(),
+                    Color::Default,
+                ));
+            }
+        }
+    }
     let mut prev_bg = Color::Default;
     let mut has_left = false;
     for s in left {
@@ -1744,6 +1778,18 @@ fn assemble_row(
                 }
             }
             right_str.push_str(&s.text);
+        }
+        // 右栏末段结束端符(右三角,画在最右段之后)。
+        if !seps.right_tail.is_empty() {
+            if let Some(last) = parts.last() {
+                if last.style.bg != Color::Default {
+                    right_str.push_str(&arrow(
+                        &seps.right_tail,
+                        last.style.bg.clone(),
+                        Color::Default,
+                    ));
+                }
+            }
         }
         let lw = display_width(&out);
         let rw = display_width(&right_str);
@@ -1865,6 +1911,41 @@ mod tests {
             jobs: 0,
             history: 0,
         }
+    }
+
+    #[test]
+    fn time_segment_honors_12h_format() {
+        let mut cfg = Config::default();
+        let mut t = crate::config::Segment::default();
+        t.props
+            .insert("time-format".into(), crate::config::Prop::Str("12h".into()));
+        cfg.segments.insert("time".into(), t);
+        let seg = cfg.segment("time");
+        let s24 = time_text(&crate::config::Segment::default());
+        let s12 = time_text(seg);
+        // 24h 是 HH:MM:SS;12h 是 HH:MM:SS AM/PM。
+        assert_eq!(s24.len(), 8, "24h 应为 8 字符,实际 {s24:?}");
+        assert_eq!(s12.len(), 11, "12h 应为 11 字符,实际 {s12:?}");
+        assert!(
+            s12.ends_with(" AM") || s12.ends_with(" PM"),
+            "12h 应以 AM/PM 结尾,实际 {s12:?}"
+        );
+    }
+
+    #[test]
+    fn tail_separators_render_at_row_edges() {
+        let mut cfg = Config::default();
+        cfg.layout.left = vec![vec![Element::Seg("dir".into())]];
+        cfg.segments.insert("dir".into(), {
+            let mut d = crate::config::Segment::default();
+            d.style.bg = Color::Xterm(31);
+            d
+        });
+        cfg.separators.left_tail = "\u{e0b2}".into();
+        cfg.separators.right_tail = "\u{e0b0}".into();
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
+        // 左栏首段前有 left_tail(),其后接目录内容。
+        assert!(h.contains("\u{e0b2}"), "应画左 tail,实际 {h:?}");
     }
 
     #[test]

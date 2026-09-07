@@ -180,6 +180,8 @@ fn powerline_separators() -> Separators {
         right_start: "\u{e0b2}".into(),
         right_segment: "\u{e0b2}".into(),
         right_sub: "\u{e0b3}".into(),
+        left_tail: String::new(),
+        right_tail: String::new(),
         gap: " ".into(),
     }
 }
