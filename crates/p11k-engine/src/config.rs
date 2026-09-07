@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use kdl::{KdlDocument, KdlNode, KdlValue};
+use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 
 /// 颜色:数字=256 调色板、`#rrggbb`=24 位、`"default"`/缺省=继承终端。
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -318,6 +318,147 @@ impl Config {
         Self::parse(crate::presets::LEAN)
     }
 
+    /// 序列化为 KDL 文本;`parse(to_kdl(cfg))` 应得到等价配置(round-trip)。
+    pub fn to_kdl(&self) -> String {
+        self.to_document().to_string()
+    }
+
+    /// 构建等价 KDL 文档。节点顺序 mode/layout/defaults/separators/frame/
+    /// segments/vcs-remote-icons/icon;与 `parse` 缺省值一致的字段省略。
+    pub fn to_document(&self) -> KdlDocument {
+        let mut doc = KdlDocument::new();
+        // mode 必须显式输出:parse 缺省随 locale,省略则 round-trip 不稳。
+        doc.nodes_mut().push(leaf("mode", mode_str(&self.mode)));
+        doc.nodes_mut().push(self.layout_node());
+        if self.defaults != Style::default() {
+            let mut n = KdlNode::new("defaults");
+            n.entries_mut().extend(style_entries(&self.defaults));
+            doc.nodes_mut().push(n);
+        }
+        if self.separators != Separators::default() {
+            doc.nodes_mut().push(self.separators_node());
+        }
+        if self.frame != Frame::default() {
+            doc.nodes_mut().push(self.frame_node());
+        }
+        if !self.segments.is_empty() {
+            let mut n = KdlNode::new("segments");
+            let ch = n.ensure_children();
+            for (name, seg) in &self.segments {
+                ch.nodes_mut().push(segment_node(name, seg));
+            }
+            doc.nodes_mut().push(n);
+        }
+        // vcs-remote-icons 省略时 parse 用内置默认表,与默认值等价。
+        if self.vcs_remote_icons != default_remote_icons() {
+            doc.nodes_mut().push(self.remote_icons_node());
+        }
+        if !self.icon_overrides.is_empty() {
+            doc.nodes_mut().push(self.icon_node());
+        }
+        doc
+    }
+
+    fn layout_node(&self) -> KdlNode {
+        let mut n = KdlNode::new("layout");
+        let ch = n.ensure_children();
+        let mut left = KdlNode::new("left");
+        for row in &self.layout.left {
+            left.ensure_children().nodes_mut().push(line_node(row));
+        }
+        ch.nodes_mut().push(left);
+        let mut right = KdlNode::new("right");
+        for row in &self.layout.right {
+            right.ensure_children().nodes_mut().push(line_node(row));
+        }
+        ch.nodes_mut().push(right);
+        if self.layout.add_newline {
+            ch.nodes_mut().push(leaf("add-newline", true));
+        }
+        if self.layout.prompt_add_newline {
+            ch.nodes_mut().push(leaf("prompt-add-newline", true));
+        }
+        if self.layout.transient_prompt {
+            ch.nodes_mut().push(leaf("transient-prompt", true));
+        }
+        n
+    }
+
+    fn separators_node(&self) -> KdlNode {
+        let s = &self.separators;
+        let mut n = KdlNode::new("separators");
+        let ch = n.ensure_children();
+        for (name, val) in [
+            ("segment", &s.segment),
+            ("sub", &s.sub),
+            ("end", &s.end),
+            ("right-start", &s.right_start),
+            ("right-segment", &s.right_segment),
+            ("right-sub", &s.right_sub),
+            ("gap", &s.gap),
+        ] {
+            if !val.is_empty() {
+                ch.nodes_mut().push(leaf(name, val.clone()));
+            }
+        }
+        n
+    }
+
+    fn frame_node(&self) -> KdlNode {
+        let mut n = KdlNode::new("frame");
+        n.entries_mut().extend(style_entries(&self.frame.style));
+        let ch = n.ensure_children();
+        for (name, piece) in [
+            ("first-prefix", &self.frame.first_prefix),
+            ("first-suffix", &self.frame.first_suffix),
+            ("newline-prefix", &self.frame.newline_prefix),
+            ("newline-suffix", &self.frame.newline_suffix),
+            ("last-prefix", &self.frame.last_prefix),
+            ("last-suffix", &self.frame.last_suffix),
+        ] {
+            if piece.text.is_empty() && piece.style.is_none() {
+                continue;
+            }
+            let mut pn = KdlNode::new(name);
+            pn.entries_mut().push(KdlEntry::new(piece.text.clone()));
+            if let Some(st) = &piece.style {
+                pn.entries_mut().extend(style_entries(st));
+            }
+            ch.nodes_mut().push(pn);
+        }
+        n
+    }
+
+    fn remote_icons_node(&self) -> KdlNode {
+        let mut n = KdlNode::new("vcs-remote-icons");
+        let ch = n.ensure_children();
+        for (domain, icon) in &self.vcs_remote_icons {
+            ch.nodes_mut().push(leaf(domain.as_str(), icon.clone()));
+        }
+        n
+    }
+
+    fn icon_node(&self) -> KdlNode {
+        let mut n = KdlNode::new("icon");
+        let ch = n.ensure_children();
+        for (name, ov) in &self.icon_overrides {
+            let mut inode = KdlNode::new(name.as_str());
+            let ich = inode.ensure_children();
+            for (k, v) in [
+                ("all", &ov.all),
+                ("nf", &ov.nf),
+                ("compat", &ov.compat),
+                ("ascii", &ov.ascii),
+            ] {
+                if let Some(val) = v {
+                    ich.nodes_mut().push(leaf(k, val.clone()));
+                }
+            }
+            ch.nodes_mut().push(inode);
+        }
+        n
+    }
+
     /// 取某段配置(缺省返回默认空段)。
     pub fn segment(&self, name: &str) -> &Segment {
         self.segments.get(name).unwrap_or(&EMPTY_SEG)
@@ -391,6 +532,139 @@ impl Config {
             icon_overrides,
         })
     }
+}
+
+// ---- 序列化辅助(Config → KDL)----
+
+/// 单一位置值节点(`<name> "value"` / `<name> #true`)。
+fn leaf(name: &str, value: impl Into<KdlValue>) -> KdlNode {
+    let mut n = KdlNode::new(name);
+    n.entries_mut().push(KdlEntry::new(value));
+    n
+}
+
+fn mode_str(m: &IconMode) -> &'static str {
+    match m {
+        IconMode::NerdfontComplete => "nerdfont-complete",
+        IconMode::NerdfontFontconfig => "nerdfont-fontconfig",
+        IconMode::Compatible => "compatible",
+        IconMode::Ascii => "ascii",
+    }
+}
+
+fn color_value(c: &Color) -> KdlValue {
+    match c {
+        Color::Default => KdlValue::Null,
+        Color::Xterm(n) => KdlValue::from(*n as i128),
+        Color::Rgb(r, g, b) => KdlValue::from(format!("#{r:02x}{g:02x}{b:02x}")),
+        Color::Named(n) => KdlValue::from(n.clone()),
+    }
+}
+
+/// 样式 → KDL 属性(fg/bg/bold 仅输出非默认项)。
+fn style_entries(style: &Style) -> Vec<KdlEntry> {
+    let mut v = Vec::new();
+    if style.fg != Color::Default {
+        v.push(KdlEntry::new_prop("fg", color_value(&style.fg)));
+    }
+    if style.bg != Color::Default {
+        v.push(KdlEntry::new_prop("bg", color_value(&style.bg)));
+    }
+    if style.bold {
+        v.push(KdlEntry::new_prop("bold", true));
+    }
+    v
+}
+
+fn prop_value(p: &Prop) -> KdlValue {
+    match p {
+        Prop::Str(s) => KdlValue::from(s.clone()),
+        Prop::Int(n) => KdlValue::from(*n as i128),
+        Prop::Float(f) => KdlValue::from(*f),
+        Prop::Bool(b) => KdlValue::from(*b),
+    }
+}
+
+/// 一行布局元素 → `line { … }` 节点。
+fn line_node(row: &[Element]) -> KdlNode {
+    let mut n = KdlNode::new("line");
+    let ch = n.ensure_children();
+    for el in row {
+        match el {
+            Element::Seg(name) => {
+                ch.nodes_mut().push(KdlNode::new(name.as_str()));
+            }
+            Element::Joined(name) => {
+                ch.nodes_mut().push(KdlNode::new(format!("{name}_joined")));
+            }
+            Element::Text(t) => {
+                ch.nodes_mut().push(leaf("text", t.clone()));
+            }
+        }
+    }
+    n
+}
+
+/// 单个段 → `<name> … { state … text-* … }` 节点。
+fn segment_node(name: &str, seg: &Segment) -> KdlNode {
+    let mut n = KdlNode::new(name);
+    n.entries_mut().extend(style_entries(&seg.style));
+    if let Some(c) = &seg.content {
+        n.entries_mut()
+            .push(KdlEntry::new_prop("content", c.clone()));
+    }
+    if let Some(p) = &seg.prefix {
+        n.entries_mut()
+            .push(KdlEntry::new_prop("prefix", p.clone()));
+    }
+    if let Some(s) = &seg.suffix {
+        n.entries_mut()
+            .push(KdlEntry::new_prop("suffix", s.clone()));
+    }
+    if !seg.shown {
+        n.entries_mut().push(KdlEntry::new_prop("disabled", true));
+    }
+    for (k, v) in &seg.props {
+        n.entries_mut()
+            .push(KdlEntry::new_prop(k.clone(), prop_value(v)));
+    }
+    if !seg.states.is_empty()
+        || seg.text_left.is_some()
+        || seg.text_middle.is_some()
+        || seg.text_right.is_some()
+    {
+        let ch = n.ensure_children();
+        for (sname, spec) in &seg.states {
+            let mut sn = KdlNode::new("state");
+            sn.entries_mut().push(KdlEntry::new(sname.clone()));
+            sn.entries_mut().extend(style_entries(&spec.style));
+            if let Some(c) = &spec.char {
+                sn.entries_mut().push(KdlEntry::new_prop("char", c.clone()));
+            }
+            ch.nodes_mut().push(sn);
+        }
+        if let Some(t) = &seg.text_left {
+            ch.nodes_mut().push(attach_node("text-left", t));
+        }
+        if let Some(t) = &seg.text_middle {
+            ch.nodes_mut().push(attach_node("text-middle", t));
+        }
+        if let Some(t) = &seg.text_right {
+            ch.nodes_mut().push(attach_node("text-right", t));
+        }
+    }
+    n
+}
+
+/// 附加文字槽 → `text-<side> "…" [fg=…]` 节点。
+fn attach_node(name: &str, a: &AttachText) -> KdlNode {
+    let mut n = KdlNode::new(name);
+    n.entries_mut().push(KdlEntry::new(a.text.clone()));
+    if let Some(fg) = &a.fg {
+        n.entries_mut()
+            .push(KdlEntry::new_prop("fg", color_value(fg)));
+    }
+    n
 }
 
 /// 解析顶层 `icon` 节点:每个子节点 = 一个图标名的覆盖;覆盖字段是它的子节点
@@ -782,6 +1056,83 @@ fn prop_val(v: &KdlValue) -> Prop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn to_kdl_roundtrips_presets() {
+        for kdl in [
+            crate::presets::LEAN,
+            crate::presets::CLASSIC,
+            crate::presets::RAINBOW,
+            crate::presets::PURE,
+        ] {
+            let cfg = Config::parse(kdl).unwrap();
+            let out = cfg.to_kdl();
+            let cfg2 = Config::parse(&out).unwrap();
+            assert_eq!(cfg, cfg2, "round-trip 失败,输出:\n{out}");
+        }
+    }
+
+    #[test]
+    fn to_kdl_roundtrips_rich_config() {
+        let src = r#"
+mode "ascii"
+layout {
+    left {
+        line { os_icon; dir_joined; text "|" }
+        line { prompt_char }
+    }
+    right {
+        line { status }
+    }
+    add-newline #true
+    prompt-add-newline #true
+    transient-prompt #true
+}
+defaults fg=200 bold=#true
+separators {
+    segment "\u{e0b0}"
+    sub "\u{e0b1}"
+    end ""
+    right-start "\u{e0b2}"
+    right-segment "\u{e0b2}"
+    right-sub "\u{e0b3}"
+    gap "·"
+}
+frame fg=240 {
+    first-prefix "╭─"
+    first-suffix "─╮" fg=241
+    newline-prefix "├─"
+    newline-suffix "─┤"
+    last-prefix "╰─"
+    last-suffix ""
+}
+segments {
+    dir fg=39 shorten-strategy="truncate_to_unique" shorten-dir-length=3 {
+        state SHORTENED fg=103
+        state ANCHOR fg=39 bold=#true char="~"
+        text-left "L" fg=100
+        text-right "R"
+    }
+    vcs clean-foreground=76 modified-foreground=178 untracked-foreground=39
+    status ok-foreground=70 error-foreground=160 verbose=#true
+    prompt_char fg=76 {
+        state ERROR fg=196 char="✘"
+    }
+}
+vcs-remote-icons {
+    github "\u{f113}"
+    gitlab "\u{f296}"
+}
+icon {
+    ok { all "✔" ascii "V" }
+    folder { nf "\u{f07c}" compat "" }
+}
+"#;
+        let cfg = Config::parse(src).unwrap();
+        let out = cfg.to_kdl();
+        let cfg2 = Config::parse(&out).unwrap();
+        assert_eq!(cfg, cfg2, "rich round-trip 失败,输出:\n{out}");
+    }
 
     #[test]
     fn parses_layout_lines() {
