@@ -22,18 +22,13 @@ use std::fmt;
 use kdl::{KdlDocument, KdlNode, KdlValue};
 
 /// 颜色:数字=256 调色板、`#rrggbb`=24 位、`"default"`/缺省=继承终端。
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum Color {
+    #[default]
     Default,
     Xterm(u8),
     Rgb(u8, u8, u8),
     Named(String),
-}
-
-impl Default for Color {
-    fn default() -> Self {
-        Color::Default
-    }
 }
 
 impl Color {
@@ -130,7 +125,7 @@ pub struct Layout {
 /// - `segment`:异底段间箭头(如 powerline ``)。空=不画(纯文本空格)。
 /// - `sub`:同底段间细线(如 ``)。
 /// - `end`:左栏末尾端符(右三角 ``,指向前方/行尾)。
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Separators {
     pub segment: String,
     pub sub: String,
@@ -145,35 +140,12 @@ pub struct Separators {
     pub gap: String,
 }
 
-impl Default for Separators {
-    fn default() -> Self {
-        Separators {
-            segment: String::new(),
-            sub: String::new(),
-            end: String::new(),
-            right_start: String::new(),
-            right_segment: String::new(),
-            right_sub: String::new(),
-            gap: String::new(),
-        }
-    }
-}
-
 /// 帧的一块(行首/行尾装饰字符):文本 + 可选独立样式。
 /// 样式缺省时回退 frame 级 → defaults。
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FramePiece {
     pub text: String,
     pub style: Option<Style>,
-}
-
-impl Default for FramePiece {
-    fn default() -> Self {
-        FramePiece {
-            text: String::new(),
-            style: None,
-        }
-    }
 }
 
 /// 多行帧(行首/行尾装饰,可配字符与颜色)。见 p10k MULTILINE_*_PROMPT_PREFIX/SUFFIX。
@@ -181,7 +153,7 @@ impl Default for FramePiece {
 ///   `last_*`:输入行(`╰─`/`─╯`)。空 = 不画。
 /// - 颜色:`style`(frame 节点属性 `fg`/`bg`/`bold`)是整帧默认,单块可带
 ///   自己的样式属性覆盖;两者都没配的颜色回退 defaults。
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Frame {
     /// 帧级默认样式。
     pub style: Style,
@@ -191,21 +163,6 @@ pub struct Frame {
     pub newline_suffix: FramePiece,
     pub last_prefix: FramePiece,
     pub last_suffix: FramePiece,
-}
-
-impl Default for Frame {
-    fn default() -> Self {
-        // 默认无帧(纯文本 lean)。经典帧(╭─/╰─)由配置 frame 块开启。
-        Frame {
-            style: Style::default(),
-            first_prefix: FramePiece::default(),
-            first_suffix: FramePiece::default(),
-            newline_prefix: FramePiece::default(),
-            newline_suffix: FramePiece::default(),
-            last_prefix: FramePiece::default(),
-            last_suffix: FramePiece::default(),
-        }
-    }
 }
 
 /// 行为属性值(类型化,非字符串)。

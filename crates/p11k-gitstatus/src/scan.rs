@@ -50,11 +50,11 @@ pub fn scan_dirs(
 ) -> Vec<Vec<u8>> {
     let mut candidates: Vec<Vec<u8>> = Vec::new();
 
-    for idx in 0..dirs.len() {
+    for d in dirs.iter_mut() {
         // StatFiles: compare every index file (regardless of the cache).
         // Entry paths are root-relative and NUL-terminated: one fstatat
         // from root_fd, no directory open needed.
-        let file_idxs = dirs[idx].files.clone();
+        let file_idxs = d.files.clone();
         for &ei in &file_idxs {
             let entry = &entries[ei];
             let mut st: libc::stat = unsafe { std::mem::zeroed() };
@@ -84,48 +84,48 @@ pub fn scan_dirs(
         // fstat on root_fd). The trailing '/' on dir paths is fine for
         // fstatat.
         if opts.untracked_cache_enabled {
-            let cur = stat_dir(root_fd, &dirs[idx]);
+            let cur = stat_dir(root_fd, d);
             match cur {
                 Some(cur) => {
-                    if dirs[idx].st == Some(cur) {
-                        for p in dirs[idx].unmatched.clone() {
+                    if d.st == Some(cur) {
+                        for p in d.unmatched.clone() {
                             candidates.push(p);
                         }
                         continue;
                     }
-                    dirs[idx].st = Some(cur);
+                    d.st = Some(cur);
                 }
                 None => {
                     // Unstatable dir: clear untracked cache, no candidates.
-                    dirs[idx].st = None;
-                    dirs[idx].unmatched.clear();
+                    d.st = None;
+                    d.unmatched.clear();
                     continue;
                 }
             }
         }
 
         // readdir + sort; on failure clear cache, no candidates.
-        let dir_fd = open_dir(root_fd, &dirs[idx]);
+        let dir_fd = open_dir(root_fd, d);
         let Some(dir_fd) = dir_fd else {
-            dirs[idx].st = None;
-            dirs[idx].unmatched.clear();
+            d.st = None;
+            d.unmatched.clear();
             continue;
         };
         let dirents = list_dir(dir_fd, caps.case_sensitive);
         // SAFETY: dir_fd was opened above; close on every path.
         unsafe { libc::close(dir_fd) };
         let Some(dirents) = dirents else {
-            dirs[idx].st = None;
-            dirs[idx].unmatched.clear();
+            d.st = None;
+            d.unmatched.clear();
             continue;
         };
-        dirs[idx].unmatched.clear();
-        let dir_path_len = dirs[idx].path.len() - 1;
+        d.unmatched.clear();
+        let dir_path_len = d.path.len() - 1;
 
         // Merge join: dirents (sorted) vs files (entries sorted) vs
         // subdirs (tree order).
-        let files = dirs[idx].files.clone();
-        let subdirs = dirs[idx].subdirs.clone();
+        let files = d.files.clone();
+        let subdirs = d.subdirs.clone();
         let mut fi = 0usize;
         let mut si = 0usize;
         for de in &dirents {
@@ -179,12 +179,12 @@ pub fn scan_dirs(
             }
             if !matched {
                 // Untracked: dir prefix + name; dirs get a trailing '/'.
-                let mut p = dirs[idx].path[..dirs[idx].path.len() - 1].to_vec();
+                let mut p = d.path[..d.path.len() - 1].to_vec();
                 p.extend_from_slice(name);
                 if de.is_dir {
                     p.push(b'/');
                 }
-                dirs[idx].unmatched.push(p.clone());
+                d.unmatched.push(p.clone());
                 candidates.push(p);
             }
         }

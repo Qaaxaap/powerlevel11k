@@ -384,16 +384,6 @@ fn paint_attach(style: &Style, a: &AttachText) -> String {
     paint(&a.text, &st)
 }
 
-/// vcs 图标按远端域名选择(配置 `vcs-remote-icons` 按序子串匹配;未命中默认 git )。
-fn vcs_remote_icon(config: &Config, remote_url: &str) -> String {
-    for (domain, icon) in &config.vcs_remote_icons {
-        if !domain.is_empty() && remote_url.contains(domain) {
-            return icon.clone();
-        }
-    }
-    "\u{f1d3}".to_string() //  默认 git
-}
-
 /// 一个段的内置图标在三种字体档位下的字符。`nerdfont-complete` 与
 /// `nerdfont-fontconfig` 在 p10k 源码(`internal/icons.zsh`)里是同一 case 分支、
 /// 字形完全相同,故合并为一档 `nerdfont`;`compatible` 用标准 Unicode + Powerline
@@ -599,7 +589,7 @@ fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
         crate::config::IconMode::Compatible => {
             s.chars().all(|c| !(0xE000..=0xF8FF).contains(&(c as u32)))
         }
-        crate::config::IconMode::Ascii => s.chars().all(|c| c.is_ascii()),
+        crate::config::IconMode::Ascii => s.is_ascii(),
     }
 }
 
@@ -1044,10 +1034,7 @@ fn find_up_content(cwd: &str, filename: &str) -> Option<String> {
         if let Ok(c) = std::fs::read_to_string(&p) {
             return Some(c);
         }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }
 
@@ -1125,10 +1112,7 @@ fn find_up_dir(cwd: &str, filename: &str) -> Option<String> {
         if dir.join(filename).exists() {
             return Some(dir.to_string_lossy().into_owned());
         }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }
 
@@ -1377,10 +1361,7 @@ fn find_up_version(cwd: &str, filename: &str) -> Option<String> {
                 return Some(first.to_string());
             }
         }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => return None,
-        }
+        dir = dir.parent()?;
     }
 }
 
@@ -1594,8 +1575,7 @@ fn dir_seg_text(
 /// 读 dir 段的 `shorten-dir-length`(保留末 N 级,默认 1=p10k)。
 fn shorten_len(seg: &crate::config::Segment) -> usize {
     if let Some(crate::config::Prop::Int(n)) = seg.prop("shorten-dir-length") {
-        let n = (*n).clamp(1, 20) as usize;
-        n
+        (*n).clamp(1, 20) as usize
     } else {
         1
     }
@@ -1685,7 +1665,7 @@ fn status_text(info: &HeaderInfo, ok: &str, err: &str) -> String {
 }
 
 /// 有 content 配置则用,否则用默认文本。
-fn value_of<'a>(content: Option<&'a str>, default: impl Into<String>) -> String {
+fn value_of(content: Option<&str>, default: impl Into<String>) -> String {
     content.map(String::from).unwrap_or(default.into())
 }
 
