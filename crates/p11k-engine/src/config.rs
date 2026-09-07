@@ -386,7 +386,13 @@ impl Config {
         let mut separators = Separators::default();
         let mut frame = Frame::default();
         let mut vcs_remote_icons = default_remote_icons();
-        let mut mode = IconMode::default();
+        // 缺省 mode 看 locale:p10k 用 langinfo[CODESET],非 UTF-8 终端连标准
+        // Unicode 都显示不了,自动降级 ascii;用户显式写 `mode` 时覆盖(见下)。
+        let mut mode = if locale_is_utf8() {
+            IconMode::NerdfontComplete
+        } else {
+            IconMode::Ascii
+        };
         let mut icon_overrides: BTreeMap<String, IconOverride> = BTreeMap::new();
 
         for node in doc.nodes() {
@@ -471,6 +477,34 @@ fn default_remote_icons() -> Vec<(String, String)> {
         ("aur.archlinux.org".into(), "\u{f303}".into()), // 
         ("archlinux.org".into(), "\u{f303}".into()),     // 
     ]
+}
+
+/// 当前 locale codeset 是否 UTF-8。p10k 用 zsh `langinfo[CODESET]` 判断:非
+/// UTF-8 终端(控制台/C locale)显示不了任何非 ASCII,自动降级 ascii。这里读
+/// LC_ALL/LC_CTYPE/LANG 的 codeset —— 引擎进程没 setlocale,C 库的 nl_langinfo
+/// 不反映环境变量,直接解析环境变量最可靠。
+fn locale_is_utf8() -> bool {
+    for var in ["LC_ALL", "LC_CTYPE", "LANG"] {
+        if let Ok(v) = std::env::var(var) {
+            let v = v.trim();
+            if !v.is_empty() {
+                return locale_str_is_utf8(v);
+            }
+        }
+    }
+    false // 全未设 → C locale → 非 UTF-8
+}
+
+/// 单个 locale 串(如 `en_US.UTF-8`、`C.UTF-8`、`C`)的 codeset 是否 UTF-8。
+fn locale_str_is_utf8(locale: &str) -> bool {
+    let code = locale
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .split('@') // 去 modifier,如 UTF-8@euro
+        .next()
+        .unwrap_or("");
+    code.eq_ignore_ascii_case("utf-8") || code.eq_ignore_ascii_case("utf8")
 }
 
 /// 同段名多节点的合并:样式非 Default 覆盖、文本/图标后者覆盖、states/props 累积。
@@ -849,16 +883,37 @@ mod tests {
 
     #[test]
     fn parses_icon_mode() {
-        // mode 顶层节点:ascii/compatible/nerdfont-fontconfig 分别映射;缺省 nerdfont-complete。
+        // mode 顶层节点:ascii/compatible/nerdfont-fontconfig 分别映射。
         let c = Config::parse("mode \"ascii\"\nlayout { left { line { dir #true } } }").unwrap();
         assert_eq!(c.mode, IconMode::Ascii);
-        let c = Config::parse("mode \"compatible\"\nlayout { left { line { dir #true } } }").unwrap();
+        let c =
+            Config::parse("mode \"compatible\"\nlayout { left { line { dir #true } } }").unwrap();
         assert_eq!(c.mode, IconMode::Compatible);
-        let c = Config::parse("mode \"nerdfont-fontconfig\"\nlayout { left { line { dir #true } } }")
-            .unwrap();
+        let c =
+            Config::parse("mode \"nerdfont-fontconfig\"\nlayout { left { line { dir #true } } }")
+                .unwrap();
         assert_eq!(c.mode, IconMode::NerdfontFontconfig);
+        // 未写 mode → 跟随 locale:UTF-8 → nerdfont,否则(控制台/C locale)→ ascii。
         let c = Config::parse("layout { left { line { dir #true } } }").unwrap();
-        assert_eq!(c.mode, IconMode::NerdfontComplete);
+        let expect = if locale_is_utf8() {
+            IconMode::NerdfontComplete
+        } else {
+            IconMode::Ascii
+        };
+        assert_eq!(c.mode, expect);
+    }
+
+    #[test]
+    fn locale_codeset_utf8_detection() {
+        // locale 串的 codeset 判断(对齐 p10k langinfo[CODESET]):UTF-8 家族是,其余否。
+        assert!(locale_str_is_utf8("en_US.UTF-8"));
+        assert!(locale_str_is_utf8("C.UTF-8"));
+        assert!(locale_str_is_utf8("zh_CN.utf8"));
+        assert!(locale_str_is_utf8("en_US.UTF-8@euro"));
+        assert!(!locale_str_is_utf8("C"));
+        assert!(!locale_str_is_utf8("POSIX"));
+        assert!(!locale_str_is_utf8("ja_JP.EUC-JP"));
+        assert!(!locale_str_is_utf8("en_US"));
     }
 
     #[test]

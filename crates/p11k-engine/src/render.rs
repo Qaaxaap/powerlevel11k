@@ -433,10 +433,10 @@ const fn icon(n: &'static str, c: &'static str, a: &'static str) -> IconEntry {
 /// 用户可在顶层 `icon{}` 里按图标名覆盖。
 fn icon_default(key: &str) -> Option<IconEntry> {
     match key {
-        "folder" => Some(icon("\u{f07c}", "", "")),                    // 
-        "git" => Some(icon("\u{f1d3}", "", "")),                       // 
-        "time" => Some(icon("\u{f017}", "", "")),                      // 时钟
-        "date" => Some(icon("\u{f073}", "", "")),                      // 日历
+        "folder" => Some(icon("\u{f07c}", "", "")), // 
+        "git" => Some(icon("\u{f1d3}", "", "")),    // 
+        "time" => Some(icon("\u{f017}", "", "")),   // 时钟
+        "date" => Some(icon("\u{f073}", "", "")),   // 日历
         "background-jobs" => Some(icon("\u{f013}", "\u{2699}", "%%")), // 齿轮 ⚙ %%
         "go" => Some(icon("\u{e626}", "Go", "go")),
         "rust" => Some(icon("\u{e7a8}", "R", "rust")),
@@ -534,9 +534,7 @@ fn segment_icon_key(name: &str) -> Option<&'static str> {
         "public_ip" => Some("public-ip"),
         "toolbox" => (!toolbox_text().is_empty()).then_some("toolbox"),
         "dir_writable" => (!dir_writable_text(&current_dir()).is_empty()).then_some("lock"),
-        "per_directory_history" => {
-            (!per_directory_history_text().is_empty()).then_some("history")
-        }
+        "per_directory_history" => (!per_directory_history_text().is_empty()).then_some("history"),
         "haskell_stack" => (!haskell_stack_text().is_empty()).then_some("haskell"),
         "package" => (!package_text(&current_dir()).is_empty()).then_some("package"),
         "fvm" => (!fvm_text(&current_dir()).is_empty()).then_some("flutter"),
@@ -552,8 +550,12 @@ fn segment_icon_key(name: &str) -> Option<&'static str> {
         "ssh" => env().ssh.then_some("ssh"),
         "proxy" => env_has_proxy().then_some("proxy"),
         "docker_machine" => env_var("DOCKER_MACHINE_NAME").is_some().then_some("server"),
-        "ranger" => level_icon("RANGER_LEVEL", "\u{f00b}").is_some().then_some("ranger"),
-        "yazi" => level_icon("YAZI_LEVEL", "\u{f00b}").is_some().then_some("yazi"),
+        "ranger" => level_icon("RANGER_LEVEL", "\u{f00b}")
+            .is_some()
+            .then_some("ranger"),
+        "yazi" => level_icon("YAZI_LEVEL", "\u{f00b}")
+            .is_some()
+            .then_some("yazi"),
         "nnn" => level_icon("NNNLVL", "nnn").is_some().then_some("nnn"),
         "lf" => level_icon("LF_LEVEL", "lf").is_some().then_some("lf"),
         "nix_shell" => in_nix_shell().then_some("nix"),
@@ -571,9 +573,8 @@ fn segment_icon_key(name: &str) -> Option<&'static str> {
 fn icon_str(config: &Config, key: &str) -> Option<String> {
     if let Some(ov) = config.icon_overrides.get(key) {
         let exact = match config.mode {
-            crate::config::IconMode::NerdfontComplete | crate::config::IconMode::NerdfontFontconfig => {
-                ov.nf.as_ref()
-            }
+            crate::config::IconMode::NerdfontComplete
+            | crate::config::IconMode::NerdfontFontconfig => ov.nf.as_ref(),
             crate::config::IconMode::Compatible => ov.compat.as_ref(),
             crate::config::IconMode::Ascii => ov.ascii.as_ref(),
         };
@@ -2094,8 +2095,7 @@ mod tests {
         .unwrap();
         let s = transient_prompt_zsh(&cfg);
         assert_eq!(
-            s,
-            "%(?\u{1}%F{76}❯ \u{1}%F{196}❯ )%f",
+            s, "%(?\u{1}%F{76}❯ \u{1}%F{196}❯ )%f",
             "transient 应生成 zsh 条件换色,实际:{s:?}"
         );
     }
@@ -2103,14 +2103,11 @@ mod tests {
     #[test]
     fn transient_prompt_zsh_default_color_no_leading_space() {
         // prompt_char 没配 fg → Default → %f,不应产生前导空格(否则 ❯ 前多一个空格)。
-        let cfg = Config::parse(
-            "layout { left { line { dir #true } } }\nsegments { prompt_char }",
-        )
-        .unwrap();
+        let cfg = Config::parse("layout { left { line { dir #true } } }\nsegments { prompt_char }")
+            .unwrap();
         let s = transient_prompt_zsh(&cfg);
         assert_eq!(
-            s,
-            "%(?\u{1}%f❯ \u{1}%f❯ )%f",
+            s, "%(?\u{1}%f❯ \u{1}%f❯ )%f",
             "fg 缺省应生成 %f 且无前导空格,实际:{s:?}"
         );
     }
@@ -2122,10 +2119,7 @@ mod tests {
             status_text(&info("/tmp", Some(0)), "\u{f00c}", "\u{f00d}"),
             "\u{f00c}"
         );
-        assert_eq!(
-            status_text(&info("/tmp", Some(1)), "ok", "err"),
-            "err 1"
-        );
+        assert_eq!(status_text(&info("/tmp", Some(1)), "ok", "err"), "err 1");
         // 图标名默认随 mode:folder 的 nf 有字形,compat/ascii 空;go 三档文本。
         let mk = |m: &str| {
             Config::parse(&format!(
@@ -2133,10 +2127,16 @@ mod tests {
             ))
             .unwrap()
         };
-        assert_eq!(icon_str(&mk("nerdfont-complete"), "folder").unwrap(), "\u{f07c}");
+        assert_eq!(
+            icon_str(&mk("nerdfont-complete"), "folder").unwrap(),
+            "\u{f07c}"
+        );
         assert_eq!(icon_str(&mk("compatible"), "folder").unwrap(), "");
         assert_eq!(icon_str(&mk("ascii"), "folder").unwrap(), "");
-        assert_eq!(icon_str(&mk("nerdfont-complete"), "go").unwrap(), "\u{e626}");
+        assert_eq!(
+            icon_str(&mk("nerdfont-complete"), "go").unwrap(),
+            "\u{e626}"
+        );
         assert_eq!(icon_str(&mk("compatible"), "go").unwrap(), "Go");
         assert_eq!(icon_str(&mk("ascii"), "go").unwrap(), "go");
     }
@@ -2145,7 +2145,10 @@ mod tests {
     fn icon_overrides_per_mode() {
         // 顶层 icon{}:精确档 ascii 只覆盖 ascii;all 自动识别字符类别。
         let nf = |extra: &str| {
-            Config::parse(&format!("{extra}\nlayout {{ left {{ line {{ dir #true }} }} }}")).unwrap()
+            Config::parse(&format!(
+                "{extra}\nlayout {{ left {{ line {{ dir #true }} }} }}"
+            ))
+            .unwrap()
         };
         // error 配精确 ascii 档 → 仅 ascii 模式生效,nf 回默认 。
         let c = nf("icon { error { ascii \"X\" } }");

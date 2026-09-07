@@ -110,7 +110,12 @@ fn placeholder_overwritten_by_prefix() {
             Instant::now() < deadline,
             "占位符 __ 之后应出现前缀 ❯，实际输出：{full:?}"
         );
-        full.push_str(&read_until(&master, &mut reader, "❯", Duration::from_secs(1)));
+        full.push_str(&read_until(
+            &master,
+            &mut reader,
+            "❯",
+            Duration::from_secs(1),
+        ));
     }
 }
 
@@ -132,7 +137,10 @@ fn command_output_passthrough_and_next_prompt() {
 
     // 下一个 prompt 也该出现（命令执行完 → precmd → header 重画带 ）。
     let out2 = read_until(&master, &mut reader, "\u{f00c}", Duration::from_secs(5));
-    assert!(out2.contains('\u{f00c}'), "命令后应出新 prompt，实际：{out2:?}");
+    assert!(
+        out2.contains('\u{f00c}'),
+        "命令后应出新 prompt，实际：{out2:?}"
+    );
 }
 
 #[test]
@@ -144,7 +152,10 @@ fn exit_code_shows_in_status() {
     writer.write_all(b"false\n").unwrap();
     writer.flush().unwrap();
     let out = read_until(&master, &mut reader, "\u{f00d}", Duration::from_secs(5));
-    assert!(out.contains('\u{f00d}'), "退出码状态应显示 ，实际：{out:?}");
+    assert!(
+        out.contains('\u{f00d}'),
+        "退出码状态应显示 ，实际：{out:?}"
+    );
 }
 
 #[test]
