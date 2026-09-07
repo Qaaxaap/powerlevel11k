@@ -315,7 +315,7 @@ impl Config {
 
     /// 内置 lean 主题。
     pub fn default_lean() -> Result<Config, String> {
-        Self::parse(DEFAULT_LEAN)
+        Self::parse(crate::presets::LEAN)
     }
 
     /// 取某段配置(缺省返回默认空段)。
@@ -722,34 +722,6 @@ fn parse_separators(node: &KdlNode) -> Separators {
     }
     s
 }
-
-/// 内置 lean 主题(KDL v2)。
-pub const DEFAULT_LEAN: &str = r#"
-// p11k 内置 lean 主题。
-layout {
-    left {
-        line { dir; vcs }
-    }
-    right {
-        line { status; command_execution_time; background_jobs }
-    }
-    add-newline #true
-}
-
-segments {
-    dir fg=39 shorten-strategy="truncate_to_unique" shorten-dir-length=1 {
-        state SHORTENED fg=103
-        state ANCHOR fg=39 bold=#true
-    }
-    vcs clean-foreground=76 modified-foreground=178 untracked-foreground=39
-    status ok-foreground=70 error-foreground=160 verbose=#true
-    command_execution_time threshold-seconds=3 precision=0 fg=101
-    background_jobs fg=70 verbose=#false
-    prompt_char fg=76 {
-        state ERROR fg=196
-    }
-}
-"#;
 
 static EMPTY_SEG: Segment = Segment {
     style: Style {

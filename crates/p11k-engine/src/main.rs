@@ -29,6 +29,7 @@
 
 mod config;
 mod dir_shorten;
+mod presets;
 mod render;
 mod theme;
 
@@ -83,28 +84,42 @@ fn shell_from_args() -> Option<Shell> {
     }
 }
 
-/// 从 `--config <path>` 读取 KDL 主题配置;缺省用内置 lean。
+/// 从 `--config <path>` 读取 KDL 主题文件。
 fn config_from_args() -> Option<PathBuf> {
     let args: Vec<String> = std::env::args().collect();
     let pos = args.iter().position(|a| a == "--config")?;
     args.get(pos + 1).map(PathBuf::from)
 }
 
-/// 加载主题配置:--config 文件成功则用,失败/无则回退内置 lean 并打日志。
+/// 从 `--preset <name>` 取内置预设名(lean/classic/rainbow/pure)。
+fn preset_from_args() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let pos = args.iter().position(|a| a == "--preset")?;
+    args.get(pos + 1).cloned()
+}
+
+/// 加载主题:--config 文件 > --preset 内置 > 缺省 lean;前两者失败打日志回退。
 fn load_config() -> Config {
-    let Some(path) = config_from_args() else {
-        return Config::default_lean().expect("内置 lean 配置应合法");
-    };
-    match std::fs::read_to_string(&path)
-        .map_err(|e| e.to_string())
-        .and_then(|src| Config::parse(&src))
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("p11k: 读取配置 {path:?} 失败({e});回退内置 lean 主题");
-            Config::default_lean().expect("内置 lean 配置应合法")
+    let fallback = || Config::default_lean().expect("内置 lean 配置应合法");
+    if let Some(path) = config_from_args() {
+        match std::fs::read_to_string(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|src| Config::parse(&src))
+        {
+            Ok(c) => return c,
+            Err(e) => eprintln!("p11k: 读取配置 {path:?} 失败({e});回退内置 lean 主题"),
         }
     }
+    if let Some(name) = preset_from_args() {
+        if let Some(p) = presets::by_name(&name) {
+            return Config::parse(p.kdl).unwrap_or_else(|e| {
+                eprintln!("p11k: 预设 {name:?} 解析失败({e});回退内置 lean 主题");
+                fallback()
+            });
+        }
+        eprintln!("p11k: 未知预设 {name:?}(可选 lean/classic/rainbow/pure);用内置 lean 主题");
+    }
+    fallback()
 }
 
 /// 未指定 shell 时，回退到 $SHELL。
