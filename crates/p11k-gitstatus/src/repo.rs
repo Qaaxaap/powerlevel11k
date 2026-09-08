@@ -132,6 +132,11 @@ pub struct Repo {
     staged_head: Option<Oid>,
     /// Staged-diff cache.
     staged_stats: StagedStats,
+    /// `.git/index` stat when staged_stats was computed. An index change
+    /// invalidates the staged cache even when HEAD didn't move (the
+    /// original's `git_index_read_ex` new_index → `head_ = {}`), e.g.
+    /// `git add` after commit.
+    staged_index_stat: Option<(i64, i64, i64)>,
     /// Untracked-cache probe (background thread).
     untracked: UntrackedCache,
     /// p11k index-tree cache: the dirs' untracked state (st/unmatched)
@@ -238,6 +243,7 @@ impl Repo {
             limits,
             staged_head: None,
             staged_stats: StagedStats::default(),
+            staged_index_stat: None,
             untracked,
             index_tree: None,
             index_stat: None,
@@ -555,15 +561,22 @@ impl Repo {
         if !want_staged {
             self.staged_head = None;
             self.staged_stats = StagedStats::default();
+            self.staged_index_stat = None;
         } else if let Some(head) = self.head_oid {
-            if self.staged_head != Some(head) {
+            // 缓存失效 = HEAD 变了 **或 index 变了**（gaa 改 index 不动 HEAD；
+            // 对齐原版 git_index_read_ex 的 new_index → head_ = {}）。
+            let index_stat = self.index_stat;
+            let index_changed = index_stat != self.staged_index_stat;
+            if self.staged_head != Some(head) || index_changed {
                 self.staged_head = Some(head);
+                self.staged_index_stat = index_stat;
                 self.staged_stats = self.compute_staged(&git_index, head);
             }
         } else {
             // Empty repo / initial commit: no HEAD tree, staged = all
             // non-intent-to-add entries.
             self.staged_head = None;
+            self.staged_index_stat = None;
             let mut staged = 0usize;
             let mut skip = 0usize;
             let mut assume = 0usize;
