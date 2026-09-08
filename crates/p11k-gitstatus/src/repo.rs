@@ -257,6 +257,14 @@ impl Repo {
     /// With skip_index (wire diff='1'), index stats are skipped: stats stay
     /// all-zero, like the original's `if (req.diff) stats = ...`.
     pub fn build_fields(&mut self, skip_index: bool) -> [Vec<u8>; field::COUNT] {
+        // 每次请求重读 HEAD（原版 gitstatus.cc 每次 `Head(repo)`）：commit/
+        // checkout 移动 HEAD 后立即可见——COMMIT 字段与 staged 缓存都随它刷新。
+        self.head_oid = self
+            .git
+            .find_reference("HEAD")
+            .ok()
+            .and_then(|r| r.resolve().ok())
+            .and_then(|r| r.target());
         let mut f: [Vec<u8>; field::COUNT] = std::array::from_fn(|_| Vec::new());
         f[field::WORKDIR] = self.workdir.clone();
         f[field::COMMIT] = self
