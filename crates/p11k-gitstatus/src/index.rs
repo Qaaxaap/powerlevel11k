@@ -268,6 +268,13 @@ impl Index {
 /// nsec of 0 skips nsec comparison (GITSTATUS_ZERO_NSEC — git zeroes nsec
 /// after racy detection).
 pub fn is_modified(entry: &IndexEntry, st: &libc::stat, caps: &RepoCaps) -> bool {
+    // Submodule (gitlink, mode 160000): 磁盘上是目录，其 stat 字段与 index 里
+    // 的 gitlink 条目（size/mtime/ino 都为 0）不可比，mode 也永远不匹配
+    // （S_IFDIR vs S_IFGITLINK）。目录仍在即视为未改，对齐原版 dirty 扫描的
+    // `GIT_SUBMODULE_IGNORE_DIRTY`；目录缺失由 scan 层的 fstatat 失败报 deleted。
+    if entry.mode & libc::S_IFMT == 0o160000 {
+        return false;
+    }
     let mut mode = st.st_mode;
     if mode & libc::S_IFMT == libc::S_IFREG {
         // Missing symlinks capability with a symlink entry, or untrusted

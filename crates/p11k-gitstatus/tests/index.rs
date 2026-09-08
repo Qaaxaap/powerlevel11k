@@ -293,3 +293,24 @@ fn scan_multi_dir_shards_find_all_dirty() {
     out.sort();
     assert_eq!(out, vec![b"dir05/u".to_vec(), b"dir09/file0".to_vec()]);
 }
+
+/// gitlink（submodule, mode 160000）在磁盘上是目录：stat 字段/mode 与 gitlink
+/// 条目不可比。目录仍在 → 不算 dirty（对齐原版 GIT_SUBMODULE_IGNORE_DIRTY）。
+#[test]
+fn gitlink_dir_stat_is_not_modified() {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    st.st_mode = libc::S_IFDIR | 0o755;
+    st.st_size = 64;
+    st.st_mtime = 12345;
+    st.st_mtime_nsec = 0;
+    st.st_ino = 999;
+    let mut e = entry("custom/plugins/theme", &st);
+    e.mode = 0o160000; // gitlink
+    e.fsize = 0;
+    e.mtime_sec = 0;
+    e.mtime_nsec = 0;
+    assert!(
+        !is_modified(&e, &st, &caps()),
+        "gitlink 目录仍在不应判 dirty（否则干净仓库的 submodule 全报 unstaged）"
+    );
+}
