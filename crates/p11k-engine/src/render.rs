@@ -1912,12 +1912,20 @@ fn assemble_row(
         if cols > rw {
             let start = cols - rw; // 右段起点(0-based)
             if start > lw {
-                let gap_char = if seps.gap.is_empty() {
-                    " ".to_string()
-                } else {
-                    seps.gap.clone()
-                };
-                out.push_str(&gap_char.repeat(start - lw));
+                let gap_char = if seps.gap.is_empty() { " " } else { &seps.gap };
+                let gap_str = gap_char.repeat(start - lw);
+                // gap 前景色(p10k MULTILINE_FIRST_PROMPT_GAP_FOREGROUND);
+                // 未配则原样输出(终端默认色)。
+                match &seps.gap_foreground {
+                    Some(fg) => out.push_str(&paint(
+                        &gap_str,
+                        &Style {
+                            fg: fg.clone(),
+                            ..Style::default()
+                        },
+                    )),
+                    None => out.push_str(&gap_str),
+                }
             }
         }
         out.push_str(&right_str);

@@ -169,6 +169,7 @@ fn powerline_separators() -> Separators {
         left_tail: String::new(),
         right_tail: String::new(),
         gap: " ".into(),
+        gap_foreground: None,
     }
 }
 

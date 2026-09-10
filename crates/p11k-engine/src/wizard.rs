@@ -493,6 +493,13 @@ fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> 
                 _ => "─",
             }
             .into();
+            // 有填充字符时给个灰前景（对齐 p10k 的
+            // MULTILINE_FIRST_PROMPT_GAP_FOREGROUND=240）；断开则清掉。
+            c.separators.gap_foreground = if i == 0 {
+                None
+            } else {
+                Some(Color::Xterm(240))
+            };
         },
     )
 }

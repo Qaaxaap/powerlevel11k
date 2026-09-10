@@ -146,6 +146,9 @@ pub struct Separators {
     pub right_tail: String,
     /// 行内左右栏之间的 gap 填充字符(如 `·`;空=空格)。
     pub gap: String,
+    /// gap 填充字符的前景色(`separators gap-foreground=240`;缺省=终端默认色)。
+    /// 对齐 p10k `POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_FOREGROUND`。
+    pub gap_foreground: Option<Color>,
 }
 
 /// 帧的一块(行首/行尾装饰字符):文本 + 可选独立样式。
@@ -434,6 +437,10 @@ impl Config {
     fn separators_node(&self) -> KdlNode {
         let s = &self.separators;
         let mut n = KdlNode::new("separators");
+        if let Some(fg) = &s.gap_foreground {
+            n.entries_mut()
+                .push(KdlEntry::new_prop("gap-foreground", color_value(fg)));
+        }
         let ch = n.ensure_children();
         for (name, val) in [
             ("segment", &s.segment),
@@ -1075,6 +1082,10 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
 /// 解析 `separators` 节点:`segment`/`sub`/`end` 子节点,值=字符串(首字符)。
 fn parse_separators(node: &KdlNode) -> Separators {
     let mut s = Separators::default();
+    // `gap-foreground` 是 separators 节点的属性(不是子节点)。
+    if let Some(c) = named_color(node, "gap-foreground") {
+        s.gap_foreground = Some(c);
+    }
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
             let Some(v) = first_value(child) else {
@@ -1185,7 +1196,7 @@ layout {
     transient-prompt #true
 }
 defaults fg=200 bold=#true
-separators {
+separators gap-foreground=240 {
     segment "\u{e0b0}"
     sub "\u{e0b1}"
     end ""
