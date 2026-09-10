@@ -118,6 +118,8 @@ pub struct Layout {
     /// 瞬态 prompt:命令提交后把多行 header 折叠成单行 `❯`(p10k `TRANSIENT_PROMPT`)。
     /// 仅 zsh 支持(依赖 zle reset-prompt),bash/fish 忽略。
     pub transient_prompt: bool,
+    /// 标尺:header 之上再画一整行 `ruler` 字符(p10k `SHOW_RULER`,缺省关)。
+    pub show_ruler: bool,
 }
 
 /// 分隔符/端符族(可配置字符,powerline 风格)。
@@ -437,6 +439,9 @@ impl Config {
         }
         if self.layout.transient_prompt {
             ch.nodes_mut().push(leaf("transient-prompt", true));
+        }
+        if self.layout.show_ruler {
+            ch.nodes_mut().push(leaf("show-ruler", true));
         }
         n
     }
@@ -953,6 +958,10 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
                 }
                 "transient-prompt" => {
                     layout.transient_prompt = first_value(child).map(bool_val).unwrap_or(false);
+                }
+                // `show-ruler #true`：header 之上加一整行标尺（p10k SHOW_RULER）。
+                "show-ruler" => {
+                    layout.show_ruler = first_value(child).map(bool_val).unwrap_or(false);
                 }
                 _ => {}
             }

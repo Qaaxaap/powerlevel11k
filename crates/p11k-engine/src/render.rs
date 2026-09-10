@@ -154,52 +154,66 @@ pub fn render_header_lines(
     let right = &layout.right;
     let lines = left.len().max(right.len());
     let frame = &config.frame;
-    (0..lines)
-        .map(|i| {
-            let render_side = |budget: Option<usize>| {
-                let l = left
-                    .get(i)
-                    .map(|seg| render_row(config, seg, info, vcs, false, budget))
-                    .unwrap_or_default();
-                let r = right
-                    .get(i)
-                    .map(|seg| render_row(config, seg, info, vcs, true, budget))
-                    .unwrap_or_default();
-                (l, r)
-            };
-            // 每行帧:首行 first,其余 header 行 newline。
-            let (prefix, suffix) = if i == 0 {
-                (&frame.first_prefix, &frame.first_suffix)
-            } else {
-                (&frame.newline_prefix, &frame.newline_suffix)
-            };
-            let pre_w = display_width(&prefix.text);
-            let suf_w = display_width(&suffix.text);
-            let mut row = String::new();
-            if !prefix.text.is_empty() {
-                row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
-            }
-            // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
-            let body_budget = cols.saturating_sub(pre_w + suf_w);
-            // 第一遍:完全不折(p10k 放得下时就是原样)。
-            let (l, r) = render_side(None);
-            let body = assemble_row(&l, &r, body_budget, &config.separators);
-            // 超宽了 → 按超出多少列给 dir 一个折叠预算,重渲染一遍。
-            // (p10k 的 dir 折叠是动态的:窄终端折、宽终端不折。)
-            let width = display_width(&body);
-            let body = if width > body_budget {
-                let (l, r) = render_side(Some(width - body_budget));
-                assemble_row(&l, &r, body_budget, &config.separators)
-            } else {
-                body
-            };
-            row.push_str(&body);
-            if !suffix.text.is_empty() {
-                row.push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
-            }
-            row
-        })
-        .collect()
+    let mut out: Vec<String> = Vec::with_capacity(lines + 1);
+    // p10k `SHOW_RULER`：header 之上先铺一整行标尺字符。
+    if layout.show_ruler {
+        let ch = icon_str(config, "ruler").unwrap_or_else(|| "\u{2500}".to_string());
+        let style = config
+            .segment("ruler")
+            .effective_style(None, &config.defaults);
+        let width = display_width(&ch).max(1);
+        let n = cols / width;
+        out.push(paint(&ch.repeat(n), &style));
+    }
+    out.extend(
+        (0..lines)
+            .map(|i| {
+                let render_side = |budget: Option<usize>| {
+                    let l = left
+                        .get(i)
+                        .map(|seg| render_row(config, seg, info, vcs, false, budget))
+                        .unwrap_or_default();
+                    let r = right
+                        .get(i)
+                        .map(|seg| render_row(config, seg, info, vcs, true, budget))
+                        .unwrap_or_default();
+                    (l, r)
+                };
+                // 每行帧:首行 first,其余 header 行 newline。
+                let (prefix, suffix) = if i == 0 {
+                    (&frame.first_prefix, &frame.first_suffix)
+                } else {
+                    (&frame.newline_prefix, &frame.newline_suffix)
+                };
+                let pre_w = display_width(&prefix.text);
+                let suf_w = display_width(&suffix.text);
+                let mut row = String::new();
+                if !prefix.text.is_empty() {
+                    row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
+                }
+                // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
+                let body_budget = cols.saturating_sub(pre_w + suf_w);
+                // 第一遍:完全不折(p10k 放得下时就是原样)。
+                let (l, r) = render_side(None);
+                let body = assemble_row(&l, &r, body_budget, &config.separators);
+                // 超宽了 → 按超出多少列给 dir 一个折叠预算,重渲染一遍。
+                // (p10k 的 dir 折叠是动态的:窄终端折、宽终端不折。)
+                let width = display_width(&body);
+                let body = if width > body_budget {
+                    let (l, r) = render_side(Some(width - body_budget));
+                    assemble_row(&l, &r, body_budget, &config.separators)
+                } else {
+                    body
+                };
+                row.push_str(&body);
+                if !suffix.text.is_empty() {
+                    row.push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
+                }
+                row
+            })
+            .collect::<Vec<String>>(),
+    );
+    out
 }
 
 /// 渲染一行:左段串、右段右对齐。
@@ -539,6 +553,8 @@ fn icon_default(key: &str) -> Option<IconEntry> {
         // p10k EXECUTION_TIME_ICON:nerdfont 档 U+F252(沙漏),
         // compatible/ascii 档 p10k 本身就是空。
         "execution-time" => Some(icon("\u{f252}", "", "")),
+        // p10k RULER_CHAR:nerdfont/compatible 档 `─`,ascii 档 `-`。
+        "ruler" => Some(icon("\u{2500}", "\u{2500}", "-")),
         "background-jobs" => Some(icon("\u{f013}", "\u{2699}", "%%")), // 齿轮 ⚙ %%
         "go" => Some(icon("\u{e626}", "Go", "go")),
         "rust" => Some(icon("\u{e7a8}", "R", "rust")),
@@ -3362,6 +3378,40 @@ mod tests {
     }
 
     #[test]
+    fn ruler_line_renders_above_the_header() {
+        // p10k SHOW_RULER：header 之上铺一整行 RULER_CHAR（缺省 `─`）。
+        let cfg = Config::parse(
+            "layout {\n  show-ruler #true\n  left { line { dir #true } }\n}\n\
+             segments { ruler fg=240 }",
+        )
+        .unwrap();
+        let lines = render_header_lines(&cfg, &info("/tmp", None), None, 20);
+        assert_eq!(lines.len(), 2, "标尺行 + header 行");
+        assert_eq!(display_width(&lines[0]), 20, "标尺应铺满整行宽");
+        assert!(
+            lines[0].contains("\u{2500}") && lines[0].contains("[38;5;240m"),
+            "标尺字符与颜色不对,实际 {:?}",
+            lines[0]
+        );
+        // 关掉就没有标尺行。
+        let off = Config::parse("layout { left { line { dir #true } } }").unwrap();
+        assert_eq!(
+            render_header_lines(&off, &info("/tmp", None), None, 20).len(),
+            1
+        );
+        // ascii 档用 `-`。
+        let asc = Config::parse(
+            "mode \"ascii\"\nlayout {\n  show-ruler #true\n  left { line { dir #true } }\n}",
+        )
+        .unwrap();
+        let l = render_header_lines(&asc, &info("/tmp", None), None, 10);
+        assert!(
+            l[0].contains('-') && !l[0].contains('\u{2500}'),
+            "实际 {:?}",
+            l[0]
+        );
+    }
+
     #[test]
     fn dir_absolute_omit_first_highlight_and_hyperlink() {
         /// 去 SGR 只留可见文字。
