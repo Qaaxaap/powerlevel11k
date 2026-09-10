@@ -355,6 +355,12 @@ impl Repo {
     /// Tracking remote (git.cc GetRemote): read `branch.<name>.remote` and
     /// `branch.<name>.merge`; None (all three fields empty) without config
     /// or a local branch.
+    ///
+    /// 原版还有一条前置条件（差分实测，见 tests/compat.rs 的 remote 场景）：
+    /// remote 必须能通过 libgit2 的 `git_remote_lookup`——即配置里既有
+    /// `remote.<name>.url`（空串也算有）又有 `remote.<name>.fetch`，且
+    /// `refs/remotes/<remote>/<branch>` 这个 upstream ref 存在。少任意一条，
+    /// 原版三个字段全空（`git_remote_lookup` / `git_branch_upstream` 失败）。
     fn upstream_remote(&self) -> Option<RemoteInfo> {
         let branch = self.local_branch();
         if branch.is_empty() {
@@ -365,15 +371,11 @@ impl Repo {
         if remote_name == "." {
             return None;
         }
-        let url = self
-            .git
-            .find_remote(&remote_name)
-            .ok()
-            .map(|r| r.url().unwrap_or("").to_string())
-            .unwrap_or_default();
+        let url = self.remote_or_none(&remote_name)?;
         let merge = cfg.get_string(&format!("branch.{branch}.merge")).ok()?;
         let short = merge.strip_prefix("refs/heads/")?;
         let ref_name = format!("refs/remotes/{remote_name}/{short}");
+        self.git.find_reference(&ref_name).ok()?;
         Some(RemoteInfo {
             name: remote_name,
             branch: short.to_string(),
@@ -385,6 +387,7 @@ impl Repo {
     /// Push remote (git.cc GetPushRemote): `branch.<name>.pushRemote` →
     /// `remote.pushDefault` → None. On the mainstream path
     /// (pushRemote/pushDefault configured) the push ref is the tracking ref.
+    /// 与非 push 路径相同的两条前置条件(非空 URL + upstream ref 存在)。
     fn push_remote(&self) -> Option<RemoteInfo> {
         let branch = self.local_branch();
         if branch.is_empty() {
@@ -398,21 +401,33 @@ impl Repo {
         if remote_name == "." {
             return None;
         }
-        let url = self
-            .git
-            .find_remote(&remote_name)
-            .ok()
-            .map(|r| r.url().unwrap_or("").to_string())
-            .unwrap_or_default();
+        let url = self.remote_or_none(&remote_name)?;
         let merge = cfg.get_string(&format!("branch.{branch}.merge")).ok()?;
         let short = merge.strip_prefix("refs/heads/")?;
         let ref_name = format!("refs/remotes/{remote_name}/{short}");
+        self.git.find_reference(&ref_name).ok()?;
         Some(RemoteInfo {
             name: remote_name,
             branch: short.to_string(),
             url,
             ref_name,
         })
+    }
+
+    /// 解析 remote 的 URL，行为对齐原版的 `git_remote_lookup`：只有 url 没有
+    /// fetch refspec 的 remote 原版当作不存在（差分实测），这里同样返回 None。
+    /// url 为空串本身不算失败（原版会照常上报 branch/name，url 字段留空）。
+    fn remote_or_none(&self, name: &str) -> Option<String> {
+        let remote = self.git.find_remote(name).ok()?;
+        let has_fetch = remote
+            .fetch_refspecs()
+            .ok()?
+            .iter()
+            .any(|r| r.is_some_and(|s| !s.is_empty()));
+        if !has_fetch {
+            return None;
+        }
+        Some(remote.url().unwrap_or("").to_string())
     }
 
     /// Repo state (git.cc RepoState): libgit2 repository state plus a rebase

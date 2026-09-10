@@ -147,6 +147,112 @@ fn differential_gitdir_and_empty_repo() {
     );
 }
 
+/// 对拍：upstream 相关的三种边界（原版在 remote 解析不出 URL、或
+/// upstream ref 不存在时，remote_branch/name/url 三个字段全空）。
+///
+/// 手动探测原版时发现的差异：p11k 之前只看 `branch.<n>.remote` 配置就上报，
+/// 于是"remote 未配置""url 为空""tracking ref 不存在"三种情况下都会多报。
+#[test]
+#[ignore = "需要 GITSTATUSD_PATH 指向原版 gitstatusd"]
+fn differential_upstream_edge_cases() {
+    /// 造一个本地分支 local-name，tracking refs/heads/tracking-test。
+    fn make_tracking_repo(dir: &std::path::Path) -> git2::Repository {
+        let repo = git2::Repository::init(dir).unwrap();
+        let mut cfg = repo.config().unwrap();
+        cfg.set_str("user.email", "t@t").unwrap();
+        cfg.set_str("user.name", "t").unwrap();
+        let sig = git2::Signature::now("t", "t@t").unwrap();
+        std::fs::write(dir.join("a"), b"1").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("a")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        {
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+                .unwrap();
+        }
+        let head_id = repo.head().unwrap().peel_to_commit().unwrap().id();
+        // 建 remote-tracking ref 并把当前分支挪到 local-name / 指向它。
+        repo.reference("refs/remotes/origin/tracking-test", head_id, true, "test")
+            .unwrap();
+        {
+            let head = repo.find_commit(head_id).unwrap();
+            repo.branch("local-name", &head, true).unwrap();
+        }
+        repo.set_head("refs/heads/local-name").unwrap();
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+        repo
+    }
+
+    // (1) 没有 remote 配置：ref 在，但 remote 解析不出来。
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = make_tracking_repo(tmp.path());
+    let path = tmp.path().to_str().unwrap().to_string();
+    repo.config()
+        .unwrap()
+        .set_str("branch.local-name.remote", "origin")
+        .unwrap();
+    repo.config()
+        .unwrap()
+        .set_str("branch.local-name.merge", "refs/heads/tracking-test")
+        .unwrap();
+    assert_identical(
+        format!("id\x1f{path}\x1e").as_bytes(),
+        format!("id\x1f{path}\x1e").as_bytes(),
+        "tracking branch without a configured remote",
+    );
+
+    // (2) remote 在但 url 是空串（libgit2 不认 `remote("origin", "")`，
+    //     所以先建好再直接把配置值改成空串）。原版照常上报 branch/name，
+    //     url 字段留空——空 url 不是判据。
+    repo.remote("origin", "https://example.invalid/repo.git")
+        .unwrap();
+    repo.config()
+        .unwrap()
+        .set_str("remote.origin.url", "")
+        .unwrap();
+    assert_identical(
+        format!("id\x1f{path}\x1e").as_bytes(),
+        format!("id\x1f{path}\x1e").as_bytes(),
+        "remote with an empty url",
+    );
+
+    // (3) 判据是 fetch refspec：只有 url、没有 remote.<name>.fetch 时，
+    //     原版把 remote 当作不存在（三个字段全空）。
+    repo.remote_set_url("origin", "https://example.invalid/repo.git")
+        .unwrap();
+    repo.config()
+        .unwrap()
+        .remove("remote.origin.fetch")
+        .unwrap();
+    assert_identical(
+        format!("id\x1f{path}\x1e").as_bytes(),
+        format!("id\x1f{path}\x1e").as_bytes(),
+        "remote with a url but no fetch refspec",
+    );
+
+    // (4) remote 与 url 都正常，但 tracking ref 被删掉。
+    repo.config()
+        .unwrap()
+        .set_str("remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        .unwrap();
+    assert_identical(
+        format!("id\x1f{path}\x1e").as_bytes(),
+        format!("id\x1f{path}\x1e").as_bytes(),
+        "remote configured, tracking ref present",
+    );
+    repo.find_reference("refs/remotes/origin/tracking-test")
+        .unwrap()
+        .delete()
+        .unwrap();
+    assert_identical(
+        format!("id\x1f{path}\x1e").as_bytes(),
+        format!("id\x1f{path}\x1e").as_bytes(),
+        "remote configured, tracking ref deleted",
+    );
+}
+
 /// 对拍：EOF 退出码（两端都应 exit 0）。
 #[test]
 #[ignore = "需要 GITSTATUSD_PATH 指向原版 gitstatusd"]
