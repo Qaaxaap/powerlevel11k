@@ -366,6 +366,10 @@ fn render_segment(
                 String::new()
             }
         }
+        // 图标与内容之间的空格（p10k `LEFT_MIDDLE_WHITESPACE` /
+        // `RIGHT_MIDDLE_WHITESPACE`）落在两者之间：左列图标在前 → 图标 + 空格；
+        // 右列图标在后 → 空格 + 图标。反过来会让右段变成"内容图标 "。
+        Some(ic) if right => paint(&format!(" {ic}"), &icon_style),
         Some(ic) => paint(&format!("{ic} "), &icon_style),
         None => String::new(),
     };
@@ -417,7 +421,9 @@ fn render_segment(
         };
     }
     let mut out = String::new();
-    if has_real_bg {
+    // 段首空白：有底色的段必加；右列段无条件加（它前面总是分隔符，
+    // p10k 的分隔符后跟一个 left_space）。左列行首的透明段不加。
+    if has_real_bg || right {
         out.push_str(&paint(" ", &style));
     }
     out.push_str(&body);
