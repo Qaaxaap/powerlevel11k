@@ -109,6 +109,8 @@ pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
 struct SegmentText {
     text: String,
     style: Style,
+    /// 文本是否已带段尾空白（段的 padding）；无背景段之间不再补空格。
+    padded: bool,
 }
 
 /// 渲染 header 为逐行内容(每行=左段串+右段右对齐,不含光标/清屏/换行)。
@@ -189,6 +191,7 @@ fn render_row(
                 SegmentText {
                     text: paint(&expand_env(t), &style),
                     style,
+                    padded: false,
                 }
             }
         })
@@ -205,6 +208,9 @@ fn render_segment(
 ) -> SegmentText {
     let seg = config.segment(name);
     let mut style = seg.effective_style(None, &config.defaults);
+    // 段是否有显式底色（强制默认黑底之前判断）：只有真底色才加段首空白，
+    // 透明段不加——对齐 p10k lean 行首不留空。
+    let has_real_bg = style.bg != Color::Default;
     // 保证段都有背景:无显式 bg → defaults.bg → 内置默认背景。
     if style.bg == Color::Default {
         style.bg = if config.defaults.bg != Color::Default {
@@ -350,12 +356,16 @@ fn render_segment(
     // 之间:左列 icon 在前 → middle 在 icon 后;右列 icon 后置 → middle 在内容与 icon 之间。
     // 段前缀/后缀(p10k `SEG_PREFIX`/`SEG_SUFFIX`,如 vcs 的 `on `、exec 的
     // `took `):画在整段最前/最后,用段样式上色。
-    let mut out = String::new();
+    // p10k 的段空白（`LEFT_LEFT_WHITESPACE` / `LEFT_RIGHT_WHITESPACE`，默认各
+    // 一个空格）：段内容前后留一空格，使段间分隔符（subsep/箭头）两侧都有
+    // 空白、不再紧贴。无背景的段不加段首空白——对齐 p10k lean，行首不留空。
+    // 段主体（不含两侧空白）。
+    let mut body = String::new();
     if let Some(p) = &seg.prefix {
-        out.push_str(&paint(p, &style));
+        body.push_str(&paint(p, &style));
     }
     if let Some(l) = &seg.text_left {
-        out.push_str(&paint_attach(&style, l));
+        body.push_str(&paint_attach(&style, l));
     }
     let middle = if !icon_text.is_empty() && !text.is_empty() {
         seg.text_middle
@@ -366,21 +376,39 @@ fn render_segment(
         String::new()
     };
     if right {
-        out.push_str(&text);
-        out.push_str(&middle);
-        out.push_str(&icon_text);
+        body.push_str(&text);
+        body.push_str(&middle);
+        body.push_str(&icon_text);
     } else {
-        out.push_str(&icon_text);
-        out.push_str(&middle);
-        out.push_str(&text);
+        body.push_str(&icon_text);
+        body.push_str(&middle);
+        body.push_str(&text);
     }
     if let Some(r) = &seg.text_right {
-        out.push_str(&paint_attach(&style, r));
+        body.push_str(&paint_attach(&style, r));
     }
     if let Some(s) = &seg.suffix {
-        out.push_str(&paint(s, &style));
+        body.push_str(&paint(s, &style));
     }
-    SegmentText { text: out, style }
+    // 条件段未满足时无可显示内容 → 整段隐藏，不留两侧空白。
+    if body.is_empty() {
+        return SegmentText {
+            text: String::new(),
+            style,
+            padded: false,
+        };
+    }
+    let mut out = String::new();
+    if has_real_bg {
+        out.push_str(&paint(" ", &style));
+    }
+    out.push_str(&body);
+    out.push_str(&paint(" ", &style));
+    SegmentText {
+        text: out,
+        style,
+        padded: true,
+    }
 }
 
 /// 附加文字上色:fg 缺省沿用段样式,配了则覆盖前景(bg/bold 仍跟段)。
@@ -1720,13 +1748,15 @@ fn assemble_row(
         }
     }
     let mut prev_bg = Color::Default;
+    let mut prev_padded = false;
     let mut has_left = false;
     for s in left {
         if s.text.is_empty() {
             continue;
         }
         // 段间分隔(p10k 决策):前段有背景 → 画分隔符(同底 → sub,异色/当前无底 → segment);
-        // 前段无背景 → 纯空格。
+        // 前段无背景 → 空格。段自带段尾空白(见 render_segment 的 padding),
+        // 已有空白时不再补,避免双空格(p10k 无背景段之间就是一个空格)。
         if has_left {
             let prev_has = prev_bg != Color::Default;
             if prev_has {
@@ -1738,15 +1768,16 @@ fn assemble_row(
                     } else {
                         out.push_str(&arrow(ch, prev_bg.clone(), s.style.bg.clone()));
                     }
-                } else {
+                } else if !prev_padded {
                     out.push(' ');
                 }
-            } else {
+            } else if !prev_padded {
                 out.push(' ');
             }
         }
         out.push_str(&s.text); // text 已上色,不再二次上色
         prev_bg = s.style.bg.clone();
+        prev_padded = s.padded;
         has_left = true;
     }
     // 左栏末尾端符(最后一段后,用它自己的背景指向行尾)。
