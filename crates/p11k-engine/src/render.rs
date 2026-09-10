@@ -1791,30 +1791,50 @@ fn vcs_text(vcs: Option<&GitStatus>, branch_icon: &str, seg: &Segment, style: &S
             b.push_str(branch_icon);
             b.push(' ');
         }
-        b.push_str(&v.branch);
+        b.push_str(&shorten_branch(&v.branch, seg));
         s.push_str(&paint(&b, &clean));
     }
+    // 计数符号可被 props 覆盖（p10k 里这些字符写死在 config 的格式化函数里，
+    // 这里给出来让用户不用改引擎就能换）。
+    let sym = |name: &str, default: &str| -> String {
+        match seg.prop(name) {
+            Some(crate::config::Prop::Str(s)) => s.clone(),
+            _ => default.to_string(),
+        }
+    };
     let mut parts: Vec<(String, &Style)> = Vec::new();
     if v.staged > 0 {
-        parts.push((format!("+{}", v.staged), &modified));
+        parts.push((
+            format!("{}{}", sym("staged-symbol", "+"), v.staged),
+            &modified,
+        ));
     }
     if v.unstaged > 0 {
-        parts.push((format!("~{}", v.unstaged), &modified));
+        parts.push((
+            format!("{}{}", sym("unstaged-symbol", "~"), v.unstaged),
+            &modified,
+        ));
     }
     if v.conflicted > 0 {
-        parts.push((format!("!{}", v.conflicted), &modified));
+        parts.push((
+            format!("{}{}", sym("conflicted-symbol", "!"), v.conflicted),
+            &modified,
+        ));
     }
     if v.untracked > 0 {
-        parts.push((format!("?{}", v.untracked), &untracked));
+        parts.push((
+            format!("{}{}", sym("untracked-symbol", "?"), v.untracked),
+            &untracked,
+        ));
     }
     if v.ahead > 0 {
-        parts.push((format!("↑{}", v.ahead), &clean));
+        parts.push((format!("{}{}", sym("ahead-symbol", "↑"), v.ahead), &clean));
     }
     if v.behind > 0 {
-        parts.push((format!("↓{}", v.behind), &clean));
+        parts.push((format!("{}{}", sym("behind-symbol", "↓"), v.behind), &clean));
     }
     if v.stashes > 0 {
-        parts.push((format!("≡{}", v.stashes), &clean));
+        parts.push((format!("{}{}", sym("stash-symbol", "≡"), v.stashes), &clean));
     }
     if !parts.is_empty() {
         // 空格用段样式上色：裸空格会被终端按默认背景画，在带底色的段里
@@ -1825,6 +1845,40 @@ fn vcs_text(vcs: Option<&GitStatus>, branch_icon: &str, seg: &Segment, style: &S
         s.push_str(&joined.join(&sep));
     }
     s
+}
+
+/// 分支名折叠（p10k `VCS_SHORTEN_*`）：`shorten-length` 与 `shorten-min-length`
+/// 都配了、且名字长于两者时才折叠；`shorten-strategy` 取 `truncate_middle`
+/// （前 N + 省略符 + 后 N）或 `truncate_from_right`（前 N + 省略符，默认）。
+fn shorten_branch(branch: &str, seg: &Segment) -> String {
+    let num = |name: &str| -> Option<usize> {
+        match seg.prop(name) {
+            Some(crate::config::Prop::Int(n)) if *n > 0 => Some(*n as usize),
+            _ => None,
+        }
+    };
+    let (Some(len), Some(min)) = (num("shorten-length"), num("shorten-min-length")) else {
+        return branch.to_string();
+    };
+    let chars: Vec<char> = branch.chars().collect();
+    if chars.len() <= min || chars.len() <= len {
+        return branch.to_string();
+    }
+    let delim = match seg.prop("shorten-delimiter") {
+        Some(crate::config::Prop::Str(s)) => s.clone(),
+        _ => "\u{2026}".to_string(),
+    };
+    let head: String = chars[..len].iter().collect();
+    let middle = matches!(
+        seg.prop("shorten-strategy"),
+        Some(crate::config::Prop::Str(s)) if s == "truncate_middle"
+    );
+    if middle {
+        let tail: String = chars[chars.len() - len..].iter().collect();
+        format!("{head}{delim}{tail}")
+    } else {
+        format!("{head}{delim}")
+    }
 }
 
 /// 退出码状态。OK/ERROR 图标字符由调用方从图标名 `ok`/`error` 解析传入
@@ -2124,6 +2178,52 @@ mod tests {
         assert!(h.contains("main"), "content 应渲染,实际 {h:?}");
         let after = h.split("main").nth(1).unwrap_or("");
         assert!(after.contains('!'), "suffix 应在内容之后,实际 {h:?}");
+    }
+
+    #[test]
+    fn vcs_branch_shortening_and_symbols() {
+        // p10k VCS_SHORTEN_*：length/min-length 都配了才折叠；符号可换。
+        let v = GitStatus {
+            branch: "feature/long-branch".into(),
+            staged: 2,
+            unstaged: 0,
+            conflicted: 0,
+            untracked: 0,
+            ahead: 0,
+            behind: 0,
+            stashes: 0,
+            remote_url: String::new(),
+        };
+        let mut cfg = Config::default();
+        cfg.layout.left = vec![vec![Element::Seg("vcs".into())]];
+        let mut s = crate::config::Segment::default();
+        s.props
+            .insert("shorten-length".into(), crate::config::Prop::Int(4));
+        s.props
+            .insert("shorten-min-length".into(), crate::config::Prop::Int(6));
+        s.props.insert(
+            "shorten-strategy".into(),
+            crate::config::Prop::Str("truncate_middle".into()),
+        );
+        s.props
+            .insert("staged-symbol".into(), crate::config::Prop::Str("S".into()));
+        cfg.segments.insert("vcs".into(), s);
+        let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n");
+        assert!(h.contains("feat\u{2026}anch"), "分支应中间折叠,实际 {h:?}");
+        assert!(h.contains("S2"), "staged 符号应可配,实际 {h:?}");
+
+        // 只配 length、缺 min-length → 不折叠（p10k 要求两个都设）。
+        let mut cfg2 = Config::default();
+        cfg2.layout.left = vec![vec![Element::Seg("vcs".into())]];
+        let mut s2 = crate::config::Segment::default();
+        s2.props
+            .insert("shorten-length".into(), crate::config::Prop::Int(4));
+        cfg2.segments.insert("vcs".into(), s2);
+        let h2 = render_header_lines(&cfg2, &info("/tmp", None), Some(&v), 80).join("\n");
+        assert!(
+            h2.contains("feature/long-branch"),
+            "缺 min-length 不应折叠,实际 {h2:?}"
+        );
     }
 
     #[test]
