@@ -348,9 +348,17 @@ fn render_segment(
     // 段图标:config `icon`(按字符类别自动覆盖适用的 mode)→ 否则内置默认表。
     // 图标后的空白（p10k `LEFT_MIDDLE_WHITESPACE`）只在段同时有图标与内容时
     // 才加——只有图标的段（如 os_icon）不留空，否则会与段尾空白叠成两个空格。
+    // 文本为空的段：只有"图标即内容"的段（env 指示、os 徽标）才画图标，
+    // 其余整段隐藏——对齐 p10k：非 git 仓库不显示 vcs 图标、jobs=0 不显示齿轮。
     let icon = resolve_icon(config, name, vcs);
     let icon_text = match icon {
-        Some(ic) if text.is_empty() => paint(&ic, &style),
+        Some(ic) if text.is_empty() => {
+            if icon_is_content(name) {
+                paint(&ic, &style)
+            } else {
+                String::new()
+            }
+        }
         Some(ic) => paint(&format!("{ic} "), &style),
         None => String::new(),
     };
@@ -649,6 +657,22 @@ fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>) -> Option<
     }
     let key = segment_icon_key(name)?;
     icon_str(config, key)
+}
+
+/// 图标本身就是内容的段：文本为空时也画图标（env 指示段、os 徽标）。
+/// 其余段的图标只是装饰，文本为空时整段隐藏。
+fn icon_is_content(name: &str) -> bool {
+    matches!(
+        name,
+        "ssh"
+            | "xplr"
+            | "midnight_commander"
+            | "vim_shell"
+            | "direnv"
+            | "chezmoi_shell"
+            | "os"
+            | "os_icon"
+    )
 }
 
 thread_local! {
