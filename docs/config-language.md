@@ -122,6 +122,10 @@ through `icon {}`.
   a single-line `❯` the moment a command is submitted (p10k
   `TRANSIENT_PROMPT`). zsh-only: it depends on `zle reset-prompt`, so
   bash/fish ignore it.
+- `layout { show-ruler #true … }` lays a full-width ruler line above the
+  header (p10k `SHOW_RULER`, off by default). The glyph comes from the
+  `ruler` icon (nerdfont/compatible `─`, ascii `-`) and the color from
+  `segments { ruler fg=… }`, falling back to `defaults`.
 
 ## Segments
 
@@ -160,7 +164,21 @@ through `icon {}`.
     1), `shorten-delimiter` (ellipsis, default `…`;
     `truncate_to_unique` never emits it), `shorten-folder-marker` (marker
     file name, default built-in list), `home-abbreviation` (home prefix,
-    default `~`), `path-separator-foreground` (color of `/`).
+    default `~`), `path-separator-foreground` (color of `/`),
+    `path-absolute` (p10k `DIR_PATH_ABSOLUTE`), `omit-first-character`
+    (p10k `DIR_OMIT_FIRST_CHARACTER`: absolute paths lose the leading
+    `/`, the root still shows `/`), `path-highlight-foreground` /
+    `path-highlight-bold` (p10k `DIR_PATH_HIGHLIGHT_*`, last component
+    only), `hyperlink` (p10k `DIR_HYPERLINK`, OSC 8 `file://$PWD`) and
+    `show-writable` (p10k `DIR_SHOW_WRITABLE`, same values:
+    `#true` / `"v2"` / `"v3"`; a non-writable directory swaps the icon for
+    a lock and the state for `NOT_WRITABLE`, or `NON_EXISTENT` under v3).
+    **Note**: p10k's `DIR_MAX_LENGTH` and `DIR_MIN_COMMAND_COLUMNS(_PCT)`
+    truncate the directory based on the length of the typed input line
+    (p10k redraws the whole prompt on every keystroke); the engine never
+    sees the input line, so they are not implemented —
+    `truncate_to_unique` instead folds only as much as the row width
+    demands.
   - `vcs`: `clean-foreground` / `modified-foreground` /
     `untracked-foreground` / `conflicted-foreground` / `meta-foreground`
     (branch plus ahead/behind/stash, staged and unstaged counts, untracked
@@ -178,12 +196,17 @@ through `icon {}`.
     `shorten-strategy` / `shorten-delimiter` (branch and tag shortening,
     needs both lengths); `staged-symbol` / `unstaged-symbol` /
     `conflicted-symbol` / `untracked-symbol` / `ahead-symbol` /
-    `behind-symbol` / `stash-symbol` (count glyphs, default
-    `+ ! ~ ? ⇡ ⇣ *`, matching p10k's formatter). The order matches p10k
-    too: `⇣behind⇡ahead` → `*stash` → in-progress action word
-    (`merge`/`rebase`, colored as conflicted) → `~conflicts` →
-    `+staged` → `!unstaged` → `?untracked`, with no space between ahead
-    and behind.
+    `behind-symbol` / `stash-symbol` / `push-ahead-symbol` /
+    `push-behind-symbol` (count glyphs, default
+    `+ ! ~ ? ⇡ ⇣ * ⇢ ⇠`, matching p10k's formatter); `max-num-staged` /
+    `max-num-unstaged` / `max-num-untracked` / `max-num-conflicted`
+    (p10k `VCS_*_MAX_NUM`, counting cap, -1 = unlimited) and
+    `max-index-size-dirty` (p10k `VCS_MAX_INDEX_SIZE_DIRTY`: above it the
+    dirty scan is skipped and p10k's `─` is drawn). The order matches
+    p10k too: `⇣behind⇡ahead` → push counts → `*stash` → in-progress
+    action word (`merge`/`rebase`, colored as conflicted) →
+    `~conflicts` → `+staged` → `!unstaged` → `?untracked`, with no space
+    between ahead and behind.
   - `status`: `ok-foreground` / `error-foreground`, `verbose` (`#false`
     hides success).
   - `command_execution_time`: `threshold-seconds` (default 3), `precision`
@@ -192,6 +215,13 @@ through `icon {}`.
   - `vi_mode`: `insert` / `normal` / `visual` / `overwrite` (default
     `INSERT` / `NORMAL` / `VISUAL` / `OVERWRITE`).
   - `date`: `date-format` (strftime, default `%d.%m.%y`).
+  - `symfony2_version`: reads the ` VERSION ` line of
+    `app/bootstrap.php.cache`.
+  - `symfony2_tests`: with `src` and `app/AppKernel.php` present, counts
+    `*.php` under `src` and the share of test files, printing
+    `SF2: 12.34%` under the states `GOOD` (>=75) / `AVG` (>=50) /
+    `BAD` (<50), which default to p10k's cyan/yellow/red so long as the
+    config does not declare them.
   - any segment: `visual-identifier-color` overrides the segment's **icon**
     foreground (segment color by default).
 - Style fallback has three levels: `state <NAME>` on the segment →
@@ -217,6 +247,11 @@ through `icon {}`.
 - `truncate_absolute` / `truncate_absolute_chars`: cut the whole path to a
   character count.
 - `truncate_with_folder_marker`: fold at the marker file.
+
+Like p10k, `truncate_to_unique` is width-dependent: it shows the path as
+is when the row fits and folds components front to back only as far as
+the overflow demands (measured: unfolded at 130/100 columns, one level
+folded at 90, two at 80). The other strategies always fold, as in p10k.
 
 What the built-in segments render:
 
@@ -321,6 +356,14 @@ accumulate.
   match it.
 - `vcs-remote-icons { github="\u{f113}" … }` — remote domain substring →
   icon, matched in order; unmatched remotes use the default git icon.
+- `dir-classes { class "~/work/**" state="WORK" icon="★" … }` — `$PWD` is
+  matched against each class in order and the first hit picks the dir
+  segment's state (styled via `state WORK fg=…`) and icon; `icon=""` means
+  no icon at all, as in p10k. With `show-writable` the state also gets the
+  `_NOT_WRITABLE` / `_NON_EXISTENT` suffix (p10k's rule). The pattern
+  dialect differs from p10k's zsh extended globs: `~` expands to $HOME,
+  `*` `?` `[…]` stay within one path component, `**` crosses directories,
+  and a trailing `/` matches the whole subtree.
 
 ## Checklist for config changes
 

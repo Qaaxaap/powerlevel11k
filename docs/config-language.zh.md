@@ -108,6 +108,9 @@
 - `layout { transient-prompt #true … }` 在命令提交瞬间把多行 header 折叠成
   单行 `❯`（p10k `TRANSIENT_PROMPT`）。仅 zsh 支持：依赖 `zle reset-prompt`，
   bash/fish 会忽略。
+- `layout { show-ruler #true … }` 在 header 之上再铺一整行标尺（p10k
+  `SHOW_RULER`，缺省关）。字符取图标名 `ruler`（nerdfont/compatible 档 `─`、
+  ascii 档 `-`），颜色取 `segments { ruler fg=… }`，没配就用 `defaults`。
 
 ## 段
 
@@ -136,7 +139,17 @@
     `shorten-delimiter`（省略符，默认 `…`；`truncate_to_unique` 不输出它）、
     `shorten-folder-marker`（marker 文件名，缺省用内置列表）、
     `home-abbreviation`（home 前缀，默认 `~`）、`path-separator-foreground`
-    （`/` 的颜色）。
+    （`/` 的颜色）、`path-absolute`（p10k `DIR_PATH_ABSOLUTE`：不缩写 home）、
+    `omit-first-character`（p10k `DIR_OMIT_FIRST_CHARACTER`：绝对路径省掉开头
+    的 `/`，根目录仍显示 `/`）、`path-highlight-foreground` /
+    `path-highlight-bold`（p10k `DIR_PATH_HIGHLIGHT_*`：只给末级组件配色/加粗）、
+    `hyperlink`（p10k `DIR_HYPERLINK`：给目录套 OSC 8 超链接，指向
+    `file://$PWD`）、`show-writable`（p10k `DIR_SHOW_WRITABLE`，取值同 p10k：
+    `#true` / `"v2"` / `"v3"`；不可写时图标换成锁、state 换成
+    `NOT_WRITABLE`，v3 下目录不存在则是 `NON_EXISTENT`）。
+    **注意**：p10k 的 `DIR_MAX_LENGTH` / `DIR_MIN_COMMAND_COLUMNS(_PCT)` 是按
+    输入行长度动态截断目录的（p10k 每次按键重画整个 prompt），引擎看不到输入
+    行，故不实现；`truncate_to_unique` 改成按"整行是否超宽"决定折几级。
   - `vcs`：`clean-foreground` / `modified-foreground` / `untracked-foreground` /
     `conflicted-foreground` / `meta-foreground`（分支与 ahead/behind/stash、
     staged 与 unstaged 计数、未跟踪、冲突、以及 `@hash` 的 `@` 和 `#tag` 的 `#`
@@ -150,8 +163,13 @@
     `shorten-length` / `shorten-min-length` / `shorten-strategy` /
     `shorten-delimiter`（分支名与标签名折叠，两个 length 都配才生效）；
     `staged-symbol` / `unstaged-symbol` / `conflicted-symbol` /
-    `untracked-symbol` / `ahead-symbol` / `behind-symbol` / `stash-symbol`
-    （计数符号，默认 `+ ! ~ ? ⇡ ⇣ *`，与 p10k 格式化函数一致）。
+    `untracked-symbol` / `ahead-symbol` / `behind-symbol` / `stash-symbol` /
+    `push-ahead-symbol` / `push-behind-symbol`
+    （计数符号，默认 `+ ! ~ ? ⇡ ⇣ * ⇢ ⇠`，与 p10k 格式化函数一致）；
+    `max-num-staged` / `max-num-unstaged` / `max-num-untracked` /
+    `max-num-conflicted`（p10k `VCS_*_MAX_NUM`：计数上限，-1 = 不限）、
+    `max-index-size-dirty`（p10k `VCS_MAX_INDEX_SIZE_DIRTY`：索引超过它就跳过
+    dirty 扫描，此时按 p10k 画 `─`）。
     计数顺序也照抄 p10k：`⇣behind⇡ahead` → `*stash` → 进行中的操作词
     （`merge`/`rebase`，用 conflicted 色）→ `~冲突` → `+暂存` → `!未暂存`
     → `?未跟踪`；ahead 与 behind 之间不加空格。
@@ -181,6 +199,10 @@
 - `truncate_absolute` / `truncate_absolute_chars`：整条路径按字符数截断。
 - `truncate_with_folder_marker`：在 marker 文件处折叠。
 
+`truncate_to_unique` 与 p10k 一样**按行宽动态**：整行放得下时原样显示，超宽了
+才从前往后逐级折到够省为止（实测 130/100 列不折、90 列折一级、80 列折两级）。
+其余策略与宽度无关，照 p10k 恒定折叠。
+
 内置段渲染目标：
 
 - `dir` — 当前目录，从前面折叠（$HOME 下显示 `~`），部件按 state 分色。
@@ -203,6 +225,10 @@
 - `host` — 主机名，SSH 或 root 时显示。
 - `root_indicator` — root 时显示 `#`，否则隐藏。
 - `date` — 当前日期，由 `date-format` 格式化（strftime，默认 `%d.%m.%y`）。
+- `symfony2_version` — 从 `app/bootstrap.php.cache` 里带 ` VERSION ` 的行取版本号。
+- `symfony2_tests` — `src` + `app/AppKernel.php` 存在时统计 `src/**/*.php` 里
+  测试文件占比，输出 `SF2: 12.34%`，按比例切 state `GOOD`（≥75）/ `AVG`（≥50）/
+  `BAD`（<50），未声明这些 state 时用 p10k 的内部默认色（青/黄/红）。
 - `virtualenv` / `anaconda` / `nodeenv` — 激活的环境名（`(名字)` / `[名字]`），
   来自 `$VIRTUAL_ENV` / `$CONDA_PREFIX` / `$NODE_VIRTUAL_ENV`；未激活则隐藏。
 - `pyenv` / `nodenv` / `nvm` / `rbenv` / `chruby` / `rvm` / `goenv` / `jenv` /
@@ -271,6 +297,12 @@
   参与几何：引擎按它生成等宽占位符。
 - `vcs-remote-icons { github="\u{f113}" … }` — 远端域名子串 → 图标，
   按书写顺序匹配，未匹配用默认 git 图标。
+- `dir-classes { class "~/work/**" state="WORK" icon="★" … }` — 按顺序拿
+  `$PWD` 匹配，第一条命中的规则决定 dir 段的 state（用 `state WORK fg=…` 上色）
+  与图标；`icon=""` 表示**不要图标**（同 p10k）。配了 `show-writable` 时 state
+  还会拼上 `_NOT_WRITABLE` / `_NON_EXISTENT` 后缀（p10k 规则）。
+  模式方言与 p10k 的 zsh 扩展 glob 不同：`~` 展开成 $HOME、`*` `?` `[…]`
+  不跨 `/`、`**` 跨目录、模式以 `/` 结尾表示整棵子树。
 
 ## 涉及配置的检查单
 
