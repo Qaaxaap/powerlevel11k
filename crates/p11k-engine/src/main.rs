@@ -585,6 +585,11 @@ fn main() -> anyhow::Result<()> {
     theme::render_prompt(&mut stdout, &prefix.text)?;
     stdout.flush()?;
     let mut instant_drawn = true;
+    // instant 阶段内部 shell 透传给终端的内容：字节数 + 换行数。换行数 = 0
+    // 表示屏幕上只有我们画的那份 header（可以就地擦掉重画）；否则说明 rc 真的
+    // 打了行出来，那些行插在我们下方，只能保留。
+    let mut instant_bytes = 0usize;
+    let mut instant_newlines = 0usize;
 
     loop {
         // resize 信号：同步内部 pty 尺寸（含 pixel）。zsh/bash 靠各自的
@@ -635,10 +640,31 @@ fn main() -> anyhow::Result<()> {
                         .unwrap_or(0.0);
                     at_prompt = false; // 新 prompt 周期：header 回填前光标不在输入行
                     if instant_drawn {
-                        // 第一次 precmd：清屏把 instant header 抹掉;真正的 header
-                        // 等 shell 渲染多行占位后由 `p`/marker 回填(见 Prompt 分支)。
+                        // 第一次 precmd：把 instant header 换成真实状态。
+                        //
+                        // 平时（这段时间内部 shell 没输出）只需要**擦掉自己画的那
+                        // 几行**：上移到 header 首行、`\x1b[J` 擦到屏末——光标下方
+                        // 只有我们画的 header + 输入行。这样不动屏幕上方的既有内容
+                        // （上一个会话的输出、窗口横幅、`exec p11k` 之前的打印），
+                        // 也不像 `\x1b[2J` 那样整屏闪一下。p10k 同样不清屏。
+                        //
+                        // 若期间内部 shell 有输出（rc 的 echo/警告/报错），那些行就
+                        // 插在我们下方，"上移 k 行"会落进输出里——这时什么都不做，
+                        // 保留输出，让真 prompt 接在它后面（p10k 也保留并给警告）。
+                        // 打开 P11K_INSTANT_LOG 可以打一行日志看是否命中。
                         instant_drawn = false;
-                        write!(stdout, "\x1b[2J\x1b[H")?;
+                        let header_rows = config.layout.left.len().max(config.layout.right.len());
+                        if instant_newlines == 0 && header_rows < last_size.0 as usize {
+                            write!(stdout, "\x1b[{header_rows}A\r\x1b[J")?;
+                        } else if instant_newlines == 0 {
+                            // 窗口比 header 还矮：header 自己就把屏滚了，位置不可靠，
+                            // 退回整屏清。
+                            write!(stdout, "\x1b[2J\x1b[H")?;
+                        } else if std::env::var_os("P11K_INSTANT_LOG").is_some() {
+                            log(&format!(
+                                "instant header kept: {instant_newlines} line(s) / {instant_bytes} bytes of shell output during init"
+                            ));
+                        }
                     } else if config.layout.prompt_add_newline > 0 {
                         // 宽松布局：连续 prompt 之间留 N 个空行（header 前先空出来）。
                         for _ in 0..config.layout.prompt_add_newline {
@@ -812,6 +838,14 @@ fn main() -> anyhow::Result<()> {
                             pending_placeholder = false;
                         }
                     } else {
+                        // instant 阶段统计透传内容：有**换行**说明内部 shell 真在屏
+                        // 上打了东西（rc 的 echo/警告/报错），此时不能擦自己的行
+                        // （行位置已经被顶下去了）；只有控制序列（设标题之类，用户
+                        // rc 里很常见）不算，照旧走干净擦行。p10k 会保留并给警告。
+                        if instant_drawn {
+                            instant_bytes += n;
+                            instant_newlines += buf[..n].iter().filter(|b| **b == b'\n').count();
+                        }
                         stdout.write_all(&buf[..n])?;
                     }
                     stdout.flush()?;
