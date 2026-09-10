@@ -193,17 +193,28 @@ pub fn render_header_lines(
                 }
                 // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
                 let body_budget = cols.saturating_sub(pre_w + suf_w);
-                // 第一遍:完全不折(p10k 放得下时就是原样)。
-                let (l, r) = render_side(None);
-                let body = assemble_row(&l, &r, body_budget, &config.separators);
-                // 超宽了 → 按超出多少列给 dir 一个折叠预算,重渲染一遍。
-                // (p10k 的 dir 折叠是动态的:窄终端折、宽终端不折。)
-                let width = display_width(&body);
-                let body = if width > body_budget {
-                    let (l, r) = render_side(Some(width - body_budget));
-                    assemble_row(&l, &r, body_budget, &config.separators)
+                let seps = &config.separators;
+                // 第一遍:完全不折(p10k 放得下时就是原样)。折叠预算一律按**未折**
+                // 宽度算,否则拿折过的宽度再折会比需要的折得少。
+                let (l0, r0) = render_side(None);
+                let left0_w = display_width(&assemble_row(&l0, &[], body_budget, seps));
+                let full0 = assemble_row(&l0, &r0, body_budget, seps);
+                let body = if display_width(&full0) <= body_budget {
+                    full0
                 } else {
-                    body
+                    // 第二遍:按整行超出多少列折 dir(窄终端折、宽终端不折)。
+                    let overflow = display_width(&full0) - body_budget;
+                    let (l1, r1) = render_side(Some(overflow));
+                    let full1 = assemble_row(&l1, &r1, body_budget, seps);
+                    if display_width(&full1) <= body_budget {
+                        full1
+                    } else {
+                        // 第三遍:折完还是放不下 → 整条右栏丢掉(含 gap)。p10k 在
+                        // 宽度不够时就是不画右栏,而不是让它溢出换行。左栏按它
+                        // 相对未折宽度的超出量再折一轮。
+                        let (l2, _) = render_side(Some(left0_w.saturating_sub(body_budget)));
+                        assemble_row(&l2, &[], body_budget, seps)
+                    }
                 };
                 row.push_str(&body);
                 if !suffix.text.is_empty() {
@@ -2515,6 +2526,12 @@ fn assemble_row(
             }
         }
         let lw = display_width(&out);
+        // p10k 的右栏在最末图标之后还留一个空格（RPROMPT 尾随空格），少这一格
+        // 会让右栏比 p10k 窄一格、更早"放得下"。
+        right_str.push_str(&paint(
+            " ",
+            &parts.last().map(|s| s.style.clone()).unwrap_or_default(),
+        ));
         let rw = display_width(&right_str);
         // 右对齐:gap 字符填满左段到右段起点之间。
         if cols > rw {
@@ -3607,6 +3624,42 @@ mod tests {
         let cfg = Config::parse(src).unwrap_or_else(|e| panic!("parse: {e}\nsrc={src:?}"));
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 40).join("\r\n");
         assert_eq!(display_width(&h), 40, "行宽应仍对齐 cols=40,实际:{h:?}");
+    }
+
+    #[test]
+    fn right_column_is_dropped_when_the_row_does_not_fit() {
+        // p10k：宽度不够时整条右栏（含 gap）不画，而不是让行溢出换行。
+        // 行溢出会破坏占位协议（header 行数 = shell 预留的行数）。
+        let cfg = Config::parse(
+            "layout {\n  left { line { dir #true } }\n  right { line { time #true } }\n}\n\
+             segments { dir fg=31\n  time fg=66 }",
+        )
+        .unwrap();
+        let info_ = info("/tmp", None);
+        // 足够宽 → 右栏在，且行宽不超过 cols。
+        for cols in [40, 60, 100] {
+            let row = &render_header_lines(&cfg, &info_, None, cols)[0];
+            assert!(
+                row.contains(&time_text(cfg.segment("time"))),
+                "宽行应有右栏,实际 {row:?}"
+            );
+            assert!(
+                display_width(row) <= cols,
+                "行宽不能超过 cols({cols}),实际 {}",
+                display_width(row)
+            );
+        }
+        // 极窄（左栏自己就放不下右栏）→ 右栏消失，且行不再继续变宽。
+        let narrow = &render_header_lines(&cfg, &info_, None, 12)[0];
+        let time = time_text(cfg.segment("time"));
+        assert!(
+            !narrow.contains(&time),
+            "窄行不该有右栏时间,实际 {narrow:?}"
+        );
+        assert!(
+            !narrow.contains('·') && !narrow.contains("\u{e0b2}"),
+            "右栏去掉后也不该留 gap 和右栏起始分隔符,实际 {narrow:?}"
+        );
     }
 
     #[test]
