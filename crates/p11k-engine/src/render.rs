@@ -1718,19 +1718,21 @@ fn dir_seg_text(
         Some(crate::config::Prop::Str(a)) => a.clone(),
         _ => "~".to_string(),
     };
+    // 路径分隔符自己的颜色（p10k `DIR_PATH_SEPARATOR_FOREGROUND`），缺省段样式。
+    let sep_style = prop_style(seg, default, "path-separator-foreground");
     if is_home {
         let st = seg.effective_style(Some("ANCHOR"), &config.defaults);
         s.push_str(&paint(&abbrev, &st));
         if !parts.is_empty() {
-            s.push_str(&paint("/", default));
+            s.push_str(&paint("/", &sep_style));
         }
     } else if !parts.is_empty() {
         // 绝对路径起始 `/`。
-        s.push_str(&paint("/", default));
+        s.push_str(&paint("/", &sep_style));
     }
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
-            s.push_str(&paint("/", default)); // 分隔符本色
+            s.push_str(&paint("/", &sep_style)); // 分隔符
         }
         let state = match part.class {
             crate::dir_shorten::Class::Anchor => Some("ANCHOR"),
