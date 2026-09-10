@@ -1958,10 +1958,12 @@ mod tests {
         // 画在整段最前/最后。
         let mut cfg = Config::default();
         cfg.layout.left = vec![vec![Element::Seg("custom".into())]];
-        let mut s = crate::config::Segment::default();
-        s.content = Some("main".into());
-        s.prefix = Some("on ".into());
-        s.suffix = Some("!".into());
+        let s = crate::config::Segment {
+            content: Some("main".into()),
+            prefix: Some("on ".into()),
+            suffix: Some("!".into()),
+            ..Default::default()
+        };
         cfg.segments.insert("custom".into(), s);
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(h.contains("on "), "prefix 应渲染,实际 {h:?}");
