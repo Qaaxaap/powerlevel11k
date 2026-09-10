@@ -18,12 +18,6 @@ enum Step<T> {
     Quit,
 }
 
-impl<T> Step<T> {
-    fn is_answer(&self) -> bool {
-        matches!(self, Step::Answer(_))
-    }
-}
-
 /// 把任意 `Step<T>` 的 Restart/Quit 变体转成 `Step<U>`（Answer 不会走到这里）。
 fn early<T, U>(s: Step<T>) -> Step<U> {
     match s {
@@ -57,14 +51,13 @@ fn flow(out: &mut io::Stdout) -> io::Result<Step<()>> {
         s => return Ok(early(s)),
     };
     // ③ 颜色变体（按风格分支）→ 构建带颜色参数的 Config。
-    let mut cfg = match ask_color(out, kind)? {
+    let mut cfg = match ask_color(out, kind, &mode)? {
         Step::Answer(c) => c,
         s => return Ok(early(s)),
     };
-    cfg.mode = mode;
     // ④ 字符集（非 ascii 时问，可显式切 ASCII）。
     if cfg.mode != IconMode::Ascii {
-        match ask_charset(out)? {
+        match ask_charset(out, &cfg, &mode)? {
             Step::Answer(ascii) => {
                 if ascii {
                     cfg.mode = IconMode::Ascii;
@@ -205,10 +198,13 @@ fn header_on(cfg: &Config) -> bool {
     !(cfg.layout.left.is_empty() && cfg.layout.right.is_empty())
 }
 
-/// 渲染当前配置的 header 预览行（供 style/最终预览用）。
+/// 渲染当前配置的完整 prompt 预览（header 行 + 输入行），供逐选项预览用。
 fn preview_lines(cfg: &Config) -> Vec<String> {
     let cols = crate::tty_size().map(|(_, c, ..)| c as usize).unwrap_or(80);
-    crate::render::render_header_lines(cfg, &sample_info(), None, cols)
+    let mut lines = crate::render::render_header_lines(cfg, &sample_info(), None, cols);
+    // 输入行：引擎画的 prompt_char 前缀（后面是 shell 的 buffer）。
+    lines.push(crate::render::input_prefix(cfg, None).text);
+    lines
 }
 
 // ---- 问题集 ----
@@ -252,85 +248,68 @@ fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
     }
 }
 
-/// 风格：四套预设各渲染一行 header 预览。
+/// 风格：四套预设各带一份 live prompt 预览。
 fn ask_style(out: &mut io::Stdout) -> io::Result<Step<PresetKind>> {
-    loop {
-        clear(out);
-        line(out, "提示符风格")?;
-        line(out, "")?;
-        for (i, k) in PresetKind::ALL.iter().enumerate() {
-            line(out, &format!("({})  {}", i + 1, k.title()))?;
-            for l in preview_lines(&presets::build(*k)) {
-                line(out, &l)?;
-            }
-            line(out, "")?;
-        }
-        line(out, "(r)  从头再来")?;
-        match key()? {
-            Some(b'q') => return Ok(Step::Quit),
-            Some(b'r') => return Ok(Step::Restart),
-            Some(k @ b'1'..=b'4') => return Ok(Step::Answer(PresetKind::ALL[(k - b'1') as usize])),
-            _ => {}
-        }
+    let titles = PresetKind::ALL.map(|k| k.title());
+    let i = ask_choice_preview(out, "提示符风格", &titles, |i| {
+        preview_lines(&presets::build(PresetKind::ALL[i]))
+    })?;
+    match i {
+        Step::Answer(i) => Ok(Step::Answer(PresetKind::ALL[i])),
+        s => Ok(early(s)),
+    }
+}
+
+/// 按风格 + 颜色档索引构建配置（预览与最终结果同源）。
+fn build_with_color(kind: PresetKind, i: usize) -> Config {
+    match kind {
+        PresetKind::Lean => presets::lean(i == 1),
+        PresetKind::Classic => presets::classic(i + 1),
+        PresetKind::Rainbow => presets::rainbow(i + 1),
+        PresetKind::Pure => presets::pure(i == 1),
     }
 }
 
 /// 颜色变体（按风格分支）：lean 256/8、classic 四档、rainbow 帧四档、pure 两套。
-fn ask_color(out: &mut io::Stdout, kind: PresetKind) -> io::Result<Step<Config>> {
-    let cfg = match kind {
-        PresetKind::Lean => {
-            let i = ask_choice(out, "提示符颜色", &["256 色", "8 色（兼容终端）"])?;
-            match i {
-                Step::Answer(i) => presets::lean(i == 1),
-                s => return Ok(early(s)),
-            }
-        }
-        PresetKind::Classic => {
-            let i = ask_choice(
-                out,
-                "提示符颜色",
-                &[
-                    "最浅（Lightest）",
-                    "浅（Light）",
-                    "深（Dark）",
-                    "最深（Darkest）",
-                ],
-            )?;
-            match i {
-                Step::Answer(i) => presets::classic(i + 1),
-                s => return Ok(early(s)),
-            }
-        }
-        PresetKind::Rainbow => {
-            let i = ask_choice(
-                out,
-                "边框颜色",
-                &[
-                    "最浅（Lightest）",
-                    "浅（Light）",
-                    "深（Dark）",
-                    "最深（Darkest）",
-                ],
-            )?;
-            match i {
-                Step::Answer(i) => presets::rainbow(i + 1),
-                s => return Ok(early(s)),
-            }
-        }
-        PresetKind::Pure => {
-            let i = ask_choice(out, "提示符颜色", &["Original", "Snazzy"])?;
-            match i {
-                Step::Answer(i) => presets::pure(i == 1),
-                s => return Ok(early(s)),
-            }
-        }
+fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> io::Result<Step<Config>> {
+    const FOUR: [&str; 4] = [
+        "最浅（Lightest）",
+        "浅（Light）",
+        "深（Dark）",
+        "最深（Darkest）",
+    ];
+    let (title, options): (&str, &[&str]) = match kind {
+        PresetKind::Lean => ("提示符颜色", &["256 色", "8 色（兼容终端）"]),
+        PresetKind::Classic => ("提示符颜色", &FOUR),
+        PresetKind::Rainbow => ("边框颜色", &FOUR),
+        PresetKind::Pure => ("提示符颜色", &["Original", "Snazzy"]),
     };
-    Ok(Step::Answer(cfg))
+    let i = ask_choice_preview(out, title, options, |i| {
+        let mut c = build_with_color(kind, i);
+        c.mode = mode.clone();
+        preview_lines(&c)
+    })?;
+    match i {
+        Step::Answer(i) => {
+            let mut c = build_with_color(kind, i);
+            c.mode = mode.clone();
+            Ok(Step::Answer(c))
+        }
+        s => Ok(early(s)),
+    }
 }
 
-/// 字符集：Unicode / ASCII。
-fn ask_charset(out: &mut io::Stdout) -> io::Result<Step<bool>> {
-    let i = ask_choice(out, "字符集", &["Unicode", "ASCII"])?;
+/// 字符集：Unicode / ASCII（预览反映 ASCII 档下图标/分隔符的替换）。
+fn ask_charset(out: &mut io::Stdout, cfg: &Config, mode: &IconMode) -> io::Result<Step<bool>> {
+    let i = ask_choice_preview(out, "字符集", &["Unicode", "ASCII"], |i| {
+        let mut c = cfg.clone();
+        c.mode = if i == 1 {
+            IconMode::Ascii
+        } else {
+            mode.clone()
+        };
+        preview_lines(&c)
+    })?;
     match i {
         Step::Answer(i) => Ok(Step::Answer(i == 1)),
         s => Ok(early(s)),
@@ -339,61 +318,55 @@ fn ask_charset(out: &mut io::Stdout) -> io::Result<Step<bool>> {
 
 /// pure 的非永久内容（exec/context/virtualenv）位置。
 fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(out, "非永久内容位置", &["左侧", "右侧"])?;
-    match i {
-        Step::Answer(0) => Ok(Step::Answer(())),
-        Step::Answer(1) => {
-            if let Some(row) = cfg.layout.left.first_mut() {
+    ask_apply(
+        out,
+        "非永久内容位置",
+        &["左侧", "右侧"],
+        cfg,
+        |c, i| {
+            // 先把 exec 从两栏都摘掉，再按选择放回左/右。
+            for row in c.layout.left.iter_mut().chain(c.layout.right.iter_mut()) {
                 row.retain(|e| !matches!(e, Element::Seg(s) if s == "command_execution_time"));
             }
-            if !cfg
-                .layout
-                .right
-                .iter()
-                .flatten()
-                .any(|e| matches!(e, Element::Seg(s) if s == "command_execution_time"))
-            {
-                if cfg.layout.right.is_empty() {
-                    cfg.layout.right.push(Vec::new());
-                }
-                cfg.layout.right[0].push(Element::Seg("command_execution_time".into()));
+            let side = if i == 0 {
+                &mut c.layout.left
+            } else {
+                &mut c.layout.right
+            };
+            if side.is_empty() {
+                side.push(Vec::new());
             }
-            Ok(Step::Answer(()))
-        }
-        s => Ok(early(s)),
-    }
+            side[0].push(Element::Seg("command_execution_time".into()));
+        },
+    )
 }
 
 /// 时间：不显示 / 12 小时制 / 24 小时制。
 fn ask_time(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(out, "显示当前时间？", &["不显示", "12 小时制", "24 小时制"])?;
-    match i {
-        Step::Answer(0) => {
-            remove_segment(cfg, "time");
-            Ok(Step::Answer(()))
-        }
-        Step::Answer(1) | Step::Answer(2) => {
-            let fmt = if matches!(i, Step::Answer(1)) {
-                "12h"
-            } else {
-                "24h"
-            };
-            add_to_right(cfg, "time");
-            let t = cfg.segments.entry("time".into()).or_insert_with(|| {
-                let mut s = Segment::default();
-                s.style.fg = Color::Xterm(66);
-                s
-            });
-            t.props.insert("time-format".into(), Prop::Str(fmt.into()));
-            Ok(Step::Answer(()))
-        }
-        s => Ok(early(s)),
-    }
+    ask_apply(
+        out,
+        "显示当前时间？",
+        &["不显示", "12 小时制", "24 小时制"],
+        cfg,
+        |c, i| match i {
+            0 => remove_segment(c, "time"),
+            _ => {
+                add_to_right(c, "time");
+                let fmt = if i == 1 { "12h" } else { "24h" };
+                let t = c.segments.entry("time".into()).or_insert_with(|| {
+                    let mut s = Segment::default();
+                    s.style.fg = Color::Xterm(66);
+                    s
+                });
+                t.props.insert("time-format".into(), Prop::Str(fmt.into()));
+            }
+        },
+    )
 }
 
 /// 分隔符（segment/sub）：Angled/Vertical/Slanted/Round。
 fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(
+    ask_apply(
         out,
         "分隔符",
         &[
@@ -402,29 +375,25 @@ fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>
             "斜（Slanted）",
             "圆角（Round）",
         ],
-    )?;
-    let (seg, sub, rseg, rsub) = match i {
-        Step::Answer(0) => ("\u{e0b0}", "\u{e0b1}", "\u{e0b2}", "\u{e0b3}"),
-        Step::Answer(1) => ("", "\u{2502}", "", "\u{2502}"),
-        Step::Answer(2) => ("\u{e0bc}", "\u{2571}", "\u{e0ba}", "\u{2571}"),
-        Step::Answer(3) => ("\u{e0b4}", "\u{e0b5}", "\u{e0b6}", "\u{e0b7}"),
-        _ => unreachable!(),
-    };
-    match i {
-        Step::Answer(_) => {
-            cfg.separators.segment = seg.into();
-            cfg.separators.sub = sub.into();
-            cfg.separators.right_segment = rseg.into();
-            cfg.separators.right_sub = rsub.into();
-            Ok(Step::Answer(()))
-        }
-        s => Ok(early(s)),
-    }
+        cfg,
+        |c, i| {
+            let (seg, sub, rseg, rsub) = match i {
+                0 => ("\u{e0b0}", "\u{e0b1}", "\u{e0b2}", "\u{e0b3}"),
+                1 => ("", "\u{2502}", "", "\u{2502}"),
+                2 => ("\u{e0bc}", "\u{2571}", "\u{e0ba}", "\u{2571}"),
+                _ => ("\u{e0b4}", "\u{e0b5}", "\u{e0b6}", "\u{e0b7}"),
+            };
+            c.separators.segment = seg.into();
+            c.separators.sub = sub.into();
+            c.separators.right_segment = rseg.into();
+            c.separators.right_sub = rsub.into();
+        },
+    )
 }
 
 /// 端符 heads（end/right-start）：Flat/Blurred/Sharp/Slanted/Round。
 fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(
+    ask_apply(
         out,
         "端符（heads）",
         &[
@@ -434,28 +403,24 @@ fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
             "斜（Slanted）",
             "圆（Round）",
         ],
-    )?;
-    let (end, rstart) = match i {
-        Step::Answer(0) => ("", ""),
-        Step::Answer(1) => ("\u{2593}\u{2592}\u{2591}", "\u{2591}\u{2592}\u{2593}"),
-        Step::Answer(2) => ("\u{e0b0}", "\u{e0b2}"),
-        Step::Answer(3) => ("\u{e0bc}", "\u{e0ba}"),
-        Step::Answer(4) => ("\u{e0b4}", "\u{e0b6}"),
-        _ => unreachable!(),
-    };
-    match i {
-        Step::Answer(_) => {
-            cfg.separators.end = end.into();
-            cfg.separators.right_start = rstart.into();
-            Ok(Step::Answer(()))
-        }
-        s => Ok(early(s)),
-    }
+        cfg,
+        |c, i| {
+            let (end, rstart) = match i {
+                0 => ("", ""),
+                1 => ("\u{2593}\u{2592}\u{2591}", "\u{2591}\u{2592}\u{2593}"),
+                2 => ("\u{e0b0}", "\u{e0b2}"),
+                3 => ("\u{e0bc}", "\u{e0ba}"),
+                _ => ("\u{e0b4}", "\u{e0b6}"),
+            };
+            c.separators.end = end.into();
+            c.separators.right_start = rstart.into();
+        },
+    )
 }
 
 /// 端符 tails（left-tail/right-tail）。
 fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(
+    ask_apply(
         out,
         "端符（tails）",
         &[
@@ -465,147 +430,147 @@ fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
             "斜（Slanted）",
             "圆（Round）",
         ],
-    )?;
-    let (ltail, rtail) = match i {
-        Step::Answer(0) => ("", ""),
-        Step::Answer(1) => ("\u{2591}\u{2592}\u{2593}", "\u{2593}\u{2592}\u{2591}"),
-        Step::Answer(2) => ("\u{e0b2}", "\u{e0b0}"),
-        Step::Answer(3) => ("\u{e0ba}", "\u{e0bc}"),
-        Step::Answer(4) => ("\u{e0b6}", "\u{e0b4}"),
-        _ => unreachable!(),
-    };
-    match i {
-        Step::Answer(_) => {
-            cfg.separators.left_tail = ltail.into();
-            cfg.separators.right_tail = rtail.into();
-            Ok(Step::Answer(()))
-        }
-        s => Ok(early(s)),
-    }
+        cfg,
+        |c, i| {
+            let (ltail, rtail) = match i {
+                0 => ("", ""),
+                1 => ("\u{2591}\u{2592}\u{2593}", "\u{2593}\u{2592}\u{2591}"),
+                2 => ("\u{e0b2}", "\u{e0b0}"),
+                3 => ("\u{e0ba}", "\u{e0bc}"),
+                _ => ("\u{e0b6}", "\u{e0b4}"),
+            };
+            c.separators.left_tail = ltail.into();
+            c.separators.right_tail = rtail.into();
+        },
+    )
 }
 
 /// 行数：一行（无 header）/ 两行。
 fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(
+    ask_apply(
         out,
         "提示符高度",
         &["一行（只有输入行）", "两行（信息行 + 输入行）"],
-    )?;
-    match i {
-        Step::Answer(0) => {
-            cfg.layout.left.clear();
-            cfg.layout.right.clear();
-            cfg.frame = Frame::default();
-            cfg.separators = Separators::default();
-            Ok(Step::Answer(()))
-        }
-        Step::Answer(1) => Ok(Step::Answer(())),
-        s => Ok(early(s)),
-    }
+        cfg,
+        |c, i| {
+            if i == 0 {
+                c.layout.left.clear();
+                c.layout.right.clear();
+                c.frame = Frame::default();
+                c.separators = Separators::default();
+            }
+        },
+    )
 }
 
 /// 连接线：Disconnected/Dotted/Solid。
 fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(out, "连接线", &["断开（空格）", "点线", "实线"])?;
-    match i {
-        Step::Answer(0) => cfg.separators.gap = " ".into(),
-        Step::Answer(1) => cfg.separators.gap = "·".into(),
-        Step::Answer(2) => cfg.separators.gap = "─".into(),
-        s => return Ok(early(s)),
-    }
-    Ok(Step::Answer(()))
+    ask_apply(
+        out,
+        "连接线",
+        &["断开（空格）", "点线", "实线"],
+        cfg,
+        |c, i| {
+            c.separators.gap = match i {
+                0 => " ",
+                1 => "·",
+                _ => "─",
+            }
+            .into();
+        },
+    )
 }
 
 /// 帧：无/左/右/全。
 fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(
+    use crate::config::FramePiece;
+    ask_apply(
         out,
         "提示符边框",
         &["无边框", "只有左侧", "只有右侧", "完整边框"],
-    )?;
-    let f = &mut cfg.frame;
-    match i {
-        Step::Answer(0) => {
-            f.first_prefix = crate::config::FramePiece::default();
-            f.first_suffix = crate::config::FramePiece::default();
-            f.newline_prefix = crate::config::FramePiece::default();
-            f.newline_suffix = crate::config::FramePiece::default();
-            f.last_prefix = crate::config::FramePiece::default();
-            f.last_suffix = crate::config::FramePiece::default();
-        }
-        Step::Answer(1) => {
-            f.first_suffix = crate::config::FramePiece::default();
-            f.newline_suffix = crate::config::FramePiece::default();
-            f.last_suffix = crate::config::FramePiece::default();
-        }
-        Step::Answer(2) => {
-            f.first_prefix = crate::config::FramePiece::default();
-            f.newline_prefix = crate::config::FramePiece::default();
-            f.last_prefix = crate::config::FramePiece::default();
-        }
-        Step::Answer(3) => {}
-        s => return Ok(early(s)),
-    }
-    Ok(Step::Answer(()))
+        cfg,
+        |c, i| {
+            let f = &mut c.frame;
+            let clear_prefix = |f: &mut Frame| {
+                f.first_prefix = FramePiece::default();
+                f.newline_prefix = FramePiece::default();
+                f.last_prefix = FramePiece::default();
+            };
+            let clear_suffix = |f: &mut Frame| {
+                f.first_suffix = FramePiece::default();
+                f.newline_suffix = FramePiece::default();
+                f.last_suffix = FramePiece::default();
+            };
+            match i {
+                0 => {
+                    clear_prefix(f);
+                    clear_suffix(f);
+                }
+                1 => clear_suffix(f),
+                2 => clear_prefix(f),
+                _ => {}
+            }
+        },
+    )
 }
 
 /// 间距：Compact/Sparse。
 fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(
+    ask_apply(
         out,
         "提示符间距",
         &["紧凑（无空行）", "稀疏（prompt 之间空一行）"],
-    )?;
-    match i {
-        Step::Answer(i) => {
-            cfg.layout.prompt_add_newline = i == 1;
-            Ok(Step::Answer(()))
-        }
-        s => Ok(early(s)),
-    }
+        cfg,
+        |c, i| c.layout.prompt_add_newline = i == 1,
+    )
 }
 
 /// 图标：Few/Many。
 fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(out, "图标", &["少（几乎无图标）", "多（完整图标）"])?;
-    match i {
-        Step::Answer(0) => {
-            remove_segment(cfg, "os_icon");
-            for key in ["folder", "git", "branch", "time"] {
-                cfg.icon_overrides.insert(
-                    key.into(),
-                    crate::config::IconOverride {
-                        all: Some(String::new()),
-                        ..Default::default()
-                    },
-                );
+    ask_apply(
+        out,
+        "图标",
+        &["少（几乎无图标）", "多（完整图标）"],
+        cfg,
+        |c, i| {
+            if i == 0 {
+                remove_segment(c, "os_icon");
+                for key in ["folder", "git", "branch", "time"] {
+                    c.icon_overrides.insert(
+                        key.into(),
+                        crate::config::IconOverride {
+                            all: Some(String::new()),
+                            ..Default::default()
+                        },
+                    );
+                }
             }
-            Ok(Step::Answer(()))
-        }
-        Step::Answer(1) => Ok(Step::Answer(())),
-        s => Ok(early(s)),
-    }
+        },
+    )
 }
 
 /// 前缀：Concise/Fluent。
 fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
-    let i = ask_choice(out, "提示符语气", &["简洁（Concise）", "流畅（Fluent）"])?;
-    match i {
-        Step::Answer(0) => {
-            for name in ["vcs", "command_execution_time", "time"] {
-                if let Some(s) = cfg.segments.get_mut(name) {
+    ask_apply(
+        out,
+        "提示符语气",
+        &["简洁（Concise）", "流畅（Fluent）"],
+        cfg,
+        |c, i| {
+            let names = ["vcs", "command_execution_time", "time"];
+            let prefixes = ["", "on ", "took ", "at "];
+            for name in names {
+                if let Some(s) = c.segments.get_mut(name) {
                     s.prefix = None;
                 }
             }
-        }
-        Step::Answer(1) => {
-            set_prefix(cfg, "vcs", "on ");
-            set_prefix(cfg, "command_execution_time", "took ");
-            set_prefix(cfg, "time", "at ");
-        }
-        s => return Ok(early(s)),
-    }
-    Ok(Step::Answer(()))
+            if i == 1 {
+                set_prefix(c, "vcs", prefixes[1]);
+                set_prefix(c, "command_execution_time", prefixes[2]);
+                set_prefix(c, "time", prefixes[3]);
+            }
+        },
+    )
 }
 
 /// transient：y/n。
@@ -628,16 +593,25 @@ fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>>
 
 // ---- 通用问答 ----
 
-/// n 选 1：数字键选择。
-fn ask_choice(out: &mut io::Stdout, title: &str, options: &[&str]) -> io::Result<Step<usize>> {
+/// n 选 1，每个选项下方渲染它的 live prompt 预览（对齐 p10k wizard 的
+/// add_prompt：每项都带一份当前配置下的完整 prompt）。
+fn ask_choice_preview(
+    out: &mut io::Stdout,
+    title: &str,
+    options: &[&str],
+    preview: impl Fn(usize) -> Vec<String>,
+) -> io::Result<Step<usize>> {
     loop {
         clear(out);
         line(out, title)?;
         line(out, "")?;
         for (i, label) in options.iter().enumerate() {
             line(out, &format!("({})  {}", i + 1, label))?;
+            for l in preview(i) {
+                line(out, &l)?;
+            }
+            line(out, "")?;
         }
-        line(out, "")?;
         line(out, "(r)  从头再来")?;
         match key()? {
             Some(b'q') => return Ok(Step::Quit),
@@ -650,6 +624,32 @@ fn ask_choice(out: &mut io::Stdout, title: &str, options: &[&str]) -> io::Result
             }
             _ => {}
         }
+    }
+}
+
+/// 带预览的问答骨架：克隆当前配置 → 应用第 i 个选项 → 渲染预览；
+/// 选中后把同一份修改应用到真实配置（预览与结果同源，不会漂移）。
+fn ask_apply(
+    out: &mut io::Stdout,
+    title: &str,
+    options: &[&str],
+    cfg: &mut Config,
+    apply: impl Fn(&mut Config, usize),
+) -> io::Result<Step<()>> {
+    let i = {
+        let base = cfg.clone();
+        ask_choice_preview(out, title, options, |i| {
+            let mut c = base.clone();
+            apply(&mut c, i);
+            preview_lines(&c)
+        })?
+    };
+    match i {
+        Step::Answer(i) => {
+            apply(cfg, i);
+            Ok(Step::Answer(()))
+        }
+        s => Ok(early(s)),
     }
 }
 

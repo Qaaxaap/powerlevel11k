@@ -11,11 +11,7 @@ use crate::config::{
 
 /// classic 段背景四档（Lightest/Light/Dark/Darkest）。
 pub const BG_COLORS: [u8; 4] = [240, 238, 236, 234];
-/// classic 子分隔符四档。
-pub const SEP_COLORS: [u8; 4] = [248, 246, 244, 242];
-/// classic 前缀文字四档。
-pub const PREFIX_COLORS: [u8; 4] = [250, 248, 246, 244];
-/// 帧四档（classic/rainbow/lean 的 frame 与连接线共用）。
+/// 帧四档（classic/rainbow 的 frame 线条颜色）。
 pub const FRAME_COLORS: [u8; 4] = [244, 242, 240, 238];
 
 fn x(n: u8) -> Color {
@@ -106,15 +102,6 @@ fn jobs_seg(fg: u8, bg: Option<u8>) -> Segment {
         s.style.bg = x(b);
     }
     s.props.insert("verbose".into(), Prop::Bool(false));
-    s
-}
-
-fn time_seg(fg: u8, bg: Option<u8>) -> Segment {
-    let mut s = Segment::default();
-    s.style.fg = x(fg);
-    if let Some(b) = bg {
-        s.style.bg = x(b);
-    }
     s
 }
 
