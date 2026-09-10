@@ -346,8 +346,11 @@ fn render_segment(
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
     // 段图标:config `icon`(按字符类别自动覆盖适用的 mode)→ 否则内置默认表。
+    // 图标后的空白（p10k `LEFT_MIDDLE_WHITESPACE`）只在段同时有图标与内容时
+    // 才加——只有图标的段（如 os_icon）不留空，否则会与段尾空白叠成两个空格。
     let icon = resolve_icon(config, name, vcs);
     let icon_text = match icon {
+        Some(ic) if text.is_empty() => paint(&ic, &style),
         Some(ic) => paint(&format!("{ic} "), &style),
         None => String::new(),
     };
