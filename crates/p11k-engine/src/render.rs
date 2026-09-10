@@ -524,6 +524,9 @@ fn icon_default(key: &str) -> Option<IconEntry> {
         "commit" => Some(icon("\u{e821}", "", "")), // p10k VCS_COMMIT_ICON    // 
         "time" => Some(icon("\u{f017}", "", "")),   // 时钟
         "date" => Some(icon("\u{f073}", "", "")),   // 日历
+        // p10k EXECUTION_TIME_ICON:nerdfont 档 U+F252(沙漏),
+        // compatible/ascii 档 p10k 本身就是空。
+        "execution-time" => Some(icon("\u{f252}", "", "")),
         "background-jobs" => Some(icon("\u{f013}", "\u{2699}", "%%")), // 齿轮 ⚙ %%
         "go" => Some(icon("\u{e626}", "Go", "go")),
         "rust" => Some(icon("\u{e7a8}", "R", "rust")),
@@ -592,6 +595,7 @@ fn segment_icon_key(name: &str) -> Option<&'static str> {
         "vcs" => Some("git"),
         "time" => Some("time"),
         "date" => Some("date"),
+        "command_execution_time" => Some("execution-time"),
         "background_jobs" => Some("background-jobs"),
         "go_version" | "goenv" => Some("go"),
         "rust_version" => Some("rust"),
@@ -1821,8 +1825,9 @@ fn prop_style(seg: &Segment, style: &Style, prop: &str) -> Style {
 }
 
 /// vcs 段文本。按 p10k 的配色分段上色：分支名/分支图标/ahead/behind/stash 用
-/// `clean-foreground`，staged/unstaged/conflicted 计数用 `modified-foreground`，
-/// 未跟踪用 `untracked-foreground`（缺省回退段样式）。返回的字符串已上色。
+/// `clean-foreground`，staged/unstaged 计数用 `modified-foreground`，冲突计数用
+/// `conflicted-foreground`（缺省回退 modified），未跟踪用 `untracked-foreground`
+/// （缺省回退段样式）。返回的字符串已上色。
 fn vcs_text(
     vcs: Option<&GitStatus>,
     branch_icon: &str,
@@ -1833,6 +1838,7 @@ fn vcs_text(
     let Some(v) = vcs else { return String::new() };
     let clean = prop_style(seg, style, "clean-foreground");
     let modified = prop_style(seg, style, "modified-foreground");
+    let conflicted = prop_style(seg, &modified, "conflicted-foreground");
     let untracked = prop_style(seg, style, "untracked-foreground");
     let mut s = String::new();
     // p10k `SHOW_CHANGESET`：显式开启、或没有本地分支（detached HEAD）时，
@@ -1893,7 +1899,7 @@ fn vcs_text(
     if v.conflicted > 0 {
         parts.push((
             format!("{}{}", sym("conflicted-symbol", "!"), v.conflicted),
-            &modified,
+            &conflicted,
         ));
     }
     if v.untracked > 0 {
@@ -2335,6 +2341,101 @@ mod tests {
         assert!(
             h2.contains("feature/long-branch"),
             "缺 min-length 不应折叠,实际 {h2:?}"
+        );
+    }
+
+    #[test]
+    fn exec_segment_shows_p10k_hourglass_icon() {
+        // p10k `EXECUTION_TIME_ICON`:nerdfont 档 U+F252,compatible/ascii 档 p10k
+        // 本身就是空,所以只有 nerdfont 两档画图标。
+        fn render(mode: crate::config::IconMode) -> String {
+            let mut cfg = Config {
+                mode,
+                ..Config::default()
+            };
+            cfg.layout.right = vec![vec![Element::Seg("command_execution_time".into())]];
+            let mut e = crate::config::Segment::default();
+            e.props
+                .insert("threshold-seconds".into(), crate::config::Prop::Int(3));
+            e.props
+                .insert("precision".into(), crate::config::Prop::Int(0));
+            cfg.segments.insert("command_execution_time".into(), e);
+            let i = HeaderInfo {
+                exec_seconds: 3.5,
+                ..info("/tmp", None)
+            };
+            render_header_lines(&cfg, &i, None, 80).join("\n")
+        }
+        let nf = render(crate::config::IconMode::NerdfontComplete);
+        assert!(
+            nf.contains("\u{f252}"),
+            "nerdfont 档应带沙漏图标,实际 {nf:?}"
+        );
+        assert!(nf.contains("4s"), "内容仍是耗时,实际 {nf:?}");
+        let other = [
+            crate::config::IconMode::NerdfontFontconfig,
+            crate::config::IconMode::Compatible,
+            crate::config::IconMode::Ascii,
+        ];
+        for mode in other {
+            let h = render(mode.clone());
+            if mode == crate::config::IconMode::NerdfontFontconfig {
+                assert!(h.contains("\u{f252}"), "fontconfig 档同字形,实际 {h:?}");
+            } else {
+                assert!(!h.contains('\u{f252}'), "{mode:?} 档不应有沙漏,实际 {h:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn vcs_conflicted_uses_own_color_with_modified_fallback() {
+        let v = GitStatus {
+            branch: "main".into(),
+            commit: String::new(),
+            staged: 0,
+            unstaged: 1,
+            conflicted: 2,
+            untracked: 0,
+            ahead: 0,
+            behind: 0,
+            stashes: 0,
+            remote_url: String::new(),
+        };
+        fn render(v: &GitStatus, conflicted_fg: Option<i64>) -> String {
+            let mut cfg = Config::default();
+            cfg.layout.left = vec![vec![Element::Seg("vcs".into())]];
+            let mut s = crate::config::Segment::default();
+            s.props
+                .insert("modified-foreground".into(), crate::config::Prop::Int(178));
+            if let Some(fg) = conflicted_fg {
+                s.props
+                    .insert("conflicted-foreground".into(), crate::config::Prop::Int(fg));
+            }
+            cfg.segments.insert("vcs".into(), s);
+            render_header_lines(&cfg, &info("/tmp", None), Some(v), 80).join("\n")
+        }
+        // p10k classic:`!N` 用 conflicted(%196F),`~N` 用 modified(%178F)。
+        // 取 needle 之前最后一个 fg 色号来断言,免得被中间的 bg/bold 转义干扰。
+        fn fg_before(hay: &str, needle: &str) -> Option<String> {
+            let i = hay.find(needle)?;
+            let head = &hay[..i];
+            let j = head.rfind("[38;5;")?;
+            let rest = &head[j + 6..];
+            Some(rest[..rest.find('m')?].to_string())
+        }
+        let h = render(&v, Some(196));
+        assert_eq!(fg_before(&h, "!2").as_deref(), Some("196"), "冲突应用 196");
+        assert_eq!(
+            fg_before(&h, "~1").as_deref(),
+            Some("178"),
+            "未暂存仍用 178"
+        );
+        // 没配 conflicted-foreground → 回退 modified,保持旧行为。
+        let h2 = render(&v, None);
+        assert_eq!(
+            fg_before(&h2, "!2").as_deref(),
+            Some("178"),
+            "缺省应回退 178"
         );
     }
 

@@ -562,10 +562,12 @@ fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
                 // 图标清空。vcs 的远端图标（github/gitlab）走的是
                 // `vcs-remote-icons`，优先于 `icon{ git }`，所以要一并清掉，
                 // 否则 Few 下远端仓库仍带着 github 图标（p10k 是把
-                // VCS_VISUAL_IDENTIFIER_EXPANSION 整体置空）。
+                // VCS_VISUAL_IDENTIFIER_EXPANSION 整体置空）。exec 图标对应
+                // p10k 的 COMMAND_EXECUTION_TIME_VISUAL_IDENTIFIER_EXPANSION，
+                // p10k 在 Few 下同样置空。
                 remove_segment(c, "os_icon");
                 c.vcs_remote_icons.clear();
-                for key in ["folder", "git", "branch", "time"] {
+                for key in ["folder", "git", "branch", "time", "execution-time"] {
                     c.icon_overrides.insert(
                         key.into(),
                         crate::config::IconOverride {

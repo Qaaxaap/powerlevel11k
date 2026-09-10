@@ -57,7 +57,14 @@ fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> 
     s
 }
 
-fn vcs_seg(fg: Option<u8>, clean: u8, modified: u8, untracked: u8, bg: Option<u8>) -> Segment {
+fn vcs_seg(
+    fg: Option<u8>,
+    clean: u8,
+    modified: u8,
+    conflicted: u8,
+    untracked: u8,
+    bg: Option<u8>,
+) -> Segment {
     let mut s = Segment::default();
     if let Some(f) = fg {
         s.style.fg = x(f);
@@ -69,6 +76,10 @@ fn vcs_seg(fg: Option<u8>, clean: u8, modified: u8, untracked: u8, bg: Option<u8
         .insert("clean-foreground".into(), Prop::Int(clean as i64));
     s.props
         .insert("modified-foreground".into(), Prop::Int(modified as i64));
+    // conflicted 在 p10k 的格式化函数里是独立的 `local conflicted`,
+    // 与 staged/unstaged 用的 modified 不同色（classic/lean 红 196）。
+    s.props
+        .insert("conflicted-foreground".into(), Prop::Int(conflicted as i64));
     s.props
         .insert("untracked-foreground".into(), Prop::Int(untracked as i64));
     // 分支名超 32 字符 → 前 12 + … + 后 12（对齐 p10k 各 config 里硬编码的
@@ -203,6 +214,7 @@ pub fn lean(colors_8: bool) -> Config {
         anchor_bold,
         vcs_clean,
         vcs_mod,
+        vcs_conf,
         vcs_unt,
         st_ok,
         st_err,
@@ -211,9 +223,13 @@ pub fn lean(colors_8: bool) -> Config {
         pc_ok,
         pc_err,
     ) = if colors_8 {
-        (4, 4, 4, false, 2, 3, 2, 2, 1, 3, 1, 2, 1)
+        // p10k lean-8colors:clean 2 / modified 3 / untracked 4(蓝) / conflicted 1。
+        (4, 4, 4, false, 2, 3, 1, 4, 2, 1, 3, 1, 2, 1)
     } else {
-        (31, 103, 39, true, 76, 178, 39, 70, 160, 101, 70, 76, 196)
+        // p10k lean:clean 76 / modified 178 / untracked 39(蓝) / conflicted 196。
+        (
+            31, 103, 39, true, 76, 178, 196, 39, 70, 160, 101, 70, 76, 196,
+        )
     };
 
     let mut cfg = base();
@@ -227,7 +243,7 @@ pub fn lean(colors_8: bool) -> Config {
         .insert("dir".into(), dir_seg(dir, short, anchor, anchor_bold, None));
     cfg.segments.insert(
         "vcs".into(),
-        vcs_seg(None, vcs_clean, vcs_mod, vcs_unt, None),
+        vcs_seg(None, vcs_clean, vcs_mod, vcs_conf, vcs_unt, None),
     );
     cfg.segments
         .insert("status".into(), status_seg(st_ok, st_err, None));
@@ -262,8 +278,12 @@ pub fn classic(color: usize) -> Config {
     cfg.segments.insert("os_icon".into(), os_icon_seg(255, bg));
     cfg.segments
         .insert("dir".into(), dir_seg(31, 103, 39, true, Some(bg)));
+    // untracked=39(蓝):p10k classic/lean 的 vcs 格式化函数里 `local
+    // untracked='%39F'`,与 POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND(76,只给
+    // vcs_info 回退路径用)不是一回事,实际渲染出来是蓝色。
+    // conflicted=196(红):p10k classic `local conflicted='%196F'`。
     cfg.segments
-        .insert("vcs".into(), vcs_seg(None, 76, 178, 76, Some(bg)));
+        .insert("vcs".into(), vcs_seg(None, 76, 178, 196, 39, Some(bg)));
     cfg.segments
         .insert("status".into(), status_seg(70, 160, Some(bg)));
     cfg.segments
@@ -298,8 +318,10 @@ pub fn rainbow(color: usize) -> Config {
     cfg.segments.insert("os_icon".into(), os_icon_seg(232, 7));
     cfg.segments
         .insert("dir".into(), dir_seg(254, 250, 255, true, Some(4)));
+    // p10k rainbow 的 vcs 格式化函数:clean/modified/untracked 全是 `%0F`(黑,
+    // 段底是绿 2),conflicted `%1F`(红)。之前传 2/3/2,绿底绿字把分支和 ?N 画没了。
     cfg.segments
-        .insert("vcs".into(), vcs_seg(None, 2, 3, 2, Some(2)));
+        .insert("vcs".into(), vcs_seg(None, 0, 0, 1, 0, Some(2)));
     cfg.segments
         .insert("status".into(), status_seg(2, 3, Some(0)));
     cfg.segments
@@ -444,5 +466,49 @@ mod tests {
     #[test]
     fn pure_snazzy_differs_from_original() {
         assert_ne!(pure(false), pure(true));
+    }
+
+    #[test]
+    fn vcs_colors_match_p10k_generated_configs() {
+        use crate::config::Prop;
+        let int = |c: &Config, seg: &str, key: &str| match c.segment(seg).prop(key) {
+            Some(Prop::Int(n)) => Some(*n),
+            _ => None,
+        };
+        // p10k lean/classic 的 vcs 格式化函数:clean %76F、modified %178F、
+        // untracked %39F(蓝)、conflicted %196F(红)。untracked 与
+        // POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND(76,只给 vcs_info 回退路径)不同。
+        for c in [lean(false), classic(1)] {
+            assert_eq!(int(&c, "vcs", "clean-foreground"), Some(76));
+            assert_eq!(int(&c, "vcs", "modified-foreground"), Some(178));
+            assert_eq!(int(&c, "vcs", "untracked-foreground"), Some(39));
+            assert_eq!(int(&c, "vcs", "conflicted-foreground"), Some(196));
+        }
+        // p10k lean-8colors:untracked 4(蓝)、conflicted 1(红)。
+        let l8 = lean(true);
+        assert_eq!(int(&l8, "vcs", "untracked-foreground"), Some(4));
+        assert_eq!(int(&l8, "vcs", "conflicted-foreground"), Some(1));
+        // p10k rainbow:vcs 段底是绿 2,文字全是黑 0(不能与底色同色,否则画没了)。
+        let rb = rainbow(1);
+        let vcs = rb.segment("vcs");
+        assert_eq!(vcs.style.bg, x(2));
+        assert_eq!(int(&rb, "vcs", "clean-foreground"), Some(0));
+        assert_eq!(int(&rb, "vcs", "modified-foreground"), Some(0));
+        assert_eq!(int(&rb, "vcs", "untracked-foreground"), Some(0));
+        assert_eq!(int(&rb, "vcs", "conflicted-foreground"), Some(1));
+    }
+
+    #[test]
+    fn vcs_branch_shortening_matches_p10k_hardcoded_rule() {
+        // p10k 各 config 里写死 `(( $#branch > 32 )) && branch[13,-13]="…"`。
+        use crate::config::Prop;
+        let c = classic(1);
+        let p = |k: &str| c.segment("vcs").prop(k).cloned();
+        assert_eq!(p("shorten-length"), Some(Prop::Int(12)));
+        assert_eq!(p("shorten-min-length"), Some(Prop::Int(32)));
+        assert_eq!(
+            p("shorten-strategy"),
+            Some(Prop::Str("truncate_middle".into()))
+        );
     }
 }
