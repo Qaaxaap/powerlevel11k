@@ -63,6 +63,7 @@ fn vcs_seg(
     modified: u8,
     conflicted: u8,
     untracked: u8,
+    meta: u8,
     bg: Option<u8>,
 ) -> Segment {
     let mut s = Segment::default();
@@ -82,6 +83,10 @@ fn vcs_seg(
         .insert("conflicted-foreground".into(), Prop::Int(conflicted as i64));
     s.props
         .insert("untracked-foreground".into(), Prop::Int(untracked as i64));
+    // meta 是 p10k 格式化函数里的 `local meta`:detached HEAD 的 `@`、
+    // 标签的 `#` 用它（classic/lean 246 灰、rainbow 7 白）。
+    s.props
+        .insert("meta-foreground".into(), Prop::Int(meta as i64));
     // 分支名超 32 字符 → 前 12 + … + 后 12（对齐 p10k 各 config 里硬编码的
     // `(( $#branch > 32 )) && branch[13,-13]="…"`）。
     s.props.insert("shorten-length".into(), Prop::Int(12));
@@ -216,6 +221,7 @@ pub fn lean(colors_8: bool) -> Config {
         vcs_mod,
         vcs_conf,
         vcs_unt,
+        vcs_meta,
         st_ok,
         st_err,
         exec,
@@ -223,12 +229,14 @@ pub fn lean(colors_8: bool) -> Config {
         pc_ok,
         pc_err,
     ) = if colors_8 {
-        // p10k lean-8colors:clean 2 / modified 3 / untracked 4(蓝) / conflicted 1。
-        (4, 4, 4, false, 2, 3, 1, 4, 2, 1, 3, 1, 2, 1)
+        // p10k lean-8colors:clean 2 / modified 3 / untracked 4(蓝) / conflicted 1,
+        // meta 用默认前景(%f,这里给 0)。
+        (4, 4, 4, false, 2, 3, 1, 4, 0, 2, 1, 3, 1, 2, 1)
     } else {
-        // p10k lean:clean 76 / modified 178 / untracked 39(蓝) / conflicted 196。
+        // p10k lean:clean 76 / modified 178 / untracked 39(蓝) / conflicted 196,
+        // meta 246(灰)。
         (
-            31, 103, 39, true, 76, 178, 196, 39, 70, 160, 101, 70, 76, 196,
+            31, 103, 39, true, 76, 178, 196, 39, 246, 70, 160, 101, 70, 76, 196,
         )
     };
 
@@ -243,7 +251,7 @@ pub fn lean(colors_8: bool) -> Config {
         .insert("dir".into(), dir_seg(dir, short, anchor, anchor_bold, None));
     cfg.segments.insert(
         "vcs".into(),
-        vcs_seg(None, vcs_clean, vcs_mod, vcs_conf, vcs_unt, None),
+        vcs_seg(None, vcs_clean, vcs_mod, vcs_conf, vcs_unt, vcs_meta, None),
     );
     cfg.segments
         .insert("status".into(), status_seg(st_ok, st_err, None));
@@ -283,7 +291,7 @@ pub fn classic(color: usize) -> Config {
     // vcs_info 回退路径用)不是一回事,实际渲染出来是蓝色。
     // conflicted=196(红):p10k classic `local conflicted='%196F'`。
     cfg.segments
-        .insert("vcs".into(), vcs_seg(None, 76, 178, 196, 39, Some(bg)));
+        .insert("vcs".into(), vcs_seg(None, 76, 178, 196, 39, 246, Some(bg)));
     cfg.segments
         .insert("status".into(), status_seg(70, 160, Some(bg)));
     cfg.segments
@@ -321,7 +329,7 @@ pub fn rainbow(color: usize) -> Config {
     // p10k rainbow 的 vcs 格式化函数:clean/modified/untracked 全是 `%0F`(黑,
     // 段底是绿 2),conflicted `%1F`(红)。之前传 2/3/2,绿底绿字把分支和 ?N 画没了。
     cfg.segments
-        .insert("vcs".into(), vcs_seg(None, 0, 0, 1, 0, Some(2)));
+        .insert("vcs".into(), vcs_seg(None, 0, 0, 1, 0, 7, Some(2)));
     cfg.segments
         .insert("status".into(), status_seg(2, 3, Some(0)));
     cfg.segments

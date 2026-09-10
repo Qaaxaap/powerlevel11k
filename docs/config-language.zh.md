@@ -138,14 +138,17 @@
     `home-abbreviation`（home 前缀，默认 `~`）、`path-separator-foreground`
     （`/` 的颜色）。
   - `vcs`：`clean-foreground` / `modified-foreground` / `untracked-foreground` /
-    `conflicted-foreground`（分支与 ahead/behind/stash、staged 与 unstaged 计数、
-    未跟踪、冲突各自的颜色；`conflicted-foreground` 缺省回退
-    `modified-foreground`）。注意 p10k 生成配置里未跟踪计数是 `%39F`（蓝），
-    与 `POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND`（76，只用于 vcs_info 回退路径）
-    不是同一个值；`show-changeset`
-    与 `changeset-hash-length`（默认 8，detached HEAD 时自动显示 commit）；
+    `conflicted-foreground` / `meta-foreground`（分支与 ahead/behind/stash、
+    staged 与 unstaged 计数、未跟踪、冲突、以及 `@hash` 的 `@` 和 `#tag` 的 `#`
+    各自的颜色；`conflicted-foreground` 缺省回退 `modified-foreground`，
+    `meta-foreground` 缺省回退段样式）。注意 p10k 生成配置里未跟踪计数是
+    `%39F`（蓝），与 `POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND`（76，只用于
+    vcs_info 回退路径）不是同一个值；`meta` 对应 p10k 格式化函数里的
+    `local meta='%246F'`。`show-changeset`
+    与 `changeset-hash-length`（默认 8，显式开启时才在分支旁画 `图标 + hash`）；
+    没有本地分支时按 p10k 显示 `#tag`（有标签）或 `@hash`（detached HEAD）；
     `shorten-length` / `shorten-min-length` / `shorten-strategy` /
-    `shorten-delimiter`（分支名折叠，两个 length 都配才生效）；
+    `shorten-delimiter`（分支名与标签名折叠，两个 length 都配才生效）；
     `staged-symbol` / `unstaged-symbol` / `conflicted-symbol` /
     `untracked-symbol` / `ahead-symbol` / `behind-symbol` / `stash-symbol`
     （计数符号，默认 `+ ! ~ ? ⇡ ⇣ *`，与 p10k 格式化函数一致）。
@@ -182,7 +185,7 @@
 
 - `dir` — 当前目录，从前面折叠（$HOME 下显示 `~`），部件按 state 分色。
 - `vcs` — git 仓库里显示分支和计数，顺序与符号同 p10k：`⇣落后⇡领先 *stash
-  merge ~冲突 +暂存 !未暂存 ?未跟踪`。
+  merge ~冲突 +暂存 !未暂存 ?未跟踪`；无本地分支时显示 `#tag` 或 `@hash`。
 - `status` — 上次退出码：取图标名 `ok` / `error` 的字符（随 `mode`，如
   ascii 档显示 `ok` / `err N`），出错时附加 `N`。
 - `time` — 当前时间 HH:MM:SS。

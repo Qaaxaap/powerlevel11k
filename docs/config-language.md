@@ -162,17 +162,21 @@ through `icon {}`.
     file name, default built-in list), `home-abbreviation` (home prefix,
     default `~`), `path-separator-foreground` (color of `/`).
   - `vcs`: `clean-foreground` / `modified-foreground` /
-    `untracked-foreground` / `conflicted-foreground` (branch plus
-    ahead/behind/stash, staged and unstaged counts, untracked files,
-    conflicts; `conflicted-foreground` falls back to
-    `modified-foreground`). Note that p10k's generated configs draw the
-    untracked count in `%39F` (blue) — that is not the same value as
-    `POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND` (76), which only feeds the
-    vcs_info fallback path. Also `show-changeset` and
-    `changeset-hash-length` (default 8; detached HEAD shows the commit
-    automatically); `shorten-length` / `shorten-min-length` /
-    `shorten-strategy` / `shorten-delimiter` (branch shortening, needs
-    both lengths); `staged-symbol` / `unstaged-symbol` /
+    `untracked-foreground` / `conflicted-foreground` / `meta-foreground`
+    (branch plus ahead/behind/stash, staged and unstaged counts, untracked
+    files, conflicts, and the `@` of `@hash` / `#` of `#tag`;
+    `conflicted-foreground` falls back to `modified-foreground`,
+    `meta-foreground` to the segment style). Note that p10k's generated
+    configs draw the untracked count in `%39F` (blue) — that is not the
+    same value as `POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND` (76), which
+    only feeds the vcs_info fallback path; `meta` mirrors p10k's
+    `local meta='%246F'`. Also `show-changeset` and
+    `changeset-hash-length` (default 8; only with `show-changeset` does
+    the branch get an `icon + hash`). With no local branch the segment
+    shows `#tag` when HEAD is tagged and `@hash` otherwise (detached
+    HEAD), both as in p10k; `shorten-length` / `shorten-min-length` /
+    `shorten-strategy` / `shorten-delimiter` (branch and tag shortening,
+    needs both lengths); `staged-symbol` / `unstaged-symbol` /
     `conflicted-symbol` / `untracked-symbol` / `ahead-symbol` /
     `behind-symbol` / `stash-symbol` (count glyphs, default
     `+ ! ~ ? ⇡ ⇣ *`, matching p10k's formatter). The order matches p10k
@@ -220,7 +224,7 @@ What the built-in segments render:
   components colored per state.
 - `vcs` — in a git repo: branch plus counts in p10k's order and with
   p10k's glyphs (`⇣behind⇡ahead *stashes merge ~conflicted +staged
-  !unstaged ?untracked`).
+  !unstaged ?untracked`; no local branch → `#tag` or `@hash`).
 - `status` — last exit code: the glyph of icon names `ok` / `error` (per
   `mode`, e.g. ascii shows `ok` / `err N`), with `N` appended on error.
 - `time` — current time HH:MM:SS.

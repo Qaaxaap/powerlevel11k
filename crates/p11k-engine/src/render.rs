@@ -1840,20 +1840,23 @@ fn vcs_text(
     let modified = prop_style(seg, style, "modified-foreground");
     let conflicted = prop_style(seg, &modified, "conflicted-foreground");
     let untracked = prop_style(seg, style, "untracked-foreground");
+    // p10k 的 `meta`（%246F 灰）：`@hash` 的 `@`、`#tag` 的 `#`、远端分支名。
+    let meta = prop_style(seg, style, "meta-foreground");
     let mut s = String::new();
     // p10k `SHOW_CHANGESET`：显式开启、或没有本地分支（detached HEAD）时，
     // 显示 commit 的前 `changeset-hash-length` 位（默认 8）。
+    // p10k 的 `SHOW_CHANGESET`（显式开启、走分段路径时）画 `图标 + hash`。
     let show_changeset = matches!(
         seg.prop("show-changeset"),
         Some(crate::config::Prop::Bool(true))
-    ) || v.branch.is_empty();
+    );
+    let hash_len = match seg.prop("changeset-hash-length") {
+        Some(crate::config::Prop::Int(n)) if *n > 0 => *n as usize,
+        _ => 8,
+    };
     let mut has_commit = false;
     if show_changeset && !v.commit.is_empty() {
-        let n = match seg.prop("changeset-hash-length") {
-            Some(crate::config::Prop::Int(n)) if *n > 0 => *n as usize,
-            _ => 8,
-        };
-        let hash: String = v.commit.chars().take(n).collect();
+        let hash: String = v.commit.chars().take(hash_len).collect();
         let mut t = String::new();
         if !commit_icon.is_empty() {
             t.push_str(commit_icon);
@@ -1874,6 +1877,15 @@ fn vcs_text(
         }
         b.push_str(&shorten_branch(&v.branch, seg));
         s.push_str(&paint(&b, &clean));
+    } else if !v.tag.is_empty() {
+        // p10k:`${meta}#${clean}${tag}`,标签名与分支名同样 >32 折叠。
+        s.push_str(&paint("#", &meta));
+        s.push_str(&paint(&shorten_branch(&v.tag, seg), &clean));
+    } else if !v.commit.is_empty() {
+        // p10k:`${meta}@${clean}${VCS_STATUS_COMMIT[1,8]}`(detached HEAD)。
+        let hash: String = v.commit.chars().take(hash_len).collect();
+        s.push_str(&paint("@", &meta));
+        s.push_str(&paint(&hash, &clean));
     }
     // 计数符号可被 props 覆盖（p10k 里这些字符写死在 config 的格式化函数里，
     // 这里给出来让用户不用改引擎就能换）。
@@ -2254,6 +2266,16 @@ mod tests {
         }
     }
 
+    /// 取 `needle` 之前最后一个 `38;5;N` 前景色号：断言某段文字用了哪个颜色，
+    /// 不受中间夹着的背景色/bold 转义影响。
+    fn fg_before(hay: &str, needle: &str) -> Option<String> {
+        let i = hay.find(needle)?;
+        let head = &hay[..i];
+        let j = head.rfind("[38;5;")?;
+        let rest = &head[j + 6..];
+        Some(rest[..rest.find('m')?].to_string())
+    }
+
     #[test]
     fn segment_prefix_and_suffix_render() {
         // p10k 的 SEG_PREFIX/SEG_SUFFIX（vcs 的 `on `、exec 的 `took `）：
@@ -2296,6 +2318,7 @@ mod tests {
                 behind: 0,
                 stashes: 0,
                 action: String::new(),
+                tag: String::new(),
                 remote_url: String::new(),
             };
             render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n")
@@ -2325,6 +2348,7 @@ mod tests {
             behind: 0,
             stashes: 0,
             action: String::new(),
+            tag: String::new(),
             remote_url: String::new(),
         };
         let mut cfg = Config::default();
@@ -2403,6 +2427,59 @@ mod tests {
     }
 
     #[test]
+    fn vcs_detached_and_tag_match_p10k() {
+        // p10k 的格式化函数:无分支有标签 → `${meta}#${clean}tag`,
+        // 无分支无标签 → `${meta}@${clean}commit[1,8]`。
+        fn render(v: &GitStatus) -> String {
+            let mut cfg = Config::default();
+            cfg.layout.left = vec![vec![Element::Seg("vcs".into())]];
+            let mut s = crate::config::Segment::default();
+            s.props
+                .insert("clean-foreground".into(), crate::config::Prop::Int(76));
+            s.props
+                .insert("meta-foreground".into(), crate::config::Prop::Int(246));
+            cfg.segments.insert("vcs".into(), s);
+            render_header_lines(&cfg, &info("/tmp", None), Some(v), 120).join("\n")
+        }
+        let base = GitStatus {
+            branch: String::new(),
+            commit: "aa2fdd09deadbeef".into(),
+            staged: 0,
+            unstaged: 0,
+            conflicted: 0,
+            untracked: 0,
+            ahead: 0,
+            behind: 0,
+            stashes: 0,
+            action: String::new(),
+            tag: String::new(),
+            remote_url: String::new(),
+        };
+        let h = render(&base);
+        assert_eq!(fg_before(&h, "@").as_deref(), Some("246"), "@ 用 meta 色");
+        assert_eq!(
+            fg_before(&h, "aa2fdd09").as_deref(),
+            Some("76"),
+            "hash 用 clean 色"
+        );
+        assert!(h.contains("aa2fdd09"), "hash 取前 8 位,实际 {h:?}");
+        assert!(!h.contains("deadbeef"), "不应超过 8 位,实际 {h:?}");
+        // 有标签 → 显示 #tag,不再显示 hash。
+        let tagged = GitStatus {
+            tag: "v1.2.3".into(),
+            ..base
+        };
+        let h2 = render(&tagged);
+        assert_eq!(fg_before(&h2, "#").as_deref(), Some("246"), "# 用 meta 色");
+        assert_eq!(
+            fg_before(&h2, "v1.2.3").as_deref(),
+            Some("76"),
+            "标签名用 clean 色"
+        );
+        assert!(!h2.contains("aa2fdd09"), "有标签时不显示 hash,实际 {h2:?}");
+    }
+
+    #[test]
     fn vcs_count_order_matches_p10k_formatter() {
         /// 去掉 SGR 序列,只留可见字符,便于断言计数顺序。
         fn strip_sgr(s: &str) -> String {
@@ -2435,6 +2512,7 @@ mod tests {
             behind: 1,
             stashes: 3,
             action: "merge".into(),
+            tag: String::new(),
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 120).join("\n");
@@ -2460,6 +2538,7 @@ mod tests {
             behind: 0,
             stashes: 0,
             action: String::new(),
+            tag: String::new(),
             remote_url: String::new(),
         };
         fn render(v: &GitStatus, conflicted_fg: Option<i64>) -> String {
@@ -2476,14 +2555,6 @@ mod tests {
             render_header_lines(&cfg, &info("/tmp", None), Some(v), 80).join("\n")
         }
         // p10k classic:`~N`(conflicted)用 %196F,`!N`(unstaged)用 %178F。
-        // 取 needle 之前最后一个 fg 色号来断言,免得被中间的 bg/bold 转义干扰。
-        fn fg_before(hay: &str, needle: &str) -> Option<String> {
-            let i = hay.find(needle)?;
-            let head = &hay[..i];
-            let j = head.rfind("[38;5;")?;
-            let rest = &head[j + 6..];
-            Some(rest[..rest.find('m')?].to_string())
-        }
         let h = render(&v, Some(196));
         assert_eq!(fg_before(&h, "~2").as_deref(), Some("196"), "冲突应用 196");
         assert_eq!(
@@ -2642,6 +2713,7 @@ mod tests {
             behind: 0,
             stashes: 0,
             action: String::new(),
+            tag: String::new(),
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n");
@@ -2678,6 +2750,7 @@ mod tests {
             behind: 0,
             stashes: 0,
             action: String::new(),
+            tag: String::new(),
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
@@ -2724,6 +2797,7 @@ mod tests {
             behind: 0,
             stashes: 0,
             action: String::new(),
+            tag: String::new(),
             remote_url: String::new(),
         };
         // 设置异底段间用 powerline 箭头,末尾端符。

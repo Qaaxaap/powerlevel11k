@@ -40,6 +40,8 @@ pub struct GitStatus {
     pub stashes: usize,
     /// 进行中的操作（merge/rebase/...，p10k `VCS_STATUS_ACTION`），空 = 无。
     pub action: String,
+    /// HEAD 指向的标签（p10k `VCS_STATUS_TAG`）；无本地分支时显示 `#tag`。
+    pub tag: String,
     /// tracking 远端 URL(用于按域名选 vcs 图标,如 github/archlinux)。
     pub remote_url: String,
 }
