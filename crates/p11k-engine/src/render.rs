@@ -247,7 +247,16 @@ fn render_segment(
                 _ => 3.0,
             };
             if info.exec_seconds >= threshold {
-                paint(&format_duration(info.exec_seconds), &style)
+                // p10k 的 PRECISION 缺省 2 位小数、FORMAT 缺省多级(带空格)。
+                let precision = match seg.prop("precision") {
+                    Some(crate::config::Prop::Int(n)) => (*n).clamp(0, 6) as usize,
+                    _ => 2,
+                };
+                let hms = matches!(
+                    seg.prop("format"),
+                    Some(crate::config::Prop::Str(s)) if s == "H:M:S"
+                );
+                paint(&format_duration(info.exec_seconds, precision, hms), &style)
             } else {
                 paint("", &style)
             }
@@ -1611,15 +1620,41 @@ fn local_time() -> libc::tm {
     tm
 }
 
-/// 命令时长格式(对齐 p10k lean PRECISION=0):<60s → `Ns`;否则 `Xm Ys`/`Xh Ym Zs`。
-fn format_duration(secs: f64) -> String {
-    let s = secs.round() as u64;
-    if s < 60 {
-        format!("{s}s")
-    } else if s < 3600 {
-        format!("{}m{}s", s / 60, s % 60)
+/// 命令时长格式（对齐 p10k `prompt_command_execution_time`）：
+/// - `<60s`：`precision` 为 0 → 四舍五入整数 `Ns`；>0 → `N.NNs`（p10k 默认 2）。
+/// - `>=60s`：`Xs` / `Xm Ys` / `Xh Ym Zs` / `Xd Xh Ym Zs`（**带空格**，同 p10k）；
+///   `format` 为 `H:M:S` 时改用 `MM:SS` / `0H:MM:SS` / `H:MM:SS`。
+fn format_duration(secs: f64, precision: usize, hms: bool) -> String {
+    if secs < 60.0 {
+        if precision == 0 {
+            format!("{}s", (secs + 0.5) as u64)
+        } else {
+            format!("{:.*}s", precision, secs)
+        }
     } else {
-        format!("{}h{}m{}s", s / 3600, (s % 3600) / 60, s % 60)
+        let d = (secs + 0.5) as u64;
+        if hms {
+            let (h, m, s) = (d / 3600, d / 60 % 60, d % 60);
+            if d >= 36000 {
+                format!("{h}:{m:02}:{s:02}")
+            } else if d >= 3600 {
+                format!("0{h}:{m:02}:{s:02}")
+            } else {
+                format!("{m:02}:{s:02}")
+            }
+        } else {
+            let mut text = format!("{}s", d % 60);
+            if d >= 60 {
+                text = format!("{}m {text}", d / 60 % 60);
+                if d >= 3600 {
+                    text = format!("{}h {text}", d / 3600 % 24);
+                    if d >= 86400 {
+                        text = format!("{}d {text}", d / 86400);
+                    }
+                }
+            }
+            text
+        }
     }
 }
 
@@ -2089,6 +2124,21 @@ mod tests {
         assert!(h.contains("main"), "content 应渲染,实际 {h:?}");
         let after = h.split("main").nth(1).unwrap_or("");
         assert!(after.contains('!'), "suffix 应在内容之后,实际 {h:?}");
+    }
+
+    #[test]
+    fn exec_duration_formats_match_p10k() {
+        // <60s：precision=0 取整、>0 带小数（p10k 缺省 2）。
+        assert_eq!(format_duration(3.4, 0, false), "3s");
+        assert_eq!(format_duration(3.44, 2, false), "3.44s");
+        // >=60s：多级带空格，可到天。
+        assert_eq!(format_duration(65.0, 0, false), "1m 5s");
+        assert_eq!(format_duration(3723.0, 0, false), "1h 2m 3s");
+        assert_eq!(format_duration(90065.0, 0, false), "1d 1h 1m 5s");
+        // H:M:S 变体。
+        assert_eq!(format_duration(65.0, 0, true), "01:05");
+        assert_eq!(format_duration(3723.0, 0, true), "01:02:03");
+        assert_eq!(format_duration(36005.0, 0, true), "10:00:05");
     }
 
     #[test]
