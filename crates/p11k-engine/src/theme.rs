@@ -65,26 +65,29 @@ pub fn prompt_start(out: &mut dyn Write) -> io::Result<()> {
 }
 
 /// 逐行输出 header 内容:每行 `\r\x1b[K` 清行 + 内容 + `\r\n`,把光标推进到
-/// 下一行行首。不含 OSC133A——它由 [`prompt_start`] 在占位之前单独发。
-fn header_body(out: &mut dyn Write, lines: &[String]) -> io::Result<()> {
+/// 下一行行首。返回每行内容的**显示宽度**——内容比终端宽时终端会折行，
+/// 调用方按当时的列宽折算出实际占用行数（instant header 之后要按它上移擦除）。
+fn header_body(out: &mut dyn Write, lines: &[String]) -> io::Result<Vec<usize>> {
+    let mut widths = Vec::with_capacity(lines.len());
     for line in lines {
         write!(out, "\r\x1b[K")?;
         out.write_all(line.as_bytes())?;
         write!(out, "\r\n")?;
+        widths.push(crate::render::display_width_of(line));
     }
-    Ok(())
+    Ok(widths)
 }
 
 /// 用 KDL 配置渲染完整 header(多行,行数由配置决定):OSC133A + 逐行内容。
 /// 仅 instant header(引擎尚未 spawn shell、占位还没出现)用;正常 prompt
-/// 周期改走「占位先行 + redraw_header_cfg 回填」。
+/// 周期改走「占位先行 + redraw_header_cfg 回填」。返回每行的显示宽度。
 pub fn render_header_cfg(
     out: &mut dyn Write,
     cols: usize,
     config: &crate::config::Config,
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
-) -> io::Result<()> {
+) -> io::Result<Vec<usize>> {
     prompt_start(out)?;
     let lines = crate::render::render_header_lines(config, info, vcs, cols);
     header_body(out, &lines)

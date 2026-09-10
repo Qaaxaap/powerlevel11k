@@ -194,26 +194,34 @@ pub fn render_header_lines(
                 // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
                 let body_budget = cols.saturating_sub(pre_w + suf_w);
                 let seps = &config.separators;
+                let indent = config.layout.right_indent;
+                // 左右两栏各自的宽度（右栏含它的起始分隔符），用于判断"整行放不放得下"。
+                // p10k 的判据比"刚好塞满"更严：内容 + indent + 1 必须塞进宽度里
+                // （实测同一内容 33 列隐藏、34 列才显示，而内容只占 32 列）。
+                // 量右栏单独宽度时 cols 传 0：让 gap 计算直接跳过（只取右栏本身）。
+                let left_w =
+                    |l: &[SegmentText]| display_width(&assemble_row(l, &[], body_budget, seps, 0));
+                let right_w = |r: &[SegmentText]| display_width(&assemble_row(&[], r, 0, seps, 0));
+                let fits = |lw: usize, rw: usize| lw + rw + indent < body_budget;
                 // 第一遍:完全不折(p10k 放得下时就是原样)。折叠预算一律按**未折**
                 // 宽度算,否则拿折过的宽度再折会比需要的折得少。
                 let (l0, r0) = render_side(None);
-                let left0_w = display_width(&assemble_row(&l0, &[], body_budget, seps));
-                let full0 = assemble_row(&l0, &r0, body_budget, seps);
-                let body = if display_width(&full0) <= body_budget {
-                    full0
+                let (lw0, rw0) = (left_w(&l0), right_w(&r0));
+                let body = if fits(lw0, rw0) {
+                    assemble_row(&l0, &r0, body_budget, seps, indent)
                 } else {
-                    // 第二遍:按整行超出多少列折 dir(窄终端折、宽终端不折)。
-                    let overflow = display_width(&full0) - body_budget;
+                    // 第二遍:按放不下多少列折 dir(窄终端折、宽终端不折)。
+                    let overflow = (lw0 + rw0 + indent + 1).saturating_sub(body_budget);
                     let (l1, r1) = render_side(Some(overflow));
-                    let full1 = assemble_row(&l1, &r1, body_budget, seps);
-                    if display_width(&full1) <= body_budget {
-                        full1
+                    let (lw1, rw1) = (left_w(&l1), right_w(&r1));
+                    if fits(lw1, rw1) {
+                        assemble_row(&l1, &r1, body_budget, seps, indent)
                     } else {
                         // 第三遍:折完还是放不下 → 整条右栏丢掉(含 gap)。p10k 在
                         // 宽度不够时就是不画右栏,而不是让它溢出换行。左栏按它
                         // 相对未折宽度的超出量再折一轮。
-                        let (l2, _) = render_side(Some(left0_w.saturating_sub(body_budget)));
-                        assemble_row(&l2, &[], body_budget, seps)
+                        let (l2, _) = render_side(Some(lw0.saturating_sub(body_budget)));
+                        assemble_row(&l2, &[], body_budget, seps, indent)
                     }
                 };
                 row.push_str(&body);
@@ -2412,6 +2420,7 @@ fn assemble_row(
     right: &[SegmentText],
     cols: usize,
     seps: &crate::config::Separators,
+    right_indent: usize,
 ) -> String {
     let mut out = String::new();
     // 左栏首段起始端符(左三角,画在最左段之前)。
@@ -2526,16 +2535,14 @@ fn assemble_row(
             }
         }
         let lw = display_width(&out);
-        // p10k 的右栏在最末图标之后还留一个空格（RPROMPT 尾随空格），少这一格
-        // 会让右栏比 p10k 窄一格、更早"放得下"。
-        right_str.push_str(&paint(
-            " ",
-            &parts.last().map(|s| s.style.clone()).unwrap_or_default(),
-        ));
         let rw = display_width(&right_str);
-        // 右对齐:gap 字符填满左段到右段起点之间。
-        if cols > rw {
-            let start = cols - rw; // 右段起点(0-based)
+        // 右对齐:gap 字符填满左段到右段起点之间。右段距右边界留 `right_indent`
+        // 列——zsh 的 `ZLE_RPROMPT_INDENT` 默认 1，p10k 的右栏因此与窗口边界之间
+        // 永远隔一格；贴边画会让右栏比 p10k 早一列"放得下"，也会顶到最后一格
+        // （很多终端在最后一列会触发自动换行）。
+        let edge = cols.saturating_sub(right_indent);
+        if edge > rw {
+            let start = edge - rw; // 右段起点(0-based)
             if start > lw {
                 let gap_char = if seps.gap.is_empty() { " " } else { &seps.gap };
                 let gap_str = gap_char.repeat(start - lw);
@@ -2628,6 +2635,11 @@ fn named_256(name: &str) -> u8 {
 }
 
 /// 显示宽度(去 ANSI,按 Unicode 显示宽度:emoji/CJK 宽字符算 2,组合/零宽算 0)。
+/// 供 theme 计算"内容比 cols 宽时终端会折成几行"。
+pub fn display_width_of(s: &str) -> usize {
+    display_width(s)
+}
+
 fn display_width(s: &str) -> usize {
     let mut w = 0;
     let mut in_esc = false;
@@ -3185,9 +3197,14 @@ mod tests {
     fn right_aligns_to_cols() {
         let cfg = Config::default_lean().unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
-        // 右段状态图标右对齐:gap 填充使整行显示宽度 = cols。
+        // 右段状态图标右对齐:gap 填充使整行显示宽度 = cols。右栏还要按
+        // `right-indent`（默认 1，同 zsh `ZLE_RPROMPT_INDENT`）离右边界留一格。
         assert!(h.contains("\u{f00c}"), "右段应存在,实际:{h:?}");
-        assert_eq!(display_width(&h), 80, "右对齐后行宽应为 80");
+        assert_eq!(
+            display_width(&h),
+            80 - cfg.layout.right_indent,
+            "右对齐后行宽应为 cols - right-indent"
+        );
     }
 
     #[test]
@@ -3623,7 +3640,35 @@ mod tests {
                    segments { dir content=\"12:34:56\" { text-right \"🎂\" } }";
         let cfg = Config::parse(src).unwrap_or_else(|e| panic!("parse: {e}\nsrc={src:?}"));
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 40).join("\r\n");
-        assert_eq!(display_width(&h), 40, "行宽应仍对齐 cols=40,实际:{h:?}");
+        assert_eq!(
+            display_width(&h),
+            40 - cfg.layout.right_indent,
+            "行宽应仍对齐 cols - right-indent,实际:{h:?}"
+        );
+    }
+
+    #[test]
+    fn row_never_exceeds_cols_at_any_width() {
+        // 行宽绝不能超过 cols：占位协议按"每行占一个终端行"算，溢出换行会让
+        // header 行数对不上（也会让 instant header 的擦除算错行）。
+        let cfg = Config::parse(
+            "layout {\n  left { line { os_icon; dir; vcs } }\n  \
+             right { line { status; command_execution_time; background_jobs; time } }\n}\n\
+             segments { dir fg=31 shorten-strategy=\"truncate_to_unique\"\n  \
+             status ok-foreground=70\n  time fg=66 }",
+        )
+        .unwrap();
+        // 从 20 起：比左栏自己还窄时（这里左栏 /tmp 约 10 列）无解，p10k 也会换行。
+        for cols in 20..120 {
+            let rows = render_header_lines(&cfg, &info("/tmp", None), None, cols);
+            for (i, row) in rows.iter().enumerate() {
+                assert!(
+                    display_width(row) <= cols,
+                    "cols={cols} 第 {i} 行宽 {} 超过 cols,内容={row:?}",
+                    display_width(row)
+                );
+            }
+        }
     }
 
     #[test]

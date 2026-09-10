@@ -571,7 +571,7 @@ fn main() -> anyhow::Result<()> {
 
     // instant header：不等内部 shell 加载完较慢的用户 rc，立即用引擎 cwd 画
     // 占位 header + prompt，打开窗口即见 prompt；内部 shell 第一次 precmd 后
-    // 再清屏刷新成真正状态。
+    // 换成真实状态。
     let instant_info = HeaderInfo {
         exit_code: None,
         cwd: std::env::current_dir()
@@ -581,10 +581,19 @@ fn main() -> anyhow::Result<()> {
         jobs: 0,
         history: 0,
     };
-    theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
+    // 返回的是每行的显示宽度：万一画的时候终端比 pty 窄（窗口刚建好、尺寸还没
+    // 同步过来），内容会折行，擦除时得按**当时的列宽**折算实际占用行数，否则会
+    // 留下半截 header。
+    let mut instant_widths =
+        theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
     theme::render_prompt(&mut stdout, &prefix.text)?;
     stdout.flush()?;
     let mut instant_drawn = true;
+    /// instant header 在给定列宽下实际占用的终端行数（内容宽于终端时终端折行）。
+    fn instant_rows_at(widths: &[usize], cols: u16) -> usize {
+        let c = cols.max(1) as usize;
+        widths.iter().map(|w| w.div_ceil(c).max(1)).sum()
+    }
     // instant 阶段内部 shell 透传给终端的内容：字节数 + 换行数。换行数 = 0
     // 表示屏幕上只有我们画的那份 header（可以就地擦掉重画）；否则说明 rc 真的
     // 打了行出来，那些行插在我们下方，只能保留。
@@ -596,6 +605,10 @@ fn main() -> anyhow::Result<()> {
         // TRAPWINCH/trap WINCH 宣告 r 后重画；fish 交互时不触发 signal event、
         // 重绘也不输出字节、不重调 fish_prompt，只能引擎主动重画。
         if RESIZE_FLAG.swap(false, Ordering::Relaxed) {
+            // 重新套一遍 raw：tmux 之类的复用器在新建/调整 pane 时会重设 pane pty
+            // 的 termios，ECHO 一旦被打开，引擎自己往终端写的东西会被回显回 stdin，
+            // 再被当输入转发进 pty —— 屏幕上就会多出一份 header。
+            let _ = RawTerminal::enter(libc::STDIN_FILENO);
             let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
             if (r, c, xp, yp) != last_size {
                 pair.master.resize(PtySize {
@@ -606,6 +619,22 @@ fn main() -> anyhow::Result<()> {
                 })?;
                 last_size = (r, c, xp, yp);
                 log(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
+                // instant 期间还没有 shell 的 `r` 宣告来触发重画，屏幕上是按旧
+                // 列宽画的那份（可能已经折行、位置全错），这里自己重画一遍。
+                // 只有当 instant 阶段没别的输出时才敢清屏重来——终端 reflow 之后
+                // "上移几行"已经不可靠，这是唯一稳妥的做法。
+                if instant_drawn && instant_newlines == 0 {
+                    write!(stdout, "\x1b[2J\x1b[H")?;
+                    instant_widths = theme::render_header_cfg(
+                        &mut stdout,
+                        c as usize,
+                        &config,
+                        &instant_info,
+                        None,
+                    )?;
+                    theme::render_prompt(&mut stdout, &prefix.text)?;
+                    stdout.flush()?;
+                }
             }
         }
 
@@ -653,9 +682,13 @@ fn main() -> anyhow::Result<()> {
                         // 保留输出，让真 prompt 接在它后面（p10k 也保留并给警告）。
                         // 打开 P11K_INSTANT_LOG 可以打一行日志看是否命中。
                         instant_drawn = false;
-                        let header_rows = config.layout.left.len().max(config.layout.right.len());
-                        if instant_newlines == 0 && header_rows < last_size.0 as usize {
-                            write!(stdout, "\x1b[{header_rows}A\r\x1b[J")?;
+                        // 现场重新问一次终端宽度：画 instant header 时如果尺寸还没
+                        // 同步过来（窗口刚建好、SIGWINCH 还没到），内容是按旧宽度画
+                        // 的、在真实窗口里已经折行，得按**真实**列宽折算行数。
+                        let (rows_cap, cols_now, ..) = tty_size().unwrap_or(last_size);
+                        let rows = instant_rows_at(&instant_widths, cols_now);
+                        if instant_newlines == 0 && rows < rows_cap as usize {
+                            write!(stdout, "\x1b[{rows}A\r\x1b[J")?;
                         } else if instant_newlines == 0 {
                             // 窗口比 header 还矮：header 自己就把屏滚了，位置不可靠，
                             // 退回整屏清。

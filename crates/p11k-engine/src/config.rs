@@ -108,7 +108,7 @@ pub enum Element {
 }
 
 /// 布局:左右各是一组行;每行一组元素,行与行=换行。
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     pub left: Vec<Vec<Element>>,
     pub right: Vec<Vec<Element>>,
@@ -120,6 +120,23 @@ pub struct Layout {
     pub transient_prompt: bool,
     /// 标尺:header 之上再画一整行 `ruler` 字符(p10k `SHOW_RULER`,缺省关)。
     pub show_ruler: bool,
+    /// 右栏距右边界留几列（zsh `ZLE_RPROMPT_INDENT`，默认 1；贴边画会顶到
+    /// 最后一格并比 p10k 早一列"放得下"）。
+    pub right_indent: usize,
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Layout {
+            left: Vec::new(),
+            right: Vec::new(),
+            prompt_add_newline: 0,
+            transient_prompt: false,
+            show_ruler: false,
+            // zsh 的 ZLE_RPROMPT_INDENT 默认 1：右栏与窗口右边界之间留一格。
+            right_indent: 1,
+        }
+    }
 }
 
 /// 分隔符/端符族(可配置字符,powerline 风格)。
@@ -478,6 +495,10 @@ impl Config {
         }
         if self.layout.show_ruler {
             ch.nodes_mut().push(leaf("show-ruler", true));
+        }
+        if self.layout.right_indent != 1 {
+            ch.nodes_mut()
+                .push(leaf("right-indent", self.layout.right_indent as i128));
         }
         n
     }
@@ -1033,6 +1054,12 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
                 // `show-ruler #true`：header 之上加一整行标尺（p10k SHOW_RULER）。
                 "show-ruler" => {
                     layout.show_ruler = first_value(child).map(bool_val).unwrap_or(false);
+                }
+                // `right-indent <N>`：右栏距右边界留几列（缺省 1，同 zsh）。
+                "right-indent" => {
+                    if let Some(KdlValue::Integer(n)) = first_value(child) {
+                        layout.right_indent = (*n).clamp(0, 9) as usize;
+                    }
                 }
                 _ => {}
             }
