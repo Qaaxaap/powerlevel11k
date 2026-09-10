@@ -361,8 +361,13 @@ impl Config {
     }
 
     /// 序列化为 KDL 文本;`parse(to_kdl(cfg))` 应得到等价配置(round-trip)。
+    /// 用 kdl-rs 的 autoformat 排版(缩进/空格),否则构造出的文档是紧贴的;
+    /// 再把字符串值改成带引号的表示(见 [`quote_string_values`])。
     pub fn to_kdl(&self) -> String {
-        self.to_document().to_string()
+        let mut doc = self.to_document();
+        doc.autoformat();
+        quote_string_values(&mut doc);
+        doc.to_string()
     }
 
     /// 构建等价 KDL 文档。节点顺序 mode/layout/defaults/separators/frame/
@@ -579,6 +584,56 @@ impl Config {
 }
 
 // ---- 序列化辅助(Config → KDL)----
+
+/// 给所有字符串值设带引号的表示。kdl-rs 对"能当裸标识符"的字符串不加引号
+/// (如 `mode nerdfont-complete`、`segment <U+E0B0>`,后者看起来像空值),
+/// 而 p11k 的预设/文档一律带引号,这里统一。`autoformat_keep` 让 autoformat
+/// 不覆盖这个表示(它只保留 value_repr 与 leading,其余重排)。
+fn quote_string_values(doc: &mut KdlDocument) {
+    for node in doc.nodes_mut() {
+        quote_node_strings(node);
+    }
+}
+
+fn quote_node_strings(node: &mut KdlNode) {
+    for e in node.entries_mut() {
+        if let KdlValue::String(s) = e.value() {
+            let repr = quote_kdl_string(s);
+            let mut fmt = e.format().cloned().unwrap_or(kdl::KdlEntryFormat {
+                leading: " ".into(),
+                ..Default::default()
+            });
+            fmt.value_repr = repr;
+            fmt.autoformat_keep = true;
+            e.set_format(fmt);
+        }
+    }
+    if let Some(children) = node.children_mut() {
+        quote_string_values(children);
+    }
+}
+
+/// KDL v2 字符串字面量(转义规则对齐 kdl-rs 的 `write_string`)。
+fn quote_kdl_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' | '"' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0C}' => out.push_str("\\f"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
 
 /// 单一位置值节点(`<name> "value"` / `<name> #true`)。
 fn leaf(name: &str, value: impl Into<KdlValue>) -> KdlNode {
