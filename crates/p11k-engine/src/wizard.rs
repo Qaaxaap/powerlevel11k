@@ -545,7 +545,7 @@ fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>
         "提示符间距",
         &["紧凑（无空行）", "稀疏（prompt 之间空一行）"],
         cfg,
-        |c, i| c.layout.prompt_add_newline = i == 1,
+        |c, i| c.layout.prompt_add_newline = usize::from(i == 1),
     )
 }
 

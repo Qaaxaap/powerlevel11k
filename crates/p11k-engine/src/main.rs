@@ -630,9 +630,11 @@ fn main() -> anyhow::Result<()> {
                         // 等 shell 渲染多行占位后由 `p`/marker 回填(见 Prompt 分支)。
                         instant_drawn = false;
                         write!(stdout, "\x1b[2J\x1b[H")?;
-                    } else if config.layout.prompt_add_newline {
-                        // 宽松布局：连续 prompt 之间留一个空行(header 前先空一行)。
-                        write!(stdout, "\r\n\r\n")?;
+                    } else if config.layout.prompt_add_newline > 0 {
+                        // 宽松布局：连续 prompt 之间留 N 个空行（header 前先空出来）。
+                        for _ in 0..config.layout.prompt_add_newline {
+                            write!(stdout, "\r\n\r\n")?;
+                        }
                     }
                     // 先发 prompt 开始标记(早于 shell 的多行占位);header 内容不在这
                     // 画,否则会与占位自带换行重复推进光标。

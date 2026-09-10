@@ -112,9 +112,9 @@ pub enum Element {
 pub struct Layout {
     pub left: Vec<Vec<Element>>,
     pub right: Vec<Vec<Element>>,
-    pub add_newline: bool,
-    /// 宽松布局:连续 prompt 之间留一个空行(p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`)。
-    pub prompt_add_newline: bool,
+    /// 宽松布局:连续 prompt 之间留几个空行(0=紧凑)。
+    /// 对齐 p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` + `_COUNT`。
+    pub prompt_add_newline: usize,
     /// 瞬态 prompt:命令提交后把多行 header 折叠成单行 `❯`(p10k `TRANSIENT_PROMPT`)。
     /// 仅 zsh 支持(依赖 zle reset-prompt),bash/fish 忽略。
     pub transient_prompt: bool,
@@ -427,11 +427,13 @@ impl Config {
             right.ensure_children().nodes_mut().push(line_node(row));
         }
         ch.nodes_mut().push(right);
-        if self.layout.add_newline {
-            ch.nodes_mut().push(leaf("add-newline", true));
-        }
-        if self.layout.prompt_add_newline {
+        if self.layout.prompt_add_newline == 1 {
             ch.nodes_mut().push(leaf("prompt-add-newline", true));
+        } else if self.layout.prompt_add_newline > 1 {
+            ch.nodes_mut().push(leaf(
+                "prompt-add-newline",
+                self.layout.prompt_add_newline as i128,
+            ));
         }
         if self.layout.transient_prompt {
             ch.nodes_mut().push(leaf("transient-prompt", true));
@@ -942,11 +944,12 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
             match child.name().value() {
                 "left" => layout.left = parse_lines(child),
                 "right" => layout.right = parse_lines(child),
-                "add-newline" => {
-                    layout.add_newline = first_value(child).map(bool_val).unwrap_or(false);
-                }
+                // `prompt-add-newline #true` = 1 行；给数字则按数字（0=关）。
                 "prompt-add-newline" => {
-                    layout.prompt_add_newline = first_value(child).map(bool_val).unwrap_or(false);
+                    layout.prompt_add_newline = match first_value(child) {
+                        Some(KdlValue::Integer(n)) => (*n).clamp(0, 9) as usize,
+                        v => usize::from(v.map(bool_val).unwrap_or(false)),
+                    };
                 }
                 "transient-prompt" => {
                     layout.transient_prompt = first_value(child).map(bool_val).unwrap_or(false);
@@ -1276,7 +1279,6 @@ icon {
         );
         // 右:一行
         assert_eq!(c.layout.right, vec![vec![Element::Seg("status".into())]]);
-        assert!(c.layout.add_newline);
     }
 
     #[test]
@@ -1396,10 +1398,7 @@ icon {
                 .flatten()
                 .any(|e| matches!(e, Element::Seg(s) if s == "prompt_char"))
         );
-        assert!(
-            !c.layout.add_newline && !c.layout.prompt_add_newline,
-            "lean 紧凑,无空行"
-        );
+        assert!(c.layout.prompt_add_newline == 0, "lean 紧凑,无空行");
     }
 
     #[test]

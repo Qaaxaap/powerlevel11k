@@ -1677,10 +1677,14 @@ fn dir_seg_text(
     let parts = crate::dir_shorten::shorten(cwd, home, &dir_shorten_opts(seg, shorten));
     let mut s = String::new();
     let is_home = home.map(|h| cwd.starts_with(h)).unwrap_or(false);
+    // home 前缀缩写（p10k `HOME_FOLDER_ABBREVIATION`，缺省 `~`）。
+    let abbrev = match seg.prop("home-abbreviation") {
+        Some(crate::config::Prop::Str(a)) => a.clone(),
+        _ => "~".to_string(),
+    };
     if is_home {
-        // home 前缀 `~`。
         let st = seg.effective_style(Some("ANCHOR"), &config.defaults);
-        s.push_str(&paint("~", &st));
+        s.push_str(&paint(&abbrev, &st));
         if !parts.is_empty() {
             s.push_str(&paint("/", default));
         }
