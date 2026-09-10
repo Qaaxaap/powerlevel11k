@@ -411,7 +411,7 @@ fn render_segment(
     // 才加——只有图标的段（如 os_icon）不留空，否则会与段尾空白叠成两个空格。
     // 文本为空的段：只有"图标即内容"的段（env 指示、os 徽标）才画图标，
     // 其余整段隐藏——对齐 p10k：非 git 仓库不显示 vcs 图标、jobs=0 不显示齿轮。
-    let icon = resolve_icon(config, name, vcs);
+    let icon = resolve_icon(config, name, vcs, &info.cwd);
     // 图标色：`visual-identifier-color`（p10k `SEG_VISUAL_IDENTIFIER_COLOR`）优先；
     // vcs 段没配则回退 `clean-foreground`——图标是仓库指示，p10k 默认同为绿色
     // （图标不跟段默认色走，否则默认主题下会变成终端默认色）。
@@ -725,7 +725,7 @@ fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
 }
 
 /// 段渲染的默认图标解析:os 动态、vcs remote 优先,其余按段 → 图标名 → 查表。
-fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>) -> Option<String> {
+fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>, cwd: &str) -> Option<String> {
     if name == "os" || name == "os_icon" {
         return Some(os_icon(&config.mode));
     }
@@ -739,8 +739,47 @@ fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>) -> Option<
         }
         return icon_str(config, "git");
     }
+    // p10k `DIR_SHOW_WRITABLE`：不可写（v3 下还包括不存在）时 dir 的图标换成锁。
+    if name == "dir" && dir_writable_state(config.segment("dir"), cwd).is_some() {
+        return icon_str(config, "lock");
+    }
     let key = segment_icon_key(name)?;
     icon_str(config, key)
+}
+
+/// p10k `DIR_SHOW_WRITABLE` 的取值：`#true`=1、`"v2"`=2、`"v3"`=3（与 p10k 一样，
+/// 只有这几种有效；p11k 额外接受整数写法）。返回 0 表示不检查。
+fn dir_show_writable(seg: &crate::config::Segment) -> i64 {
+    match seg.prop("show-writable") {
+        Some(crate::config::Prop::Bool(true)) => 1,
+        Some(crate::config::Prop::Int(n)) => (*n).clamp(0, 3),
+        Some(crate::config::Prop::Str(s)) => match s.as_str() {
+            "true" => 1,
+            "v2" => 2,
+            "v3" => 3,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
+/// 目录不可写（或 v3 下不存在）时返回对应的 state 名，否则 None。
+/// p10k 的判据是 `[[ -w $PWD ]]`，这里用 access(2) 对齐。
+fn dir_writable_state(seg: &crate::config::Segment, cwd: &str) -> Option<&'static str> {
+    let mode = dir_show_writable(seg);
+    if mode <= 0 {
+        return None;
+    }
+    let bytes = std::ffi::CString::new(cwd).ok()?;
+    let writable = unsafe { libc::access(bytes.as_ptr(), libc::W_OK) } == 0;
+    if writable {
+        return None;
+    }
+    if mode > 2 && !std::path::Path::new(cwd).exists() {
+        Some("NON_EXISTENT")
+    } else {
+        Some("NOT_WRITABLE")
+    }
 }
 
 /// 图标本身就是内容的段：文本为空时也画图标（env 指示段、os 徽标）。
@@ -1763,6 +1802,9 @@ fn dir_seg_text(
     };
     // 路径分隔符自己的颜色（p10k `DIR_PATH_SEPARATOR_FOREGROUND`），缺省段样式。
     let sep_style = prop_style(seg, default, "path-separator-foreground");
+    // p10k `DIR_SHOW_WRITABLE`：不可写/不存在时整段的 state 换成
+    // NOT_WRITABLE / NON_EXISTENT（用户可在 `state` 里给这两个上色）。
+    let writable_state = dir_writable_state(seg, &info.cwd);
     let is_root = info.cwd == "/";
     if is_root {
         // 根目录没有部件，p10k 此时显示的就是一个 `/`。
@@ -1789,7 +1831,11 @@ fn dir_seg_text(
             crate::dir_shorten::Class::Shortened => Some("SHORTENED"),
             crate::dir_shorten::Class::Normal => None,
         };
-        let mut st = seg.effective_style(state, &config.defaults);
+        // 不可写/不存在优先于 ANCHOR/SHORTENED（p10k 也是先定 state 再取色）。
+        let mut st = match writable_state {
+            Some(s) => seg.effective_style(Some(s), &config.defaults),
+            None => seg.effective_style(state, &config.defaults),
+        };
         if i == last {
             st = prop_style(seg, &st, "path-highlight-foreground");
             if highlight_bold {
@@ -3375,6 +3421,35 @@ mod tests {
         let cfg = Config::parse(src).unwrap_or_else(|e| panic!("parse: {e}\nsrc={src:?}"));
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 40).join("\r\n");
         assert_eq!(display_width(&h), 40, "行宽应仍对齐 cols=40,实际:{h:?}");
+    }
+
+    #[test]
+    fn dir_show_writable_swaps_in_lock_icon() {
+        // p10k DIR_SHOW_WRITABLE：不可写目录的 dir 图标换成 LOCK_ICON。
+        fn render(cwd: &str, props: &str) -> String {
+            let cfg = Config::parse(&format!(
+                "layout {{ left {{ line {{ dir #true }} }} }}\nsegments {{ dir {props} }}"
+            ))
+            .unwrap();
+            render_header_lines(&cfg, &info(cwd, None), None, 120).join("\n")
+        }
+        // /proc 存在但不可写（root 之外都写不进去）。
+        let locked = render("/proc", "show-writable=v3");
+        assert!(
+            locked.contains("\u{f023}"),
+            "不可写目录应显示锁图标,实际 {locked:?}"
+        );
+        assert!(
+            !locked.contains("\u{f07c}"),
+            "不该同时显示文件夹图标,实际 {locked:?}"
+        );
+        // 可写目录照常。
+        let normal = render("/tmp", "show-writable=v3");
+        assert!(normal.contains("\u{f07c}"), "实际 {normal:?}");
+        assert!(!normal.contains("\u{f023}"), "实际 {normal:?}");
+        // 不配就完全不检查。
+        let off = render("/proc", "");
+        assert!(off.contains("\u{f07c}"), "实际 {off:?}");
     }
 
     #[test]
