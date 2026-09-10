@@ -377,14 +377,15 @@ fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> io::Res
             _ => {
                 add_to_right(c, "time");
                 let fmt = if i == 1 { "12h" } else { "24h" };
+                // 底色要跟当前风格一致，否则新段会掉成透明/黑底（p10k 里 classic
+                // 靠全局 `POWERLEVEL9K_BACKGROUND`、rainbow 是 `TIME_BACKGROUND=7`、
+                // lean/pure 透明）。先算好再借 entry（避免同时可变/不可变借用）。
+                let bg = time_bg(kind, c);
                 let t = c.segments.entry("time".into()).or_insert_with(|| {
                     let mut s = Segment::default();
                     s.style.fg = Color::Xterm(66);
-                    // 背景跟着当前风格走：classic 有 `defaults { bg }` 兜底（对齐
-                    // p10k 的全局 `POWERLEVEL9K_BACKGROUND`），rainbow 每段各有底色
-                    // （p10k rainbow 是 `TIME_BACKGROUND=7`），lean/pure 透明。
-                    if kind == PresetKind::Rainbow {
-                        s.style.bg = Color::Xterm(7);
+                    if let Some(b) = bg {
+                        s.style.bg = Color::Xterm(b);
                     }
                     s
                 });
@@ -392,6 +393,22 @@ fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> io::Res
             }
         },
     )
+}
+
+/// 新增段该用的底色（xterm 256 色号；None = 透明）。
+///
+/// p10k 里段的底色来自全局 `POWERLEVEL9K_BACKGROUND`（classic）或段自己的
+/// `*_BACKGROUND`（rainbow 的 `TIME_BACKGROUND=7`），lean/pure 透明。p11k 的
+/// classic 是逐段写 bg，所以这里从已有段（`dir`）取同一档底色。
+fn time_bg(kind: PresetKind, cfg: &Config) -> Option<u8> {
+    match kind {
+        PresetKind::Rainbow => Some(7),
+        PresetKind::Classic => match cfg.segment("dir").style.bg {
+            Color::Xterm(n) => Some(n),
+            _ => None,
+        },
+        PresetKind::Lean | PresetKind::Pure => None,
+    }
 }
 
 /// 分隔符（segment/sub）：Angled/Vertical/Slanted/Round。
@@ -831,4 +848,23 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
         "引擎即主题：先去掉原本的 ZSH_THEME/主题设置，否则会叠加。",
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_time_segment_gets_the_style_background() {
+        // classic：新段跟着该档底色（从已有的 dir 段取，p10k 里是全局
+        // POWERLEVEL9K_BACKGROUND）；rainbow：每段各自底色（TIME_BACKGROUND=7）；
+        // lean/pure：透明。
+        let classic_cfg = presets::classic(2);
+        assert_eq!(time_bg(PresetKind::Classic, &classic_cfg), Some(238));
+        let rainbow_cfg = presets::rainbow(1);
+        assert_eq!(time_bg(PresetKind::Rainbow, &rainbow_cfg), Some(7));
+        let lean_cfg = presets::lean(false);
+        assert_eq!(time_bg(PresetKind::Lean, &lean_cfg), None);
+        assert_eq!(time_bg(PresetKind::Pure, &presets::pure(false)), None);
+    }
 }

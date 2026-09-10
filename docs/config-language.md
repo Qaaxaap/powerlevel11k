@@ -334,15 +334,16 @@ accumulate.
 
 ## defaults, separators, frame, vcs-remote-icons
 
-- `defaults fg=… bg=… bold=#true` — the fallback every segment ends at;
-  also the default foreground for frame glyphs and `text` elements. Its
-  **`bg` is p10k's global `POWERLEVEL9K_BACKGROUND`**: a segment that
-  does not set `bg` inherits it, and with no `bg` in `defaults` either
-  the segment is **transparent** (the terminal's own background; earlier
-  versions forced black here). That is why uniform-background styles
-  like classic only need `defaults bg=…`: segments added later (the
-  wizard's time segment, for instance) pick the background up
-  automatically.
+- `defaults fg=… bg=… bold=#true` — the fallback every **segment** ends at
+  (the analogue of the global `POWERLEVEL9K_BACKGROUND` that p10k's
+  segments inherit): a segment that does not set `bg` inherits it, and
+  with no `bg` in `defaults` either the segment is **transparent** (the
+  terminal's own background; earlier versions forced black here). Frame
+  glyphs and `text` elements only inherit `fg` / `bold` from here and
+  **never its `bg`** — p10k's `╭─` / `╰─` are foreground-only in classic
+  too. That is why uniform-background styles write `bg` on every segment,
+  and why the wizard gives segments it adds later (the time segment) the
+  same background for the current style.
 - `separators { segment … sub … end … left-tail … right-tail … right-start …
   right-segment … right-sub … gap … }` — the powerline arrow family;
   values are strings (`"\u{e0b0}"`). The node may also carry three color

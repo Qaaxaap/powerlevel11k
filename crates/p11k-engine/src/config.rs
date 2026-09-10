@@ -595,9 +595,16 @@ impl Config {
         self.segments.get(name).unwrap_or(&EMPTY_SEG)
     }
 
-    /// 某帧块的实际样式:块级属性 → frame 级 → defaults 回退。
+    /// 某帧块的实际样式:块级属性 → frame 级 → `defaults`。
+    /// **只继承 `defaults` 的前景/加粗，不吃它的 `bg`**——`defaults.bg` 是段背景的
+    /// 回退（p10k 段的全局 `POWERLEVEL9K_BACKGROUND`），帧字符（`╭─`/`╰─`）在
+    /// p10k 里始终是透明的（只有前景色）。
     pub fn frame_piece_style(&self, piece: &FramePiece) -> Style {
         let base = merge_style(&self.frame.style, &self.defaults);
+        let base = Style {
+            bg: self.frame.style.bg.clone(),
+            ..base
+        };
         match &piece.style {
             Some(s) => merge_style(s, &base),
             None => base,
