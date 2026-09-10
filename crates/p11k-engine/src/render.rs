@@ -1884,6 +1884,34 @@ fn vcs_text(
         }
     };
     let mut parts: Vec<(String, &Style)> = Vec::new();
+    // 顺序与符号都照抄 p10k 生成配置里的 vcs 格式化函数:
+    //   ⇣behind⇡ahead → *stashes → <action> → ~conflicted → +staged
+    //   → !unstaged → ?untracked
+    // ahead/behind 之间不加空格(p10k 是 `⇣42⇡42`,只有都缺省时才退化成一个)。
+    if v.ahead > 0 || v.behind > 0 {
+        let mut ab = String::new();
+        if v.behind > 0 {
+            ab.push_str(&format!("{}{}", sym("behind-symbol", "⇣"), v.behind));
+        }
+        if v.ahead > 0 {
+            ab.push_str(&format!("{}{}", sym("ahead-symbol", "⇡"), v.ahead));
+        }
+        parts.push((ab, &clean));
+    }
+    if v.stashes > 0 {
+        parts.push((format!("{}{}", sym("stash-symbol", "*"), v.stashes), &clean));
+    }
+    // p10k:`[[ -n $VCS_STATUS_ACTION ]] && res+=" ${conflicted}${VCS_STATUS_ACTION}"`
+    // —— merge/rebase 之类的进行中操作按 conflicted 色画在冲突计数之前。
+    if !v.action.is_empty() {
+        parts.push((v.action.clone(), &conflicted));
+    }
+    if v.conflicted > 0 {
+        parts.push((
+            format!("{}{}", sym("conflicted-symbol", "~"), v.conflicted),
+            &conflicted,
+        ));
+    }
     if v.staged > 0 {
         parts.push((
             format!("{}{}", sym("staged-symbol", "+"), v.staged),
@@ -1892,14 +1920,8 @@ fn vcs_text(
     }
     if v.unstaged > 0 {
         parts.push((
-            format!("{}{}", sym("unstaged-symbol", "~"), v.unstaged),
+            format!("{}{}", sym("unstaged-symbol", "!"), v.unstaged),
             &modified,
-        ));
-    }
-    if v.conflicted > 0 {
-        parts.push((
-            format!("{}{}", sym("conflicted-symbol", "!"), v.conflicted),
-            &conflicted,
         ));
     }
     if v.untracked > 0 {
@@ -1907,15 +1929,6 @@ fn vcs_text(
             format!("{}{}", sym("untracked-symbol", "?"), v.untracked),
             &untracked,
         ));
-    }
-    if v.ahead > 0 {
-        parts.push((format!("{}{}", sym("ahead-symbol", "↑"), v.ahead), &clean));
-    }
-    if v.behind > 0 {
-        parts.push((format!("{}{}", sym("behind-symbol", "↓"), v.behind), &clean));
-    }
-    if v.stashes > 0 {
-        parts.push((format!("{}{}", sym("stash-symbol", "≡"), v.stashes), &clean));
     }
     if !parts.is_empty() {
         // 空格用段样式上色：裸空格会被终端按默认背景画，在带底色的段里
@@ -2282,6 +2295,7 @@ mod tests {
                 ahead: 0,
                 behind: 0,
                 stashes: 0,
+                action: String::new(),
                 remote_url: String::new(),
             };
             render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n")
@@ -2310,6 +2324,7 @@ mod tests {
             ahead: 0,
             behind: 0,
             stashes: 0,
+            action: String::new(),
             remote_url: String::new(),
         };
         let mut cfg = Config::default();
@@ -2388,6 +2403,51 @@ mod tests {
     }
 
     #[test]
+    fn vcs_count_order_matches_p10k_formatter() {
+        /// 去掉 SGR 序列,只留可见字符,便于断言计数顺序。
+        fn strip_sgr(s: &str) -> String {
+            let mut out = String::new();
+            let mut it = s.chars().peekable();
+            while let Some(c) = it.next() {
+                if c == '\u{1b}' {
+                    for d in it.by_ref() {
+                        if d == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
+        // p10k 的 vcs 格式化函数顺序:⇣behind⇡ahead → *stashes → action →
+        // ~conflicted → +staged → !unstaged → ?untracked;ahead/behind 之间不加空格。
+        let cfg = Config::default_lean().unwrap();
+        let v = GitStatus {
+            branch: "main".into(),
+            commit: String::new(),
+            staged: 2,
+            unstaged: 3,
+            conflicted: 1,
+            untracked: 4,
+            ahead: 2,
+            behind: 1,
+            stashes: 3,
+            action: "merge".into(),
+            remote_url: String::new(),
+        };
+        let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 120).join("\n");
+        let plain = strip_sgr(&h);
+        let i = plain.find("main").expect("应含分支名");
+        assert_eq!(
+            plain[i + "main".len()..].trim(),
+            "⇣1⇡2 *3 merge ~1 +2 !3 ?4",
+            "计数顺序/符号应与 p10k 一致,实际 {plain:?}"
+        );
+    }
+
+    #[test]
     fn vcs_conflicted_uses_own_color_with_modified_fallback() {
         let v = GitStatus {
             branch: "main".into(),
@@ -2399,6 +2459,7 @@ mod tests {
             ahead: 0,
             behind: 0,
             stashes: 0,
+            action: String::new(),
             remote_url: String::new(),
         };
         fn render(v: &GitStatus, conflicted_fg: Option<i64>) -> String {
@@ -2414,7 +2475,7 @@ mod tests {
             cfg.segments.insert("vcs".into(), s);
             render_header_lines(&cfg, &info("/tmp", None), Some(v), 80).join("\n")
         }
-        // p10k classic:`!N` 用 conflicted(%196F),`~N` 用 modified(%178F)。
+        // p10k classic:`~N`(conflicted)用 %196F,`!N`(unstaged)用 %178F。
         // 取 needle 之前最后一个 fg 色号来断言,免得被中间的 bg/bold 转义干扰。
         fn fg_before(hay: &str, needle: &str) -> Option<String> {
             let i = hay.find(needle)?;
@@ -2424,16 +2485,16 @@ mod tests {
             Some(rest[..rest.find('m')?].to_string())
         }
         let h = render(&v, Some(196));
-        assert_eq!(fg_before(&h, "!2").as_deref(), Some("196"), "冲突应用 196");
+        assert_eq!(fg_before(&h, "~2").as_deref(), Some("196"), "冲突应用 196");
         assert_eq!(
-            fg_before(&h, "~1").as_deref(),
+            fg_before(&h, "!1").as_deref(),
             Some("178"),
             "未暂存仍用 178"
         );
         // 没配 conflicted-foreground → 回退 modified,保持旧行为。
         let h2 = render(&v, None);
         assert_eq!(
-            fg_before(&h2, "!2").as_deref(),
+            fg_before(&h2, "~2").as_deref(),
             Some("178"),
             "缺省应回退 178"
         );
@@ -2580,22 +2641,23 @@ mod tests {
             ahead: 0,
             behind: 0,
             stashes: 0,
+            action: String::new(),
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n");
-        // 分支名/图标走 clean-foreground(76),`~2` 走 modified-foreground(178),
+        // 分支名/图标走 clean-foreground(76),`!2`(unstaged)走 modified-foreground(178),
         // 两者都落在段底(238)上。
         assert!(
             h.contains("\u{1b}[38;5;76m\u{1b}[48;5;238m"),
             "分支/图标应按 clean 上色且带段底,实际 {h:?}"
         );
         assert!(
-            h.contains("\u{1b}[38;5;178m\u{1b}[48;5;238m~2"),
+            h.contains("\u{1b}[38;5;178m\u{1b}[48;5;238m!2"),
             "unstaged 应按 modified 上色,实际 {h:?}"
         );
         // 分支与计数之间的空格必须带段背景(48;5;238),裸空格会露出黑缝。
         let after_branch = h.split("main").nth(1).expect("应含分支名");
-        let gap = after_branch.split('~').next().unwrap_or("");
+        let gap = after_branch.split('!').next().unwrap_or("");
         assert!(
             gap.contains("48;5;238"),
             "vcs 内容之间的空格应带段背景,实际 {gap:?}"
@@ -2615,13 +2677,17 @@ mod tests {
             ahead: 1,
             behind: 0,
             stashes: 0,
+            action: String::new(),
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
         assert!(h.contains("master"));
         assert!(h.contains("+1"));
-        assert!(h.contains("~2"));
+        // p10k 的计数符号:staged +、unstaged !、conflicted ~、untracked ?、
+        // ahead ⇡、behind ⇣、stashes *。
+        assert!(h.contains("!2"));
         assert!(h.contains("?3"));
+        assert!(h.contains("⇡1"), "ahead 用 ⇡,实际 {h:?}");
     }
 
     #[test]
@@ -2657,6 +2723,7 @@ mod tests {
             ahead: 0,
             behind: 0,
             stashes: 0,
+            action: String::new(),
             remote_url: String::new(),
         };
         // 设置异底段间用 powerline 箭头,末尾端符。

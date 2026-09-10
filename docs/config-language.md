@@ -162,15 +162,24 @@ through `icon {}`.
     file name, default built-in list), `home-abbreviation` (home prefix,
     default `~`), `path-separator-foreground` (color of `/`).
   - `vcs`: `clean-foreground` / `modified-foreground` /
-    `untracked-foreground` (branch plus ahead/behind/stash, change
-    counts, untracked files); `show-changeset` and
+    `untracked-foreground` / `conflicted-foreground` (branch plus
+    ahead/behind/stash, staged and unstaged counts, untracked files,
+    conflicts; `conflicted-foreground` falls back to
+    `modified-foreground`). Note that p10k's generated configs draw the
+    untracked count in `%39F` (blue) — that is not the same value as
+    `POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND` (76), which only feeds the
+    vcs_info fallback path. Also `show-changeset` and
     `changeset-hash-length` (default 8; detached HEAD shows the commit
     automatically); `shorten-length` / `shorten-min-length` /
     `shorten-strategy` / `shorten-delimiter` (branch shortening, needs
     both lengths); `staged-symbol` / `unstaged-symbol` /
     `conflicted-symbol` / `untracked-symbol` / `ahead-symbol` /
     `behind-symbol` / `stash-symbol` (count glyphs, default
-    `+ ~ ! ? ↑ ↓ ≡`).
+    `+ ! ~ ? ⇡ ⇣ *`, matching p10k's formatter). The order matches p10k
+    too: `⇣behind⇡ahead` → `*stash` → in-progress action word
+    (`merge`/`rebase`, colored as conflicted) → `~conflicts` →
+    `+staged` → `!unstaged` → `?untracked`, with no space between ahead
+    and behind.
   - `status`: `ok-foreground` / `error-foreground`, `verbose` (`#false`
     hides success).
   - `command_execution_time`: `threshold-seconds` (default 3), `precision`
@@ -209,8 +218,9 @@ What the built-in segments render:
 
 - `dir` — current directory, collapsed from the front (`~` under $HOME),
   components colored per state.
-- `vcs` — in a git repo: branch plus counts (`+staged ~unstaged
-  !conflicted ?untracked ↑ahead ↓behind ≡stashes`).
+- `vcs` — in a git repo: branch plus counts in p10k's order and with
+  p10k's glyphs (`⇣behind⇡ahead *stashes merge ~conflicted +staged
+  !unstaged ?untracked`).
 - `status` — last exit code: the glyph of icon names `ok` / `error` (per
   `mode`, e.g. ascii shows `ok` / `err N`), with `N` appended on error.
 - `time` — current time HH:MM:SS.

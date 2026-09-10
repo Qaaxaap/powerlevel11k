@@ -210,6 +210,7 @@ fn sample_vcs() -> crate::theme::GitStatus {
         ahead: 1,
         behind: 0,
         stashes: 0,
+        action: String::new(),
         remote_url: "https://github.com/example/repo".into(),
     }
 }

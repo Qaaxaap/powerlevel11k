@@ -1035,6 +1035,7 @@ fn git_status(cache: &mut RepoCache, cwd: &str) -> Option<GitStatus> {
         ahead: parse_field(&f[field::COMMITS_AHEAD]),
         behind: parse_field(&f[field::COMMITS_BEHIND]),
         stashes: parse_field(&f[field::STASHES]),
+        action: String::from_utf8_lossy(&f[field::ACTION]).into_owned(),
         remote_url: String::from_utf8_lossy(&f[field::REMOTE_URL]).into_owned(),
     })
 }

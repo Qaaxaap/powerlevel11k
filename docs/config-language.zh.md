@@ -137,14 +137,21 @@
     `shorten-folder-marker`（marker 文件名，缺省用内置列表）、
     `home-abbreviation`（home 前缀，默认 `~`）、`path-separator-foreground`
     （`/` 的颜色）。
-  - `vcs`：`clean-foreground` / `modified-foreground` / `untracked-foreground`
-    （分支与 ahead/behind/stash、改动计数、未跟踪各自的颜色）；`show-changeset`
+  - `vcs`：`clean-foreground` / `modified-foreground` / `untracked-foreground` /
+    `conflicted-foreground`（分支与 ahead/behind/stash、staged 与 unstaged 计数、
+    未跟踪、冲突各自的颜色；`conflicted-foreground` 缺省回退
+    `modified-foreground`）。注意 p10k 生成配置里未跟踪计数是 `%39F`（蓝），
+    与 `POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND`（76，只用于 vcs_info 回退路径）
+    不是同一个值；`show-changeset`
     与 `changeset-hash-length`（默认 8，detached HEAD 时自动显示 commit）；
     `shorten-length` / `shorten-min-length` / `shorten-strategy` /
     `shorten-delimiter`（分支名折叠，两个 length 都配才生效）；
     `staged-symbol` / `unstaged-symbol` / `conflicted-symbol` /
     `untracked-symbol` / `ahead-symbol` / `behind-symbol` / `stash-symbol`
-    （计数符号，默认 `+ ~ ! ? ↑ ↓ ≡`）。
+    （计数符号，默认 `+ ! ~ ? ⇡ ⇣ *`，与 p10k 格式化函数一致）。
+    计数顺序也照抄 p10k：`⇣behind⇡ahead` → `*stash` → 进行中的操作词
+    （`merge`/`rebase`，用 conflicted 色）→ `~冲突` → `+暂存` → `!未暂存`
+    → `?未跟踪`；ahead 与 behind 之间不加空格。
   - `status`：`ok-foreground` / `error-foreground`、`verbose`（`#false` 时
     成功不显示）。
   - `command_execution_time`：`threshold-seconds`（默认 3）、`precision`
@@ -174,8 +181,8 @@
 内置段渲染目标：
 
 - `dir` — 当前目录，从前面折叠（$HOME 下显示 `~`），部件按 state 分色。
-- `vcs` — git 仓库里显示分支和计数（`+暂存 ~未暂存 !冲突 ?未跟踪
-  ↑领先 ↓落后 ≡stash`）。
+- `vcs` — git 仓库里显示分支和计数，顺序与符号同 p10k：`⇣落后⇡领先 *stash
+  merge ~冲突 +暂存 !未暂存 ?未跟踪`。
 - `status` — 上次退出码：取图标名 `ok` / `error` 的字符（随 `mode`，如
   ascii 档显示 `ok` / `err N`），出错时附加 `N`。
 - `time` — 当前时间 HH:MM:SS。
