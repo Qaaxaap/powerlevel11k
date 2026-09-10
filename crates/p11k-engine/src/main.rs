@@ -139,6 +139,9 @@ fn detect_shell() -> Shell {
 /// 占位 prompt 由 zle 或其等价物渲染，主题均由引擎负责。
 const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap —— 协议层 + 用户配置。
 # ===== 引擎协议 =====
+# 引擎未启用 transient 时该变量为空；清掉，避免外层环境残留的旧值让
+# zle-line-finish 误折叠。
+[[ -n "${P11K_TRANSIENT_PROMPT:-}" ]] || unset P11K_TRANSIENT_PROMPT
 _p11k_status=0
 _p11k_pwd=$PWD
 
@@ -449,6 +452,10 @@ fn main() -> anyhow::Result<()> {
             "P11K_TRANSIENT_PROMPT",
             crate::render::transient_prompt_zsh(&config),
         );
+    } else {
+        // 关掉时必须显式清空：shell 端只看这个变量是否非空，若外层环境残留
+        // 了旧值（例如从上一个 p11k 会话继承），配置说关也照样折叠。
+        cmd.env("P11K_TRANSIENT_PROMPT", "");
     }
 
     // double-fork 孤儿化：内部 shell 脱离引擎进程树（父变 init）。kitty 关闭
