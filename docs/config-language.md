@@ -115,8 +115,9 @@ through `icon {}`.
 - A line may also contain `text "…"` static text, styled with the `text`
   segment. `$VAR` / `${VAR}` inside expand to environment variables.
 - For an empty row, declare `line {}`.
-- `layout { prompt-add-newline #true … }` inserts a blank line between
-  consecutive prompts (p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`, "loose" layout).
+- `layout { prompt-add-newline <N> … }` inserts N blank lines between
+  consecutive prompts (p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` plus
+  `_COUNT`, "loose" layout). `#true` means 1; `0` turns it off.
 - `layout { transient-prompt #true … }` folds the multi-line header down to
   a single-line `❯` the moment a command is submitted (p10k
   `TRANSIENT_PROMPT`). zsh-only: it depends on `zle reset-prompt`, so
@@ -153,12 +154,56 @@ through `icon {}`.
 - `disabled #true` keeps the segment parsed and styled but skips
   rendering; it affects every place the segment is used.
 - Every other attribute goes into the segment's behavior table, read by
-  that segment's renderer. Implemented so far: `dir` reads
-  `shorten-dir-length` (int, 1–20, default 1); `command_execution_time`
-  reads `threshold-seconds` (int, default 3).
+  that segment's renderer. Implemented so far:
+  - `dir`: `shorten-strategy` (see [Dir shortening](#dir-shortening)),
+    `shorten-dir-length` (levels to keep / chars per level, 1–20, default
+    1), `shorten-delimiter` (ellipsis, default `…`;
+    `truncate_to_unique` never emits it), `shorten-folder-marker` (marker
+    file name, default built-in list), `home-abbreviation` (home prefix,
+    default `~`), `path-separator-foreground` (color of `/`).
+  - `vcs`: `clean-foreground` / `modified-foreground` /
+    `untracked-foreground` (branch plus ahead/behind/stash, change
+    counts, untracked files); `show-changeset` and
+    `changeset-hash-length` (default 8; detached HEAD shows the commit
+    automatically); `shorten-length` / `shorten-min-length` /
+    `shorten-strategy` / `shorten-delimiter` (branch shortening, needs
+    both lengths); `staged-symbol` / `unstaged-symbol` /
+    `conflicted-symbol` / `untracked-symbol` / `ahead-symbol` /
+    `behind-symbol` / `stash-symbol` (count glyphs, default
+    `+ ~ ! ? ↑ ↓ ≡`).
+  - `status`: `ok-foreground` / `error-foreground`, `verbose` (`#false`
+    hides success).
+  - `command_execution_time`: `threshold-seconds` (default 3), `precision`
+    (decimals, default 2), `format="H:M:S"`.
+  - `time`: `time-format="12h"`.
+  - `vi_mode`: `insert` / `normal` / `visual` / `overwrite` (default
+    `INSERT` / `NORMAL` / `VISUAL` / `OVERWRITE`).
+  - `date`: `date-format` (strftime, default `%d.%m.%y`).
+  - any segment: `visual-identifier-color` overrides the segment's **icon**
+    foreground (segment color by default).
 - Style fallback has three levels: `state <NAME>` on the segment →
   segment defaults → top-level `defaults`. `dir` uses states `ANCHOR`
-  (anchor path, e.g. `~`) and `SHORTENED` (collapsed components).
+  (anchor path, e.g. `~`) and `SHORTENED` (collapsed components);
+  besides `ERROR`, `prompt_char` also honors `VIINS` / `VICMD` / `VIVIS` /
+  `VIOWR` (with the matching `char`, the prompt glyph follows the zsh
+  editing mode).
+
+## Dir shortening
+
+`dir`'s `shorten-strategy` mirrors p10k's `POWERLEVEL9K_SHORTEN_STRATEGY`:
+
+- `truncate_to_unique` (default): each component shrinks to the shortest
+  prefix unique among its siblings; no ellipsis.
+- `truncate_middle`: each component keeps the first `shorten-dir-length`
+  chars, an ellipsis, then the same number of chars from the end.
+- `truncate_from_right`: each component keeps the first
+  `shorten-dir-length` chars plus an ellipsis.
+- `truncate_to_last`: keep only the last `shorten-dir-length` levels.
+- `truncate_to_first_and_last`: keep `shorten-dir-length` levels at each
+  end, elide the middle.
+- `truncate_absolute` / `truncate_absolute_chars`: cut the whole path to a
+  character count.
+- `truncate_with_folder_marker`: fold at the marker file.
 
 What the built-in segments render:
 
@@ -242,9 +287,16 @@ accumulate.
 
 - `defaults fg=… bg=… bold=#true` — the fallback every segment ends at;
   also the default foreground for frame glyphs and `text` elements.
-- `separators { segment … sub … end … right-start … right-segment …
-  right-sub … gap … }` — the powerline arrow family; values are strings
-  (`"\u{e0b0}"`).
+- `separators { segment … sub … end … left-tail … right-tail … right-start …
+  right-segment … right-sub … gap … }` — the powerline arrow family;
+  values are strings (`"\u{e0b0}"`). The node may also carry three color
+  properties: `gap-foreground` (foreground of the filler between the left
+  and right columns, p10k `MULTILINE_FIRST_PROMPT_GAP_FOREGROUND`), and
+  `sub-foreground` / `right-sub-foreground` (foreground of the sub
+  separator, which sits on the **same** background as its segment, p10k
+  `sep_color`; defaults to the following segment's foreground). The arrows
+  themselves do not use these: they blend along the neighboring segment
+  backgrounds (powerline style).
 - `frame fg=… bg=… bold=#true { first-prefix … first-suffix …
   newline-prefix … newline-suffix … last-prefix … last-suffix … }` —
   row-edge decorations: the first header row uses `first-*`, later header

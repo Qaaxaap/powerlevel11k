@@ -102,8 +102,9 @@
 - 行内可以放 `text "…"` 静态文本，按 `text` 段样式渲染；其中的
   `$VAR` / `${VAR}` 会展开成环境变量。
 - 需要空行就声明 `line {}`。
-- `layout { prompt-add-newline #true … }` 在连续 prompt 之间插入一个空行
-  （p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE`，「宽松」布局）。
+- `layout { prompt-add-newline <N> … }` 在连续 prompt 之间插入 N 个空行
+  （p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` + `_COUNT`）。写 `#true` 等于 1，
+  写 `0` 关闭。
 - `layout { transient-prompt #true … }` 在命令提交瞬间把多行 header 折叠成
   单行 `❯`（p10k `TRANSIENT_PROMPT`）。仅 zsh 支持：依赖 `zle reset-prompt`，
   bash/fish 会忽略。
@@ -129,11 +130,46 @@
   云 / 系统段映射到各自的图标名（go、python、aws…），其余无图标。
 - `content="…"` 预留。
 - `disabled #true` 让段保持解析和样式但跳过渲染；影响所有用到该段的位置。
-- 其余属性都进段的行为属性表，由该段的渲染代码读取。目前实现的：`dir` 读
-  `shorten-dir-length`（整数，1–20，默认 1）；`command_execution_time` 读
-  `threshold-seconds`（整数，默认 3）。
+- 其余属性都进段的行为属性表，由该段的渲染代码读取。目前实现的：
+  - `dir`：`shorten-strategy`（折叠策略，见[目录折叠](#目录折叠)）、
+    `shorten-dir-length`（保留级数 / 每级字符数，1–20，默认 1）、
+    `shorten-delimiter`（省略符，默认 `…`；`truncate_to_unique` 不输出它）、
+    `shorten-folder-marker`（marker 文件名，缺省用内置列表）、
+    `home-abbreviation`（home 前缀，默认 `~`）、`path-separator-foreground`
+    （`/` 的颜色）。
+  - `vcs`：`clean-foreground` / `modified-foreground` / `untracked-foreground`
+    （分支与 ahead/behind/stash、改动计数、未跟踪各自的颜色）；`show-changeset`
+    与 `changeset-hash-length`（默认 8，detached HEAD 时自动显示 commit）；
+    `shorten-length` / `shorten-min-length` / `shorten-strategy` /
+    `shorten-delimiter`（分支名折叠，两个 length 都配才生效）；
+    `staged-symbol` / `unstaged-symbol` / `conflicted-symbol` /
+    `untracked-symbol` / `ahead-symbol` / `behind-symbol` / `stash-symbol`
+    （计数符号，默认 `+ ~ ! ? ↑ ↓ ≡`）。
+  - `status`：`ok-foreground` / `error-foreground`、`verbose`（`#false` 时
+    成功不显示）。
+  - `command_execution_time`：`threshold-seconds`（默认 3）、`precision`
+    （小数位，默认 2）、`format="H:M:S"`。
+  - `time`：`time-format="12h"`。
+  - `vi_mode`：`insert` / `normal` / `visual` / `overwrite`（默认
+    `INSERT` / `NORMAL` / `VISUAL` / `OVERWRITE`）。
+  - `date`：`date-format`（strftime，默认 `%d.%m.%y`）。
+  - 任意段：`visual-identifier-color` 覆盖该段**图标**的前景色（缺省跟段）。
 - 样式回退三级：段上 `state <NAME>` → 段默认 → 顶层 `defaults`。`dir` 用
-  `ANCHOR`（锚路径，如 `~`）和 `SHORTENED`（被折叠的组件）两个 state。
+  `ANCHOR`（锚路径，如 `~`）和 `SHORTENED`（被折叠的组件）两个 state；
+  `prompt_char` 除 `ERROR` 外还认 `VIINS` / `VICMD` / `VIVIS` / `VIOWR`
+  （配了对应 `char` 就随 zsh 编辑模式换提示符）。
+
+## 目录折叠
+
+`dir` 的 `shorten-strategy` 对齐 p10k 的 `POWERLEVEL9K_SHORTEN_STRATEGY`：
+
+- `truncate_to_unique`（默认）：每级缩到兄弟目录里的最短唯一前缀，不留省略符。
+- `truncate_middle`：每级留前 `shorten-dir-length` + 省略符 + 后同样多字符。
+- `truncate_from_right`：每级留前 `shorten-dir-length` + 省略符。
+- `truncate_to_last`：只留末 `shorten-dir-length` 级。
+- `truncate_to_first_and_last`：首尾各留 `shorten-dir-length` 级，中间省略。
+- `truncate_absolute` / `truncate_absolute_chars`：整条路径按字符数截断。
+- `truncate_with_folder_marker`：在 marker 文件处折叠。
 
 内置段渲染目标：
 
@@ -210,8 +246,13 @@
 
 - `defaults fg=… bg=… bold=#true` — 所有段回退的终点；也是帧字符和
   `text` 元素的默认前景。
-- `separators { segment … sub … end … right-start … right-segment …
-  right-sub … gap … }` — powerline 箭头家族，值为字符串（如 `"\u{e0b0}"`）。
+- `separators { segment … sub … end … left-tail … right-tail … right-start …
+  right-segment … right-sub … gap … }` — powerline 箭头家族，值为字符串
+  （如 `"\u{e0b0}"`）。节点上还可带三个颜色属性：
+  `gap-foreground`（左右栏之间填充字符的前景，p10k 的
+  `MULTILINE_FIRST_PROMPT_GAP_FOREGROUND`）、`sub-foreground` /
+  `right-sub-foreground`（**同底**细线的前景，p10k 的 `sep_color`；缺省跟
+  后段前景色）。箭头本身不用这些属性：它按前后段底色渐变（powerline 风格）。
 - `frame fg=… bg=… bold=#true { first-prefix … first-suffix …
   newline-prefix … newline-suffix … last-prefix … last-suffix … }` —
   每行行首/行尾的装饰：第一个 header 行用 `first-*`，后续 header 行用
