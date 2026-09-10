@@ -202,6 +202,7 @@ fn header_on(cfg: &Config) -> bool {
 fn sample_vcs() -> crate::theme::GitStatus {
     crate::theme::GitStatus {
         branch: "main".into(),
+        commit: "0123456789abcdef0123456789abcdef01234567".into(),
         staged: 0,
         unstaged: 2,
         conflicted: 0,

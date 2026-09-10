@@ -223,10 +223,11 @@ fn render_segment(
         "dir" => dir_seg_text(config, info, seg, &style),
         "vcs" => {
             let branch = icon_str(config, "branch").unwrap_or_default();
+            let commit = icon_str(config, "commit").unwrap_or_default();
             if seg.content.is_some() {
                 paint(&value_of(seg.content.as_deref(), String::new()), &style)
             } else {
-                vcs_text(vcs, &branch, seg, &style)
+                vcs_text(vcs, &branch, &commit, seg, &style)
             }
         }
         "status" => {
@@ -491,7 +492,8 @@ const fn icon(n: &'static str, c: &'static str, a: &'static str) -> IconEntry {
 fn icon_default(key: &str) -> Option<IconEntry> {
     match key {
         "folder" => Some(icon("\u{f07c}", "", "")), // 
-        "git" => Some(icon("\u{f1d3}", "", "")),    // 
+        "git" => Some(icon("\u{f1d3}", "", "")),
+        "commit" => Some(icon("\u{e821}", "", "")), // p10k VCS_COMMIT_ICON    // 
         "time" => Some(icon("\u{f017}", "", "")),   // 时钟
         "date" => Some(icon("\u{f073}", "", "")),   // 日历
         "background-jobs" => Some(icon("\u{f013}", "\u{2699}", "%%")), // 齿轮 ⚙ %%
@@ -1779,14 +1781,45 @@ fn prop_style(seg: &Segment, style: &Style, prop: &str) -> Style {
 /// vcs 段文本。按 p10k 的配色分段上色：分支名/分支图标/ahead/behind/stash 用
 /// `clean-foreground`，staged/unstaged/conflicted 计数用 `modified-foreground`，
 /// 未跟踪用 `untracked-foreground`（缺省回退段样式）。返回的字符串已上色。
-fn vcs_text(vcs: Option<&GitStatus>, branch_icon: &str, seg: &Segment, style: &Style) -> String {
+fn vcs_text(
+    vcs: Option<&GitStatus>,
+    branch_icon: &str,
+    commit_icon: &str,
+    seg: &Segment,
+    style: &Style,
+) -> String {
     let Some(v) = vcs else { return String::new() };
     let clean = prop_style(seg, style, "clean-foreground");
     let modified = prop_style(seg, style, "modified-foreground");
     let untracked = prop_style(seg, style, "untracked-foreground");
     let mut s = String::new();
+    // p10k `SHOW_CHANGESET`：显式开启、或没有本地分支（detached HEAD）时，
+    // 显示 commit 的前 `changeset-hash-length` 位（默认 8）。
+    let show_changeset = matches!(
+        seg.prop("show-changeset"),
+        Some(crate::config::Prop::Bool(true))
+    ) || v.branch.is_empty();
+    let mut has_commit = false;
+    if show_changeset && !v.commit.is_empty() {
+        let n = match seg.prop("changeset-hash-length") {
+            Some(crate::config::Prop::Int(n)) if *n > 0 => *n as usize,
+            _ => 8,
+        };
+        let hash: String = v.commit.chars().take(n).collect();
+        let mut t = String::new();
+        if !commit_icon.is_empty() {
+            t.push_str(commit_icon);
+            t.push(' ');
+        }
+        t.push_str(&hash);
+        s.push_str(&paint(&t, &clean));
+        has_commit = true;
+    }
     if !v.branch.is_empty() {
         let mut b = String::new();
+        if has_commit {
+            b.push(' ');
+        }
         if !branch_icon.is_empty() {
             b.push_str(branch_icon);
             b.push(' ');
@@ -2181,10 +2214,47 @@ mod tests {
     }
 
     #[test]
+    fn vcs_changeset_shows_hash_when_detached_or_enabled() {
+        let mk = |branch: &str, show: bool| {
+            let mut cfg = Config::default();
+            cfg.layout.left = vec![vec![Element::Seg("vcs".into())]];
+            let mut s = crate::config::Segment::default();
+            if show {
+                s.props
+                    .insert("show-changeset".into(), crate::config::Prop::Bool(true));
+            }
+            cfg.segments.insert("vcs".into(), s);
+            let v = GitStatus {
+                branch: branch.into(),
+                commit: "aa2fdd09deadbeefaa2fdd09deadbeefaa2fdd09".into(),
+                staged: 0,
+                unstaged: 0,
+                conflicted: 0,
+                untracked: 0,
+                ahead: 0,
+                behind: 0,
+                stashes: 0,
+                remote_url: String::new(),
+            };
+            render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n")
+        };
+        // 无本地分支（detached HEAD）→ 自动显示前 8 位。
+        assert!(mk("", false).contains("aa2fdd09"), "detached 应显示 hash");
+        // 有分支且未开启 → 不显示。
+        assert!(!mk("main", false).contains("aa2fdd09"), "有分支默认不显示");
+        // 显式开启 → 显示。
+        assert!(
+            mk("main", true).contains("aa2fdd09"),
+            "show-changeset 应显示"
+        );
+    }
+
+    #[test]
     fn vcs_branch_shortening_and_symbols() {
         // p10k VCS_SHORTEN_*：length/min-length 都配了才折叠；符号可换。
         let v = GitStatus {
             branch: "feature/long-branch".into(),
+            commit: String::new(),
             staged: 2,
             unstaged: 0,
             conflicted: 0,
@@ -2359,6 +2429,7 @@ mod tests {
         let cfg = crate::presets::classic(2);
         let v = GitStatus {
             branch: "main".into(),
+            commit: String::new(),
             staged: 0,
             unstaged: 2,
             conflicted: 0,
@@ -2393,6 +2464,7 @@ mod tests {
         let cfg = Config::default_lean().unwrap();
         let v = GitStatus {
             branch: "master".into(),
+            commit: String::new(),
             staged: 1,
             unstaged: 2,
             conflicted: 0,
@@ -2434,6 +2506,7 @@ mod tests {
         );
         let v = GitStatus {
             branch: "master".into(),
+            commit: String::new(),
             staged: 0,
             unstaged: 0,
             conflicted: 0,

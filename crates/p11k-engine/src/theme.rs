@@ -29,6 +29,8 @@ pub struct HeaderInfo {
 pub struct GitStatus {
     /// 本地分支名（detached HEAD 时为空）。
     pub branch: String,
+    /// HEAD 的 commit oid（p10k `SHOW_CHANGESET` 取它的前 N 位）。
+    pub commit: String,
     pub staged: usize,
     pub unstaged: usize,
     pub conflicted: usize,

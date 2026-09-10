@@ -1025,6 +1025,7 @@ fn git_status(cache: &mut RepoCache, cwd: &str) -> Option<GitStatus> {
     let f = repo.build_fields(false);
     Some(GitStatus {
         branch: String::from_utf8_lossy(&f[field::LOCAL_BRANCH]).into_owned(),
+        commit: String::from_utf8_lossy(&f[field::COMMIT]).into_owned(),
         staged: parse_field(&f[field::NUM_STAGED]),
         unstaged: parse_field(&f[field::NUM_UNSTAGED]),
         conflicted: parse_field(&f[field::NUM_CONFLICTED]),
