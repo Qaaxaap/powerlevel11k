@@ -328,6 +328,38 @@ fn render_segment(
         "host" => paint(&host_text(), &style),
         "root_indicator" => paint(&root_indicator_text(), &style),
         "date" => paint(&date_text(seg), &style),
+        // p10k symfony2_version：读 app/bootstrap.php.cache 的 VERSION 行。
+        "symfony2_version" => paint(&symfony2_version_text(&info.cwd), &style),
+        // p10k symfony2_tests：测试占比，按比例切 GOOD/AVG/BAD 三个 state
+        // （p10k 的内部默认色 cyan/yellow/red = 6/3/1）。
+        "symfony2_tests" => {
+            let text = symfony2_tests_text(&info.cwd);
+            if text.is_empty() {
+                paint("", &style)
+            } else {
+                let pct: f64 = text
+                    .trim_start_matches("SF2: ")
+                    .trim_end_matches('%')
+                    .parse()
+                    .unwrap_or(0.0);
+                let (state, default_fg) = if pct >= 75.0 {
+                    ("GOOD", 6u8)
+                } else if pct >= 50.0 {
+                    ("AVG", 3)
+                } else {
+                    ("BAD", 1)
+                };
+                let st = if seg.states.contains_key(state) {
+                    seg.effective_style(Some(state), &config.defaults)
+                } else {
+                    Style {
+                        fg: Color::Xterm(default_fg),
+                        ..style.clone()
+                    }
+                };
+                paint(&text, &st)
+            }
+        }
         // 工具链版本段:跑 `cmd --version` 解析版本,有命令才显示。
         "go_version" => paint(&go_version(), &style),
         "rust_version" => paint(&rust_version(), &style),
@@ -591,6 +623,8 @@ fn icon_default(key: &str) -> Option<IconEntry> {
         "aws-eb" => Some(icon("\u{f1bd}", "\u{1F331}", "eb")), // 🌱
         "laravel" => Some(icon("\u{e73f}", "", "")),
         "test" => Some(icon("\u{f188}", "", "")),
+        // p10k SYMFONY_ICON：nerdfont 档 U+E757，其余档 `SF`。
+        "symfony" => Some(icon("\u{e757}", "SF", "SF")),
         "todo" => Some(icon("\u{2611}", "\u{2206}", "todo")), // ☑ ∆
         "taskwarrior" => Some(icon("\u{f4a0}", "task", "task")),
         "dropbox" => Some(icon("\u{f16b}", "Dropbox", "dropbox")),
@@ -624,6 +658,8 @@ fn segment_icon_key(name: &str) -> Option<&'static str> {
         "time" => Some("time"),
         "date" => Some("date"),
         "command_execution_time" => Some("execution-time"),
+        "symfony2_version" => Some("symfony"),
+        "symfony2_tests" => Some("test"),
         "background_jobs" => Some("background-jobs"),
         "go_version" | "goenv" => Some("go"),
         "rust_version" => Some("rust"),
@@ -1651,6 +1687,66 @@ fn anaconda_text(_cwd: &str) -> String {
         .or_else(|| env_var("CONDA_ENV_PATH"))
         .map(|v| format!("({})", basename(&v)))
         .unwrap_or_default()
+}
+
+/// p10k `prompt_symfony2_version`：读 `app/bootstrap.php.cache` 里带 ` VERSION `
+/// 的那行，只留数字和点。
+fn symfony2_version_text(cwd: &str) -> String {
+    let path = std::path::Path::new(cwd).join("app/bootstrap.php.cache");
+    let Ok(src) = std::fs::read_to_string(&path) else {
+        return String::new();
+    };
+    for line in src.lines() {
+        if !line.contains(" VERSION ") {
+            continue;
+        }
+        return line
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == '.')
+            .collect();
+    }
+    String::new()
+}
+
+/// p10k `prompt_symfony2_tests`：`src` 与 `app` + `app/AppKernel.php` 存在时，
+/// 统计 `src/**/*.php` 里带 `Tests` 的占比（p10k 的 SF2 测试比例）。
+/// 返回 (比例百分比, 文本)，比例带两位小数、文本形如 `SF2: 12.34%`。
+fn symfony2_tests_text(cwd: &str) -> String {
+    let root = std::path::Path::new(cwd);
+    if !root.join("src").is_dir()
+        || !root.join("app").is_dir()
+        || !root.join("app/AppKernel.php").is_file()
+    {
+        return String::new();
+    }
+    let mut all = 0usize;
+    let mut tests = 0usize;
+    let mut stack = vec![root.join("src")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "php") {
+                all += 1;
+                if path.to_string_lossy().contains("Tests") {
+                    tests += 1;
+                }
+            }
+        }
+    }
+    if all == 0 {
+        return String::new();
+    }
+    let code = all - tests;
+    if code == 0 {
+        return String::new();
+    }
+    let ratio = 100.0 * tests as f64 / code as f64;
+    format!("SF2: {ratio:.2}%")
 }
 
 fn pyenv_text(cwd: &str) -> String {
