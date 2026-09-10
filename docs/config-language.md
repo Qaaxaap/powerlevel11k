@@ -126,6 +126,11 @@ through `icon {}`.
   header (p10k `SHOW_RULER`, off by default). The glyph comes from the
   `ruler` icon (nerdfont/compatible `─`, ascii `-`) and the color from
   `segments { ruler fg=… }`, falling back to `defaults`.
+- `layout { right-indent <N> }` keeps N columns free to the right of the
+  right column (p10k leaves one because zsh's `ZLE_RPROMPT_INDENT`
+  defaults to 1). Default 1; `0` butts the right column against the last
+  column. A row whose content plus this indent does not fit drops the
+  right column (and its connecting separator) instead of scrolling.
 
 ## Segments
 

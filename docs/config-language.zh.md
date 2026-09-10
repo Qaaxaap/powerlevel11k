@@ -111,6 +111,9 @@
 - `layout { show-ruler #true … }` 在 header 之上再铺一整行标尺（p10k
   `SHOW_RULER`，缺省关）。字符取图标名 `ruler`（nerdfont/compatible 档 `─`、
   ascii 档 `-`），颜色取 `segments { ruler fg=… }`，没配就用 `defaults`。
+- `layout { right-indent <N> }` 让右栏右侧空出 N 格（p10k 空一格，因为 zsh 的
+  `ZLE_RPROMPT_INDENT` 默认是 1）。缺省 1，写 `0` 则右栏贴最后一格。整行
+  内容加这个缩进放不下时，直接丢掉右栏（连带它的连接分隔符），不会溢出换行。
 
 ## 段
 
