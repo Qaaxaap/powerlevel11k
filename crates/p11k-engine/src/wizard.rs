@@ -198,10 +198,26 @@ fn header_on(cfg: &Config) -> bool {
     !(cfg.layout.left.is_empty() && cfg.layout.right.is_empty())
 }
 
+/// 样例 git 状态：让预览里的 vcs 段像真实 prompt（p10k wizard 也用假数据）。
+fn sample_vcs() -> crate::theme::GitStatus {
+    crate::theme::GitStatus {
+        branch: "main".into(),
+        staged: 0,
+        unstaged: 2,
+        conflicted: 0,
+        untracked: 1,
+        ahead: 1,
+        behind: 0,
+        stashes: 0,
+        remote_url: "https://github.com/example/repo".into(),
+    }
+}
+
 /// 渲染当前配置的完整 prompt 预览（header 行 + 输入行），供逐选项预览用。
 fn preview_lines(cfg: &Config) -> Vec<String> {
     let cols = crate::tty_size().map(|(_, c, ..)| c as usize).unwrap_or(80);
-    let mut lines = crate::render::render_header_lines(cfg, &sample_info(), None, cols);
+    let vcs = sample_vcs();
+    let mut lines = crate::render::render_header_lines(cfg, &sample_info(), Some(&vcs), cols);
     // 输入行：引擎画的 prompt_char 前缀（后面是 shell 的 buffer）。
     lines.push(crate::render::input_prefix(cfg, None).text);
     lines
@@ -549,12 +565,15 @@ fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
     )
 }
 
-/// 前缀：Concise/Fluent。
+/// 前缀连词：Concise（裸值）/ Fluent（带 on/took/at）。
 fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "提示符语气",
-        &["简洁（Concise）", "流畅（Fluent）"],
+        "提示符措辞",
+        &[
+            "简洁（Concise）：只写值，如 master 5s",
+            "流畅（Fluent）：加连词，如 on master took 5s",
+        ],
         cfg,
         |c, i| {
             let names = ["vcs", "command_execution_time", "time"];

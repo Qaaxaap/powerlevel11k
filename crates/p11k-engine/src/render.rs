@@ -348,7 +348,12 @@ fn render_segment(
     // 附加文字槽:左(icon 前)/中(icon 与内容之间,须二者都有)/右(内容后)。
     // 仅拼接显示、不独立成块;fg 缺省跟段走。text-middle 始终紧随 icon 与内容
     // 之间:左列 icon 在前 → middle 在 icon 后;右列 icon 后置 → middle 在内容与 icon 之间。
+    // 段前缀/后缀(p10k `SEG_PREFIX`/`SEG_SUFFIX`,如 vcs 的 `on `、exec 的
+    // `took `):画在整段最前/最后,用段样式上色。
     let mut out = String::new();
+    if let Some(p) = &seg.prefix {
+        out.push_str(&paint(p, &style));
+    }
     if let Some(l) = &seg.text_left {
         out.push_str(&paint_attach(&style, l));
     }
@@ -371,6 +376,9 @@ fn render_segment(
     }
     if let Some(r) = &seg.text_right {
         out.push_str(&paint_attach(&style, r));
+    }
+    if let Some(s) = &seg.suffix {
+        out.push_str(&paint(s, &style));
     }
     SegmentText { text: out, style }
 }
@@ -1911,6 +1919,24 @@ mod tests {
             jobs: 0,
             history: 0,
         }
+    }
+
+    #[test]
+    fn segment_prefix_and_suffix_render() {
+        // p10k 的 SEG_PREFIX/SEG_SUFFIX（vcs 的 `on `、exec 的 `took `）：
+        // 画在整段最前/最后。
+        let mut cfg = Config::default();
+        cfg.layout.left = vec![vec![Element::Seg("custom".into())]];
+        let mut s = crate::config::Segment::default();
+        s.content = Some("main".into());
+        s.prefix = Some("on ".into());
+        s.suffix = Some("!".into());
+        cfg.segments.insert("custom".into(), s);
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
+        assert!(h.contains("on "), "prefix 应渲染,实际 {h:?}");
+        assert!(h.contains("main"), "content 应渲染,实际 {h:?}");
+        let after = h.split("main").nth(1).unwrap_or("");
+        assert!(after.contains('!'), "suffix 应在内容之后,实际 {h:?}");
     }
 
     #[test]
