@@ -420,12 +420,13 @@ impl PresetKind {
         }
     }
 
+    /// 向导里的风格名（对齐 p10k `ask_style` 的说法）。
     pub fn title(self) -> &'static str {
         match self {
-            PresetKind::Lean => "Lean —— 紧凑，无框无箭头，默认风格",
-            PresetKind::Classic => "Classic —— 多行框 + powerline 箭头，经典配色",
-            PresetKind::Rainbow => "Rainbow —— classic 结构，每段彩色底",
-            PresetKind::Pure => "Pure —— 单行极简，还原 p10k pure",
+            PresetKind::Lean => "Lean.",
+            PresetKind::Classic => "Classic.",
+            PresetKind::Rainbow => "Rainbow.",
+            PresetKind::Pure => "Pure.",
         }
     }
 

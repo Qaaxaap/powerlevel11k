@@ -125,7 +125,8 @@ pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
             let w = prefix_width(config, Some(name));
             if w != base {
                 return Err(format!(
-                    "prompt_char state `{name}` 的提示符宽度({w})与正常态({base})不一致,须等宽"
+                    "{}: prompt_char state `{name}` is {w} wide, the normal state is {base}",
+                    crate::i18n::t("prompt_char states must all be the same width (the prompt width is fixed at startup)")
                 ));
             }
         }

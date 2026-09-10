@@ -394,7 +394,8 @@ impl Default for Config {
 impl Config {
     /// 解析 KDL 文本为配置。
     pub fn parse(src: &str) -> Result<Config, String> {
-        let doc = KdlDocument::parse(src).map_err(|e| format!("KDL 解析失败: {e}"))?;
+        let doc = KdlDocument::parse(src)
+            .map_err(|e| format!("{}{e}", crate::i18n::t("KDL parse error: ")))?;
         Self::parse_doc(&doc)
     }
 
@@ -1139,7 +1140,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
             match child.name().value() {
                 "state" => {
                     let Some(nm) = first_state_name(child) else {
-                        return Err("state 需要名字(位置字符串)".into());
+                        return Err(crate::i18n::t("`state` needs a name (a positional string)"));
                     };
                     // state 覆盖 = 样式 + 可选 char。
                     let st = Style::from_entries(child.entries());
@@ -1155,7 +1156,11 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                 // 附加文字槽:左/中/右。位置字符串是文本,`fg` 可选(缺省跟段走)。
                 "text-left" | "text-middle" | "text-right" => {
                     let Some(text) = first_state_name(child) else {
-                        return Err(format!("{} 需要文本(位置字符串)", child.name().value()));
+                        return Err(format!(
+                            "{}{}",
+                            child.name().value(),
+                            crate::i18n::t(" needs text (a positional string)")
+                        ));
                     };
                     let attach = AttachText {
                         text,

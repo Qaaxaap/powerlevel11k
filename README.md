@@ -102,6 +102,28 @@ The engine execs over the launching shell and inherits its environment; the
 inner shell re-sources the user config (except the theme — the engine is the
 theme). `P11K_ENGINE` breaks recursion.
 
+### Language
+
+User-facing text of the engine and of `p11k configure` goes through gettext.
+English is the source language: message ids in the code are English and are
+printed verbatim when no translation exists. Translations live in
+`crates/p11k-engine/po/<lang>.po` and are compiled to `.mo` by `build.rs` with
+`msgfmt` (skipped with a warning when `msgfmt` is missing — the build still
+succeeds, untranslated). The locale is picked up from the standard environment
+(`LANG`, `LC_ALL`, `LANGUAGE`):
+
+```bash
+LANG=zh_CN.UTF-8 target/debug/p11k --shell zsh   # Chinese UI
+target/debug/p11k --shell zsh                    # English (default)
+```
+
+`P11K_LOCALEDIR` overrides the translation directory (defaults to the one baked
+in at build time), e.g. `P11K_LOCALEDIR=/usr/share/locale` for a system install.
+Adding a language is one file plus a rebuild — copy `po/zh_CN.po` to
+`po/<lang>.po`, translate the `msgstr`s, `cargo build -p p11k-engine`. A unit
+test keeps `po/` honest: every msgid in a catalog must still appear in the
+sources.
+
 ## compat/p10k: a drop-in gitstatusd
 
 p10k's zsh rendering is a decade of polish and should not be rewritten. The

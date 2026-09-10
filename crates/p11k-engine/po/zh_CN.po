@@ -1,0 +1,272 @@
+# p11k 简体中文翻译。
+#
+# msgid 就是源码里的英文原文（英文是默认语言，缺翻译时原样输出）。
+# 与 p10k 语义相同的文案沿用 p10k 的说法（Prompt Style / Character Set /
+# Restart from the beginning. / …），只把词换成中文。
+# 词的风格名（Lean. Classic. Rainbow. Pure. Original. Snazzy. Unicode. ASCII.）
+# 保持英文，p10k 用户对这些名字的认知是英文的。
+msgid ""
+msgstr ""
+"Project-Id-Version: p11k\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-01-01 00:00+0000\n"
+"PO-Revision-Date: 2025-01-01 00:00+0000\n"
+"Last-Translator: p11k\n"
+"Language-Team: Chinese (Simplified)\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+# ---- wizard：问题标题 ----
+msgid "Prompt Style"
+msgstr "提示符风格"
+
+msgid "Prompt Colors"
+msgstr "提示符颜色"
+
+msgid "Prompt Color"
+msgstr "提示符颜色"
+
+msgid "Frame Color"
+msgstr "边框颜色"
+
+msgid "Character Set"
+msgstr "字符集"
+
+msgid "Non-permanent content location"
+msgstr "非永久内容位置"
+
+msgid "Show current time?"
+msgstr "显示当前时间？"
+
+msgid "Prompt Separators"
+msgstr "提示符分隔符"
+
+msgid "Prompt Heads"
+msgstr "提示符端符（heads）"
+
+msgid "Prompt Tails"
+msgstr "提示符端符（tails）"
+
+msgid "Prompt Height"
+msgstr "提示符高度"
+
+msgid "Prompt Connection"
+msgstr "提示符连接线"
+
+msgid "Prompt Frame"
+msgstr "提示符边框"
+
+msgid "Prompt Spacing"
+msgstr "提示符间距"
+
+msgid "Icons"
+msgstr "图标"
+
+msgid "Prompt Flow"
+msgstr "提示符措辞"
+
+msgid "Use this theme?"
+msgstr "就用这个主题？"
+
+msgid "Enable Transient Prompt?"
+msgstr "启用 Transient Prompt？"
+
+# ---- wizard：字体确认 ----
+msgid "Does this look like a diamond (rotated square)?"
+msgstr "这个看起来像菱形（旋转的正方形）吗？"
+
+msgid "Does this look like a lock?"
+msgstr "这个看起来像锁吗？"
+
+msgid "Does this look like >< but taller and fatter?"
+msgstr "这个看起来像 >< 但更高更胖吗？"
+
+# ---- wizard：选项 ----
+msgid "Lean."
+msgstr "Lean."
+
+msgid "Classic."
+msgstr "Classic."
+
+msgid "Rainbow."
+msgstr "Rainbow."
+
+msgid "Pure."
+msgstr "Pure."
+
+msgid "256 colors."
+msgstr "256 色。"
+
+msgid "8 colors."
+msgstr "8 色。"
+
+msgid "Lightest."
+msgstr "最浅。"
+
+msgid "Light."
+msgstr "浅。"
+
+msgid "Dark."
+msgstr "深。"
+
+msgid "Darkest."
+msgstr "最深。"
+
+msgid "Original."
+msgstr "Original."
+
+msgid "Snazzy."
+msgstr "Snazzy."
+
+msgid "Unicode."
+msgstr "Unicode."
+
+msgid "ASCII."
+msgstr "ASCII."
+
+msgid "Left."
+msgstr "左侧。"
+
+msgid "Right."
+msgstr "右侧。"
+
+msgid "No."
+msgstr "否。"
+
+msgid "12-hour format."
+msgstr "12 小时制。"
+
+msgid "24-hour format."
+msgstr "24 小时制。"
+
+msgid "Angled."
+msgstr "尖角。"
+
+msgid "Vertical."
+msgstr "竖直。"
+
+msgid "Slanted."
+msgstr "斜。"
+
+msgid "Round."
+msgstr "圆角。"
+
+msgid "Flat."
+msgstr "平。"
+
+msgid "Blurred."
+msgstr "渐变。"
+
+msgid "Sharp."
+msgstr "尖。"
+
+msgid "One line."
+msgstr "一行。"
+
+msgid "Two lines."
+msgstr "两行。"
+
+msgid "Disconnected."
+msgstr "断开。"
+
+msgid "Dotted."
+msgstr "点线。"
+
+msgid "Solid."
+msgstr "实线。"
+
+msgid "No frame."
+msgstr "无边框。"
+
+msgid "Full."
+msgstr "完整。"
+
+msgid "Compact."
+msgstr "紧凑。"
+
+msgid "Sparse."
+msgstr "稀疏。"
+
+msgid "Few icons."
+msgstr "少图标。"
+
+msgid "Many icons."
+msgstr "多图标。"
+
+msgid "Concise."
+msgstr "简洁。"
+
+msgid "Fluent."
+msgstr "流畅。"
+
+msgid "Yes."
+msgstr "是。"
+
+msgid "Yes, write the config."
+msgstr "是，写入配置。"
+
+msgid "Restart from the beginning."
+msgstr "从头再来。"
+
+# ---- wizard：预览 / 落盘 ----
+msgid "Preview (current directory + exit code):"
+msgstr "预览（当前目录 + 退出码）:"
+
+msgid "p11k config file already exists. Overwrite"
+msgstr "p11k 配置文件已存在，覆盖"
+
+msgid "New config:"
+msgstr "新配置:"
+
+msgid "Add the engine to your shell rc (pick yours):"
+msgstr "安装到 shell rc（选你用的那个）:"
+
+msgid "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise they will stack."
+msgstr "引擎即主题：先去掉原本的 ZSH_THEME/主题设置，否则会叠加。"
+
+msgid "p11k configuration wizard has been aborted."
+msgstr "p11k 配置向导已中止。"
+
+msgid "Nothing was written."
+msgstr "没有写入任何东西。"
+
+# ---- 引擎本体 ----
+msgid "recursive launch detected (p11k started inside a p11k session)"
+msgstr "检测到递归加载（已在 p11k 会话内又启动了 p11k）"
+
+msgid "make sure the bootstrap line in ~/.zshrc is guarded, e.g.:"
+msgstr "请确认 ~/.zshrc 里的引导行带判断，例如："
+
+msgid "cannot exec zsh -f: "
+msgstr "exec zsh -f 失败: "
+
+msgid "cannot exec a clean shell: "
+msgstr "exec 干净 shell 失败: "
+
+msgid "config error: "
+msgstr "配置错误: "
+
+msgid "every prompt_char state must be the same width (the prompt width is fixed at startup). Fix the config and start p11k again."
+msgstr "prompt_char 各态提示符必须等宽（prompt 宽度在启动期固定）。请修改配置后重新启动 p11k。"
+
+msgid "cannot read config, falling back to the built-in lean theme: "
+msgstr "读取配置失败，回退内置 lean 主题: "
+
+msgid "unknown preset, falling back to the built-in lean theme (expected lean/classic/rainbow/pure): "
+msgstr "未知预设，回退内置 lean 主题（可选 lean/classic/rainbow/pure）: "
+
+msgid "prompt_char states must all be the same width (the prompt width is fixed at startup)"
+msgstr "prompt_char 各态提示符必须等宽（prompt 宽度在启动期固定）"
+
+# ---- 配置解析 ----
+msgid "KDL parse error: "
+msgstr "KDL 解析失败: "
+
+msgid "`state` needs a name (a positional string)"
+msgstr "`state` 需要一个名字（位置字符串）"
+
+msgid " needs text (a positional string)"
+msgstr " 需要文本（位置字符串）"

@@ -82,6 +82,25 @@ if not set -q P11K_ENGINE; exec /path/to/p11k --shell fish; end
 引擎 exec 覆盖启动 shell，继承其环境；内部 shell 会重新 source 用户配置
 （主题本身除外——引擎就是主题）。`P11K_ENGINE` 用于打破递归。
 
+### 语言
+
+引擎本身和 `p11k configure` 的用户可见文案走 gettext。英文是源语言：代码里的
+msgid 就是英文，找不到翻译时原样输出。翻译放在
+`crates/p11k-engine/po/<lang>.po`，由 `build.rs` 用 `msgfmt` 编成 `.mo`
+（没有 `msgfmt` 时只警告不报错，编出的程序就是英文的）。语言按标准环境变量取
+（`LANG`、`LC_ALL`、`LANGUAGE`）：
+
+```bash
+LANG=zh_CN.UTF-8 target/debug/p11k --shell zsh   # 中文界面
+target/debug/p11k --shell zsh                    # 英文（默认）
+```
+
+`P11K_LOCALEDIR` 可覆盖翻译目录（缺省用构建期写进二进制的那个），例如装到系统
+后用 `P11K_LOCALEDIR=/usr/share/locale`。加一门语言就是加一个文件再重新构建：
+把 `po/zh_CN.po` 复制成 `po/<lang>.po`，改 `msgstr`，`cargo build -p p11k-engine`。
+有个单元测试盯着 `po/`：里面每条 msgid 都必须仍能在源码里找到，防止改了文案忘
+同步翻译。
+
 ## compat/p10k：gitstatusd 即插即用
 
 p10k 的 zsh 渲染是十年打磨，不该重写。`compat/p10k` 分支 vendor 原版 p10k

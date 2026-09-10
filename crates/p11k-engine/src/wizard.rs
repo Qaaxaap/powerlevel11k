@@ -6,6 +6,7 @@
 //! 键位：`q` 退出（什么都不写）、`r` 从头再来、数字/字母选择。
 
 use crate::config::{Color, Config, Element, Frame, IconMode, Prop, Segment, Separators};
+use crate::i18n;
 use crate::presets::{self, PresetKind};
 use crate::theme::HeaderInfo;
 use std::io::{self, Write};
@@ -131,7 +132,7 @@ fn flow(out: &mut io::Stdout) -> io::Result<Step<()>> {
     }
     // ⑭ 预览 + 确认。
     preview(out, &cfg)?;
-    match ask_yn(out, "就用这个主题？", "是，写入配置", "否", None)? {
+    match ask_yn(out, "Use this theme?", "Yes, write the config.", "No.", None)? {
         Step::Answer(true) => {}
         Step::Answer(false) => return Ok(Step::Quit),
         Step::Restart => return Ok(Step::Restart),
@@ -177,7 +178,8 @@ fn key() -> io::Result<Option<u8>> {
 
 fn goodbye(out: &mut io::Stdout) -> anyhow::Result<()> {
     let _ = line(out, "");
-    let _ = line(out, "已退出，什么都没写。");
+    let _ = line(out, &i18n::t("p11k configuration wizard has been aborted."));
+    let _ = line(out, &i18n::t("Nothing was written."));
     Ok(())
 }
 
@@ -237,9 +239,9 @@ fn preview_lines(cfg: &Config) -> Vec<String> {
 fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
     let diamond = match ask_yn(
         out,
-        "这个看起来像菱形（旋转的正方形）吗？",
-        "是",
-        "否",
+        "Does this look like a diamond (rotated square)?",
+        "Yes.",
+        "No.",
         Some("--->  \u{e0b2}\u{e0b0}  <---"),
     )? {
         Step::Answer(b) => b,
@@ -248,9 +250,9 @@ fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
     if diamond {
         match ask_yn(
             out,
-            "这个看起来像锁吗？",
-            "是",
-            "否",
+            "Does this look like a lock?",
+            "Yes.",
+            "No.",
             Some("--->  \u{f023}  <---"),
         )? {
             Step::Answer(true) => Ok(Step::Answer(IconMode::NerdfontComplete)),
@@ -260,9 +262,9 @@ fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
     } else {
         match ask_yn(
             out,
-            "这个看起来像 >< 但更高更胖吗？",
-            "是",
-            "否",
+            "Does this look like >< but taller and fatter?",
+            "Yes.",
+            "No.",
             Some("--->  \u{276f}\u{276e}  <---"),
         )? {
             Step::Answer(true) => Ok(Step::Answer(IconMode::Compatible)),
@@ -275,7 +277,7 @@ fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
 /// 风格：四套预设各带一份 live prompt 预览。
 fn ask_style(out: &mut io::Stdout) -> io::Result<Step<PresetKind>> {
     let titles = PresetKind::ALL.map(|k| k.title());
-    let i = ask_choice_preview(out, "提示符风格", &titles, |i| {
+    let i = ask_choice_preview(out, "Prompt Style", &titles, |i| {
         preview_lines(&presets::build(PresetKind::ALL[i]))
     })?;
     match i {
@@ -296,17 +298,13 @@ fn build_with_color(kind: PresetKind, i: usize) -> Config {
 
 /// 颜色变体（按风格分支）：lean 256/8、classic 四档、rainbow 帧四档、pure 两套。
 fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> io::Result<Step<Config>> {
-    const FOUR: [&str; 4] = [
-        "最浅（Lightest）",
-        "浅（Light）",
-        "深（Dark）",
-        "最深（Darkest）",
-    ];
+    // p10k 的四档配色名（`color_name`）。
+    const FOUR: [&str; 4] = ["Lightest.", "Light.", "Dark.", "Darkest."];
     let (title, options): (&str, &[&str]) = match kind {
-        PresetKind::Lean => ("提示符颜色", &["256 色", "8 色（兼容终端）"]),
-        PresetKind::Classic => ("提示符颜色", &FOUR),
-        PresetKind::Rainbow => ("边框颜色", &FOUR),
-        PresetKind::Pure => ("提示符颜色", &["Original", "Snazzy"]),
+        PresetKind::Lean => ("Prompt Colors", &["256 colors.", "8 colors."]),
+        PresetKind::Classic => ("Prompt Color", &FOUR),
+        PresetKind::Rainbow => ("Frame Color", &FOUR),
+        PresetKind::Pure => ("Prompt Colors", &["Original.", "Snazzy."]),
     };
     let i = ask_choice_preview(out, title, options, |i| {
         let mut c = build_with_color(kind, i);
@@ -325,7 +323,7 @@ fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> io::Res
 
 /// 字符集：Unicode / ASCII（预览反映 ASCII 档下图标/分隔符的替换）。
 fn ask_charset(out: &mut io::Stdout, cfg: &Config, mode: &IconMode) -> io::Result<Step<bool>> {
-    let i = ask_choice_preview(out, "字符集", &["Unicode", "ASCII"], |i| {
+    let i = ask_choice_preview(out, "Character Set", &["Unicode.", "ASCII."], |i| {
         let mut c = cfg.clone();
         c.mode = if i == 1 {
             IconMode::Ascii
@@ -344,8 +342,8 @@ fn ask_charset(out: &mut io::Stdout, cfg: &Config, mode: &IconMode) -> io::Resul
 fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "非永久内容位置",
-        &["左侧", "右侧"],
+        "Non-permanent content location",
+        &["Left.", "Right."],
         cfg,
         |c, i| {
             // 先把 exec 从两栏都摘掉，再按选择放回左/右。
@@ -369,8 +367,8 @@ fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
 fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "显示当前时间？",
-        &["不显示", "12 小时制", "24 小时制"],
+        "Show current time?",
+        &["No.", "12-hour format.", "24-hour format."],
         cfg,
         |c, i| match i {
             0 => remove_segment(c, "time"),
@@ -415,13 +413,8 @@ fn time_bg(kind: PresetKind, cfg: &Config) -> Option<u8> {
 fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "分隔符",
-        &[
-            "尖角（Angled）",
-            "竖直（Vertical）",
-            "斜（Slanted）",
-            "圆角（Round）",
-        ],
+        "Prompt Separators",
+        &["Angled.", "Vertical.", "Slanted.", "Round."],
         cfg,
         |c, i| {
             let (seg, sub, rseg, rsub) = match i {
@@ -442,14 +435,8 @@ fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>
 fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "端符（heads）",
-        &[
-            "平（Flat）",
-            "渐变（Blurred）",
-            "尖（Sharp）",
-            "斜（Slanted）",
-            "圆（Round）",
-        ],
+        "Prompt Heads",
+        &["Flat.", "Blurred.", "Sharp.", "Slanted.", "Round."],
         cfg,
         |c, i| {
             let (end, rstart) = match i {
@@ -469,14 +456,8 @@ fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
 fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "端符（tails）",
-        &[
-            "平（Flat）",
-            "渐变（Blurred）",
-            "尖（Sharp）",
-            "斜（Slanted）",
-            "圆（Round）",
-        ],
+        "Prompt Tails",
+        &["Flat.", "Blurred.", "Sharp.", "Slanted.", "Round."],
         cfg,
         |c, i| {
             let (ltail, rtail) = match i {
@@ -496,8 +477,8 @@ fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
 fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "提示符高度",
-        &["一行（只有输入行）", "两行（信息行 + 输入行）"],
+        "Prompt Height",
+        &["One line.", "Two lines."],
         cfg,
         |c, i| {
             if i == 0 {
@@ -514,8 +495,8 @@ fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>>
 fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "连接线",
-        &["断开（空格）", "点线", "实线"],
+        "Prompt Connection",
+        &["Disconnected.", "Dotted.", "Solid."],
         cfg,
         |c, i| {
             c.separators.gap = match i {
@@ -540,8 +521,8 @@ fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     use crate::config::FramePiece;
     ask_apply(
         out,
-        "提示符边框",
-        &["无边框", "只有左侧", "只有右侧", "完整边框"],
+        "Prompt Frame",
+        &["No frame.", "Left.", "Right.", "Full."],
         cfg,
         |c, i| {
             let f = &mut c.frame;
@@ -572,8 +553,8 @@ fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
 fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "提示符间距",
-        &["紧凑（无空行）", "稀疏（prompt 之间空一行）"],
+        "Prompt Spacing",
+        &["Compact.", "Sparse."],
         cfg,
         |c, i| c.layout.prompt_add_newline = usize::from(i == 1),
     )
@@ -583,8 +564,8 @@ fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>
 fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "图标",
-        &["少（几乎无图标）", "多（完整图标）"],
+        "Icons",
+        &["Few icons.", "Many icons."],
         cfg,
         |c, i| {
             if i == 0 {
@@ -615,11 +596,8 @@ fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
 fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
-        "提示符措辞",
-        &[
-            "简洁（Concise）：只写值，如 master 5s",
-            "流畅（Fluent）：加连词，如 on master took 5s",
-        ],
+        "Prompt Flow",
+        &["Concise.", "Fluent."],
         cfg,
         |c, i| {
             let names = ["vcs", "command_execution_time", "time"];
@@ -642,9 +620,9 @@ fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> 
 fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     let b = ask_yn(
         out,
-        "启用 transient prompt？（命令提交后 header 折叠成单行 ❯，仅 zsh）",
-        "是",
-        "否",
+        "Enable Transient Prompt?",
+        "Yes.",
+        "No.",
         None,
     )?;
     match b {
@@ -668,16 +646,21 @@ fn ask_choice_preview(
 ) -> io::Result<Step<usize>> {
     loop {
         clear(out);
-        line(out, title)?;
+        // title 与选项标签都是 msgid，在这里统一翻译；预览行是配置渲染出来的
+        // 真实 prompt，不进 gettext。
+        line(out, &i18n::t(title))?;
         line(out, "")?;
         for (i, label) in options.iter().enumerate() {
-            line(out, &format!("({})  {}", i + 1, label))?;
+            line(out, &format!("({})  {}", i + 1, i18n::t(label)))?;
             for l in preview(i) {
                 line(out, &l)?;
             }
             line(out, "")?;
         }
-        line(out, "(r)  从头再来")?;
+        line(
+            out,
+            &format!("(r)  {}", i18n::t("Restart from the beginning.")),
+        )?;
         match key()? {
             Some(b'q') => return Ok(Step::Quit),
             Some(b'r') => return Ok(Step::Restart),
@@ -728,16 +711,20 @@ fn ask_yn(
 ) -> io::Result<Step<bool>> {
     loop {
         clear(out);
-        line(out, title)?;
+        line(out, &i18n::t(title))?;
         if let Some(s) = sample {
             line(out, "")?;
+            // 字形样本不是文案，原样输出。
             line(out, s)?;
         }
         line(out, "")?;
-        line(out, &format!("(y)  {yes}"))?;
+        line(out, &format!("(y)  {}", i18n::t(yes)))?;
         line(out, "")?;
-        line(out, &format!("(n)  {no}"))?;
-        line(out, "(r)  从头再来")?;
+        line(out, &format!("(n)  {}", i18n::t(no)))?;
+        line(
+            out,
+            &format!("(r)  {}", i18n::t("Restart from the beginning.")),
+        )?;
         match key()? {
             Some(b'q') => return Ok(Step::Quit),
             Some(b'r') => return Ok(Step::Restart),
@@ -787,7 +774,10 @@ fn set_prefix(cfg: &mut Config, name: &str, prefix: &str) {
 
 fn preview(out: &mut io::Stdout, cfg: &Config) -> io::Result<()> {
     clear(out);
-    line(out, "预览（当前目录 + 退出码）:")?;
+    line(
+        out,
+        &i18n::t("Preview (current directory + exit code):"),
+    )?;
     line(out, "")?;
     for l in preview_lines(cfg) {
         line(out, &l)?;
@@ -806,12 +796,17 @@ fn default_path() -> PathBuf {
 
 fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
     let path = default_path();
+    let p = path.display();
     if path.exists() {
+        // p10k：`p11k config file already exists. Overwrite <path>?`
         match ask_yn(
             out,
-            &format!("配置文件已存在：{}，覆盖？", path.display()),
-            "是",
-            "否",
+            &format!(
+                "{} {p}?",
+                i18n::t("p11k config file already exists. Overwrite")
+            ),
+            "Yes.",
+            "No.",
             None,
         )? {
             Step::Answer(true) => {}
@@ -825,11 +820,14 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
     let exe = std::env::current_exe()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "p11k".into());
-    let p = path.display();
     line(out, "")?;
-    line(out, &format!("主题已写入：{p}"))?;
+    // p10k：`New config: <path>.`
+    line(out, &format!("{} {p}.", i18n::t("New config:")))?;
     line(out, "")?;
-    line(out, "安装到 shell rc（选你用的那个）:")?;
+    line(
+        out,
+        &i18n::t("Add the engine to your shell rc (pick yours):"),
+    )?;
     line(
         out,
         &format!("  zsh:  [[ -z \"$P11K_ENGINE\" ]] && exec {exe} --shell zsh --config {p}"),
@@ -845,7 +843,7 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
     line(out, "")?;
     line(
         out,
-        "引擎即主题：先去掉原本的 ZSH_THEME/主题设置，否则会叠加。",
+        &i18n::t("The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise they will stack."),
     )?;
     Ok(())
 }

@@ -29,6 +29,7 @@
 
 mod config;
 mod dir_shorten;
+mod i18n;
 mod presets;
 mod render;
 mod theme;
@@ -108,14 +109,20 @@ fn load_config() -> Config {
             .and_then(|src| Config::parse(&src))
         {
             Ok(c) => return c,
-            Err(e) => eprintln!("p11k: 读取配置 {path:?} 失败({e});回退内置 lean 主题"),
+            Err(e) => eprintln!(
+                "p11k: {}{path:?}: {e}",
+                i18n::t("cannot read config, falling back to the built-in lean theme: ")
+            ),
         }
     }
     if let Some(name) = preset_from_args() {
         if let Some(kind) = presets::by_name(&name) {
             return presets::build(kind);
         }
-        eprintln!("p11k: 未知预设 {name:?}(可选 lean/classic/rainbow/pure);用内置 lean 主题");
+        eprintln!(
+            "p11k: {}{name:?}",
+            i18n::t("unknown preset, falling back to the built-in lean theme (expected lean/classic/rainbow/pure): ")
+        );
     }
     fallback()
 }
@@ -349,6 +356,8 @@ end
 "#;
 
 fn main() -> anyhow::Result<()> {
+    // 文案按 locale 取翻译(默认英文,中文见 po/zh_CN.po)。
+    i18n::init();
     // `p11k configure`：进入交互配置向导，不 spawn shell。
     if std::env::args().any(|a| a == "configure") {
         return crate::wizard::run();
@@ -359,13 +368,15 @@ fn main() -> anyhow::Result<()> {
     // 干净 shell，并提示用户修复。
     if std::env::var_os("P11K_ENGINE").is_some() {
         eprintln!(
-            "p11k: 检测到递归加载（已在 p11k 会话内又启动了 p11k）。\n\
-             p11k: 请确认 ~/.zshrc 里的引导行带判断，例如：\n\
-             p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k --shell zsh"
+            "p11k: {}\n\
+             p11k: {}\n\
+             p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k --shell zsh",
+            i18n::t("recursive launch detected (p11k started inside a p11k session)"),
+            i18n::t("make sure the bootstrap line in ~/.zshrc is guarded, e.g.:")
         );
         use std::os::unix::process::CommandExt;
         let err = std::process::Command::new("zsh").arg("-f").exec();
-        eprintln!("p11k: exec zsh -f 失败: {err}");
+        eprintln!("p11k: {}{err}", i18n::t("cannot exec zsh -f: "));
         std::process::exit(1);
     }
 
@@ -375,9 +386,10 @@ fn main() -> anyhow::Result<()> {
     // prompt_char 各态(正常/ERROR)提示符必须等宽。
     // 不等宽是配置错误,直接在真实终端报错,再 exec 干净 shell
     if let Err(e) = crate::render::check_prompt_char_widths(&config) {
-        eprintln!("p11k: 配置错误: {e}");
+        eprintln!("p11k: {}{e}", i18n::t("config error: "));
         eprintln!(
-            "p11k: prompt_char 各态提示符必须等宽(prompt 宽度在启动期固定)。请修改配置后重新启动。"
+            "p11k: {}",
+            i18n::t("every prompt_char state must be the same width (the prompt width is fixed at startup). Fix the config and start p11k again.")
         );
         use std::os::unix::process::CommandExt;
         let err = match shell {
@@ -387,7 +399,7 @@ fn main() -> anyhow::Result<()> {
                 .exec(),
             Shell::Fish => std::process::Command::new("fish").arg("--no-config").exec(),
         };
-        eprintln!("p11k: exec 干净 shell 失败: {err}");
+        eprintln!("p11k: {}{err}", i18n::t("cannot exec a clean shell: "));
         std::process::exit(1);
     }
     let prefix = crate::render::input_prefix(&config, None);

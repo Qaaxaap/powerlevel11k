@@ -12,11 +12,14 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+gettext-rs = { version = "0.7", features = ["gettext-system"] }
 kdl = "6.5.0"
 libc = { workspace = true }
 p11k-gitstatus = { path = "../p11k-gitstatus" }
 portable-pty = { workspace = true }
 unicode-width = { workspace = true }
+
+[build-dependencies]
 
 [dev-dependencies]
 # 集成测试：在 pty 里跑引擎二进制，断言透传与 prompt 输出。
