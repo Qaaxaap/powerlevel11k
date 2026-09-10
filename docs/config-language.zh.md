@@ -281,7 +281,11 @@
 ## defaults、separators、frame、vcs-remote-icons
 
 - `defaults fg=… bg=… bold=#true` — 所有段回退的终点；也是帧字符和
-  `text` 元素的默认前景。
+  `text` 元素的默认前景。其中 **`bg` 就是 p10k 的全局
+  `POWERLEVEL9K_BACKGROUND`**：段自己不写 `bg` 就继承它，`defaults` 也没写
+  `bg` 时该段**透明**（用终端自己的底色，不再像早期版本那样强制黑底）。
+  所以 classic 这类"统一底色"的主题只要写 `defaults bg=…`，之后新增的段
+  （wizard 里选的时间段等）都会自动跟着底色走。
 - `separators { segment … sub … end … left-tail … right-tail … right-start …
   right-segment … right-sub … gap … }` — powerline 箭头家族，值为字符串
   （如 `"\u{e0b0}"`）。节点上还可带三个颜色属性：

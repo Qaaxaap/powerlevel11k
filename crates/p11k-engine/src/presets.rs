@@ -131,10 +131,12 @@ fn jobs_seg(fg: u8, bg: Option<u8>) -> Segment {
     s
 }
 
-fn os_icon_seg(fg: u8, bg: u8) -> Segment {
+fn os_icon_seg(fg: u8, bg: Option<u8>) -> Segment {
     let mut s = Segment::default();
     s.style.fg = x(fg);
-    s.style.bg = x(bg);
+    if let Some(b) = bg {
+        s.style.bg = x(b);
+    }
     s
 }
 
@@ -283,21 +285,27 @@ pub fn classic(color: usize) -> Config {
     ]];
     cfg.separators = powerline_separators(Some(SEP_COLORS[i]));
     cfg.frame = powerline_frame(frame);
-    cfg.segments.insert("os_icon".into(), os_icon_seg(255, bg));
+    // p10k classic 的全局底色是 `POWERLEVEL9K_BACKGROUND=238`（各段自己的
+    // BACKGROUND 都是注释状态，靠它继承）。p11k 对应 `defaults { bg … }`：
+    // 段级不再重复写 bg，用户后加的段（wizard 的 time 等）自动继承，不会掉成
+    // 终端默认底/黑底。
+    cfg.defaults.bg = x(bg);
     cfg.segments
-        .insert("dir".into(), dir_seg(31, 103, 39, true, Some(bg)));
+        .insert("os_icon".into(), os_icon_seg(255, None));
+    cfg.segments
+        .insert("dir".into(), dir_seg(31, 103, 39, true, None));
     // untracked=39(蓝):p10k classic/lean 的 vcs 格式化函数里 `local
     // untracked='%39F'`,与 POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND(76,只给
     // vcs_info 回退路径用)不是一回事,实际渲染出来是蓝色。
     // conflicted=196(红):p10k classic `local conflicted='%196F'`。
     cfg.segments
-        .insert("vcs".into(), vcs_seg(None, 76, 178, 196, 39, 246, Some(bg)));
+        .insert("vcs".into(), vcs_seg(None, 76, 178, 196, 39, 246, None));
     cfg.segments
-        .insert("status".into(), status_seg(70, 160, Some(bg)));
+        .insert("status".into(), status_seg(70, 160, None));
     cfg.segments
-        .insert("command_execution_time".into(), exec_seg(248, Some(bg)));
+        .insert("command_execution_time".into(), exec_seg(248, None));
     cfg.segments
-        .insert("background_jobs".into(), jobs_seg(37, Some(bg)));
+        .insert("background_jobs".into(), jobs_seg(37, None));
     cfg.segments
         .insert("prompt_char".into(), prompt_char_seg(76, 196));
     cfg
@@ -323,7 +331,8 @@ pub fn rainbow(color: usize) -> Config {
     cfg.separators = powerline_separators(None);
     cfg.frame = powerline_frame(frame);
     // 彩虹底：os 白、dir 蓝、vcs 绿、status 黑、exec 黄、jobs 黑。
-    cfg.segments.insert("os_icon".into(), os_icon_seg(232, 7));
+    cfg.segments
+        .insert("os_icon".into(), os_icon_seg(232, Some(7)));
     cfg.segments
         .insert("dir".into(), dir_seg(254, 250, 255, true, Some(4)));
     // p10k rainbow 的 vcs 格式化函数:clean/modified/untracked 全是 `%0F`(黑,
@@ -463,17 +472,65 @@ mod tests {
     fn classic_color_shades_differ() {
         let light = classic(1);
         let dark = classic(4);
-        assert_ne!(
-            light.segment("dir").style.bg,
-            dark.segment("dir").style.bg,
-            "四档段底色应不同"
-        );
+        // 底色现在走全局 `defaults.bg`（对齐 p10k 的 POWERLEVEL9K_BACKGROUND），
+        // 段级不再各自写 bg。
+        assert_ne!(light.defaults.bg, dark.defaults.bg, "四档全局底色应不同");
         assert_ne!(light.frame.style.fg, dark.frame.style.fg);
+        assert_eq!(
+            light.segment("dir").style.bg,
+            crate::config::Color::Default,
+            "段级不该再写 bg（靠 defaults 继承）"
+        );
+    }
+
+    #[test]
+    fn classic_sets_global_background_like_p10k() {
+        // p10k classic 模板：`POWERLEVEL9K_BACKGROUND=238`，各段 BACKGROUND 注释。
+        // 这样用户后加的段（wizard 的 time 等）自动继承底色，不会掉成黑底/终端底。
+        for (color, want) in [(1usize, 240u8), (2, 238), (3, 236), (4, 234)] {
+            let c = classic(color);
+            assert_eq!(c.defaults.bg, x(want), "第 {color} 档全局底色应为 {want}");
+        }
+        // lean/pure/rainbow 与 p10k 一致：全局透明（rainbow 每段各有底色）。
+        assert_eq!(lean(false).defaults.bg, crate::config::Color::Default);
+        assert_eq!(pure(false).defaults.bg, crate::config::Color::Default);
+        assert_eq!(rainbow(1).defaults.bg, crate::config::Color::Default);
+        assert_eq!(
+            rainbow(1).segment("os_icon").style.bg,
+            x(7),
+            "rainbow 每段各有底色"
+        );
     }
 
     #[test]
     fn pure_snazzy_differs_from_original() {
         assert_ne!(pure(false), pure(true));
+    }
+
+    #[test]
+    fn wizard_template_kdl_has_global_background() {
+        // wizard 生成的配置文件（classic 档）：全局底色写在 `defaults` 里，
+        // 段级不重复写 bg —— 这样 wizard 之后加的段（time 等）不会掉成黑底。
+        let kdl = classic(2).to_kdl();
+        assert!(
+            kdl.contains("defaults"),
+            "生成的配置应带 defaults 节点:\n{kdl}"
+        );
+        assert!(
+            kdl.contains("bg=238"),
+            "classic 第 2 档全局底色应为 238:\n{kdl}"
+        );
+        let dir_line = kdl
+            .lines()
+            .find(|l| l.trim_start().starts_with("dir "))
+            .expect("应有 dir 段");
+        assert!(
+            !dir_line.contains("bg="),
+            "段级不该再写 bg（继承 defaults）: {dir_line}"
+        );
+        // rainbow 相反：每段各有底色，time 段自己带 7。
+        let rb = rainbow(1).to_kdl();
+        assert!(rb.contains("bg=7"), "rainbow 的 os_icon 应有底色:\n{rb}");
     }
 
     #[test]

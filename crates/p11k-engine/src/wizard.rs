@@ -74,7 +74,7 @@ fn flow(out: &mut io::Stdout) -> io::Result<Step<()>> {
         }
     }
     // ⑥ 时间。
-    match ask_time(out, &mut cfg)? {
+    match ask_time(out, &mut cfg, kind)? {
         Step::Answer(()) => {}
         s => return Ok(early(s)),
     }
@@ -366,7 +366,7 @@ fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
 }
 
 /// 时间：不显示 / 12 小时制 / 24 小时制。
-fn ask_time(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> io::Result<Step<()>> {
     ask_apply(
         out,
         "显示当前时间？",
@@ -380,6 +380,12 @@ fn ask_time(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
                 let t = c.segments.entry("time".into()).or_insert_with(|| {
                     let mut s = Segment::default();
                     s.style.fg = Color::Xterm(66);
+                    // 背景跟着当前风格走：classic 有 `defaults { bg }` 兜底（对齐
+                    // p10k 的全局 `POWERLEVEL9K_BACKGROUND`），rainbow 每段各有底色
+                    // （p10k rainbow 是 `TIME_BACKGROUND=7`），lean/pure 透明。
+                    if kind == PresetKind::Rainbow {
+                        s.style.bg = Color::Xterm(7);
+                    }
                     s
                 });
                 t.props.insert("time-format".into(), Prop::Str(fmt.into()));

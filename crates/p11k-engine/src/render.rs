@@ -283,15 +283,14 @@ fn render_segment(
     let mut style = seg.effective_style(None, &config.defaults);
     // 段是否有显式底色（强制默认黑底之前判断）：只有真底色才加段首空白，
     // 透明段不加——对齐 p10k lean 行首不留空。
-    let has_real_bg = style.bg != Color::Default;
-    // 保证段都有背景:无显式 bg → defaults.bg → 内置默认背景。
-    if style.bg == Color::Default {
-        style.bg = if config.defaults.bg != Color::Default {
-            config.defaults.bg.clone()
-        } else {
-            Color::Xterm(0) // 内置默认背景(黑)
-        };
+    // 段有效背景：段自己写的 → 全局 `defaults.bg`（p10k 的
+    // `POWERLEVEL9K_BACKGROUND`）→ 都没有则透明（终端自己的底色）。
+    // 以前这里强制黑底，会在非黑终端上画出黑块，也让右栏分隔符误判成"异底"
+    // 而画成箭头。下面"段首空白"用的是**继承之后**的有效背景。
+    if style.bg == Color::Default && config.defaults.bg != Color::Default {
+        style.bg = config.defaults.bg.clone();
     }
+    let has_real_bg = style.bg != Color::Default;
     let text = match name {
         "dir" => dir_seg_text(config, info, seg, &style, dir_budget),
         "vcs" => {
@@ -3593,8 +3592,9 @@ mod tests {
             li < ii && ii < mi && mi < ci && ci < ri,
             "顺序应为 左<icon<中<内容<右,实际:{h:?}"
         );
-        assert!(
-            h.contains("\x1b[38;5;196m\x1b[48;5;0mR"),
+        assert_eq!(
+            fg_before(&h, "R").as_deref(),
+            Some("196"),
             "text-right 配 fg=196 应覆盖前景,实际:{h:?}"
         );
     }

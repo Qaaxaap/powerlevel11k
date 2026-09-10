@@ -269,12 +269,13 @@ impl Default for Segment {
 impl Segment {
     /// 取某 state(或段默认)的样式,走 段STATE → 段 → 全局 三段回退。
     pub fn effective_style(&self, state: Option<&str>, globals: &Style) -> Style {
-        if let Some(st) = state {
-            if let Some(spec) = self.states.get(st) {
-                return merge_style(&spec.style, &self.style);
-            }
+        // 以前 state 命中时直接 merge(state, 段)，把 `defaults` 丢了，于是带
+        // state 的部件（dir 的 ANCHOR/SHORTENED 等）拿不到全局底色。
+        let base = merge_style(&self.style, globals);
+        match state.and_then(|st| self.states.get(st)) {
+            Some(spec) => merge_style(&spec.style, &base),
+            None => base,
         }
-        merge_style(&self.style, globals)
     }
 
     /// 段在当前 state 下渲染的字符:state.char → 段 `char` 属性 → `default_char`。
