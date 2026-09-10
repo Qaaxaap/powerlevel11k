@@ -340,6 +340,20 @@ pub struct Config {
     pub mode: IconMode,
     /// 顶层 `icon{}` 覆盖表(图标名 → 覆盖;段渲染时按它引用的图标名查)。
     pub icon_overrides: BTreeMap<String, IconOverride>,
+    /// `dir-classes { class "pattern" state="WORK" icon="…" }`：
+    /// 按路径模式给 dir 段换 state / 图标（对齐 p10k `DIR_CLASSES`）。
+    pub dir_classes: Vec<DirClass>,
+}
+
+/// 一条目录分类规则（p10k `DIR_CLASSES` 的三元组）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct DirClass {
+    /// 匹配 `$PWD` 的 glob：`~` 展开为 $HOME、`*`/`?`/`[…]` 不跨 `/`、`**` 跨。
+    pub pattern: String,
+    /// 命中后 dir 段使用的 state 名（`state <名字>` 上色）。
+    pub state: String,
+    /// 命中后 dir 段的图标字符；空 = 用默认文件夹图标。
+    pub icon: String,
 }
 
 impl Default for Config {
@@ -354,6 +368,7 @@ impl Default for Config {
             vcs_remote_icons: default_remote_icons(),
             mode: IconMode::NerdfontComplete,
             icon_overrides: BTreeMap::new(),
+            dir_classes: Vec::new(),
         }
     }
 }
@@ -412,6 +427,27 @@ impl Config {
         }
         if !self.icon_overrides.is_empty() {
             doc.nodes_mut().push(self.icon_node());
+        }
+        if !self.dir_classes.is_empty() {
+            let mut n = KdlNode::new("dir-classes");
+            let ch = n.ensure_children();
+            for c in &self.dir_classes {
+                let mut cn = KdlNode::new("class");
+                cn.entries_mut()
+                    .push(KdlEntry::new(KdlValue::String(c.pattern.clone())));
+                if !c.state.is_empty() {
+                    cn.entries_mut().push(KdlEntry::new_prop(
+                        "state",
+                        KdlValue::String(c.state.clone()),
+                    ));
+                }
+                if !c.icon.is_empty() {
+                    cn.entries_mut()
+                        .push(KdlEntry::new_prop("icon", KdlValue::String(c.icon.clone())));
+                }
+                ch.nodes_mut().push(cn);
+            }
+            doc.nodes_mut().push(n);
         }
         doc
     }
@@ -561,6 +597,7 @@ impl Config {
             IconMode::Ascii
         };
         let mut icon_overrides: BTreeMap<String, IconOverride> = BTreeMap::new();
+        let mut dir_classes: Vec<DirClass> = Vec::new();
 
         for node in doc.nodes() {
             match node.name().value() {
@@ -591,6 +628,7 @@ impl Config {
                     }
                 }
                 "icon" => icon_overrides = parse_icon_table(node),
+                "dir-classes" => dir_classes = parse_dir_classes(node),
                 _ => {} // 未知顶层忽略(向前兼容)
             }
         }
@@ -603,6 +641,7 @@ impl Config {
             vcs_remote_icons,
             mode,
             icon_overrides,
+            dir_classes,
         })
     }
 }
@@ -894,6 +933,38 @@ fn merge_segment(a: &mut Segment, b: Segment) {
 }
 
 /// 解析 `vcs-remote-icons` 节点:每个子节点 = domain→icon 字符串。
+/// 解析 `dir-classes { class "pattern" state="WORK" icon="…" }`。
+/// 第一个参数是模式，`state` / `icon` 是节点属性；按声明顺序匹配，先命中先用。
+fn parse_dir_classes(node: &KdlNode) -> Vec<DirClass> {
+    let mut out = Vec::new();
+    let Some(ch) = node.children() else {
+        return out;
+    };
+    for child in ch.nodes() {
+        if child.name().value() != "class" {
+            continue;
+        }
+        let Some(KdlValue::String(pattern)) = first_value(child) else {
+            continue;
+        };
+        let attr = |key: &str| -> String {
+            child
+                .entries()
+                .iter()
+                .find(|e| e.name().map(|n| n.value() == key).unwrap_or(false))
+                .and_then(|e| e.value().as_string())
+                .unwrap_or_default()
+                .to_string()
+        };
+        out.push(DirClass {
+            pattern: pattern.clone(),
+            state: attr("state"),
+            icon: attr("icon"),
+        });
+    }
+    out
+}
+
 fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
     let mut out = Vec::new();
     if let Some(ch) = node.children() {

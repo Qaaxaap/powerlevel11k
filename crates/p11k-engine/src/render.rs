@@ -740,11 +740,88 @@ fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>, cwd: &str)
         return icon_str(config, "git");
     }
     // p10k `DIR_SHOW_WRITABLE`：不可写（v3 下还包括不存在）时 dir 的图标换成锁。
-    if name == "dir" && dir_writable_state(config.segment("dir"), cwd).is_some() {
-        return icon_str(config, "lock");
+    if name == "dir" {
+        if dir_writable_state(config.segment("dir"), cwd).is_some() {
+            return icon_str(config, "lock");
+        }
+        // p10k `DIR_CLASSES`：命中规则的图标；p10k 里空图标 = 明确不要图标，
+        // 不是回退默认文件夹图标（实测 HOME 类 icon='' 时 p10k 一个图标都不画）。
+        if let Some(c) = dir_class_match(config, cwd) {
+            return if c.icon.is_empty() {
+                None
+            } else {
+                Some(c.icon.clone())
+            };
+        }
     }
     let key = segment_icon_key(name)?;
     icon_str(config, key)
+}
+
+/// 按 `dir-classes` 顺序匹配 cwd，返回第一条命中的规则（p10k `DIR_CLASSES`）。
+fn dir_class_match<'a>(config: &'a Config, cwd: &str) -> Option<&'a crate::config::DirClass> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    config
+        .dir_classes
+        .iter()
+        .find(|c| glob_match_path(&c.pattern, cwd, &home))
+}
+
+/// p10k 的 `DIR_CLASSES` 用 zsh 扩展 glob 匹配 `$PWD`；p11k 用简化 glob：
+/// `~` 展开为 $HOME、`*` / `?` / `[…]` 不跨 `/`、`**` 跨目录，其余字面比较。
+/// 以 `/` 结尾的模式（`~/work/`）额外匹配其下所有子目录。
+fn glob_match_path(pattern: &str, path: &str, home: &str) -> bool {
+    let pat = match pattern.strip_prefix('~') {
+        Some(rest) => format!("{home}{rest}"),
+        None => pattern.to_string(),
+    };
+    if pat.ends_with('/') {
+        return glob_match(&format!("{pat}**"), path);
+    }
+    glob_match(&pat, path)
+}
+
+/// 简化 glob：`**` 跨 `/`，`*` / `?` / `[…]` 不跨。
+fn glob_match(pat: &str, text: &str) -> bool {
+    fn go(p: &[char], t: &[char]) -> bool {
+        match p.first() {
+            None => t.is_empty(),
+            Some('*') if p.get(1) == Some(&'*') => (0..=t.len()).any(|i| go(&p[2..], &t[i..])),
+            Some('*') => (0..=t.len())
+                .take_while(|i| *i == 0 || t[i - 1] != '/')
+                .any(|i| go(&p[1..], &t[i..])),
+            Some('?') => !t.is_empty() && t[0] != '/' && go(&p[1..], &t[1..]),
+            Some('[') => {
+                let Some(close) = p.iter().position(|c| *c == ']') else {
+                    return !t.is_empty() && t[0] == '[' && go(&p[1..], &t[1..]);
+                };
+                if t.is_empty() || t[0] == '/' {
+                    return false;
+                }
+                let set: Vec<char> = p[1..close].to_vec();
+                let mut hit = false;
+                let mut i = 0;
+                while i < set.len() {
+                    if i + 2 < set.len() && set[i + 1] == '-' {
+                        if t[0] >= set[i] && t[0] <= set[i + 2] {
+                            hit = true;
+                        }
+                        i += 3;
+                    } else {
+                        if set[i] == t[0] {
+                            hit = true;
+                        }
+                        i += 1;
+                    }
+                }
+                hit && go(&p[close + 1..], &t[1..])
+            }
+            Some(c) => !t.is_empty() && t[0] == *c && go(&p[1..], &t[1..]),
+        }
+    }
+    let p: Vec<char> = pat.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    go(&p, &t)
 }
 
 /// p10k `DIR_SHOW_WRITABLE` 的取值：`#true`=1、`"v2"`=2、`"v3"`=3（与 p10k 一样，
@@ -1831,10 +1908,23 @@ fn dir_seg_text(
             crate::dir_shorten::Class::Shortened => Some("SHORTENED"),
             crate::dir_shorten::Class::Normal => None,
         };
-        // 不可写/不存在优先于 ANCHOR/SHORTENED（p10k 也是先定 state 再取色）。
+        // 不可写/不存在优先于 ANCHOR/SHORTENED（p10k 也是先定 state 再取色）；
+        // 配了 `dir-classes` 时先套上命中类的 state 名，再拼不可写后缀
+        // （p10k：WORK → WORK_NOT_WRITABLE / WORK_NON_EXISTENT）。
         let mut st = match writable_state {
-            Some(s) => seg.effective_style(Some(s), &config.defaults),
-            None => seg.effective_style(state, &config.defaults),
+            Some(s) => {
+                let named = dir_class_match(config, &info.cwd)
+                    .map(|c| format!("{}_{}", c.state, s))
+                    .filter(|n| seg.states.contains_key(n))
+                    .or_else(|| Some(s.to_string()));
+                seg.effective_style(named.as_deref(), &config.defaults)
+            }
+            None => match dir_class_match(config, &info.cwd) {
+                Some(c) if !c.state.is_empty() => {
+                    seg.effective_style(Some(&c.state), &config.defaults)
+                }
+                _ => seg.effective_style(state, &config.defaults),
+            },
         };
         if i == last {
             st = prop_style(seg, &st, "path-highlight-foreground");
@@ -3421,6 +3511,49 @@ mod tests {
         let cfg = Config::parse(src).unwrap_or_else(|e| panic!("parse: {e}\nsrc={src:?}"));
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 40).join("\r\n");
         assert_eq!(display_width(&h), 40, "行宽应仍对齐 cols=40,实际:{h:?}");
+    }
+
+    #[test]
+    fn dir_classes_match_pattern_state_and_icon() {
+        // p10k DIR_CLASSES：第一条命中的规则决定 state 与图标。
+        fn render(cwd: &str, extra: &str) -> String {
+            let cfg = Config::parse(&format!(
+                "layout {{ left {{ line {{ dir #true }} }} }}\n\
+                 dir-classes {{\n  class \"~/work/**\" state=\"WORK\" icon=\"★\"\n  \
+                 class \"~/**\" state=\"HOME\"\n}}\n\
+                 segments {{ dir fg=31 {extra} {{\n  state \"WORK\" fg=196\n  state \"HOME\" fg=39\n}} }}"
+            ))
+            .unwrap();
+            render_header_lines(&cfg, &info(cwd, None), None, 120).join("\n")
+        }
+        let home = std::env::var("HOME").unwrap();
+        // 命中 WORK：自定义图标 + 196 色。
+        let h = render(&format!("{home}/work/proj"), "");
+        assert!(h.contains('★'), "应命中 WORK 的图标,实际 {h:?}");
+        assert!(
+            h.contains("[38;5;196m"),
+            "应命中 WORK 的 state 色,实际 {h:?}"
+        );
+        // 只命中 HOME。
+        let h = render(&format!("{home}/other"), "");
+        assert!(!h.contains('★'), "不该命中 WORK,实际 {h:?}");
+        assert!(
+            h.contains("[38;5;39m"),
+            "应命中 HOME 的 state 色,实际 {h:?}"
+        );
+        // 不可写目录：图标换锁（p10k 的 _NOT_WRITABLE 后缀规则）。
+        let h = render("/proc", "show-writable=v3");
+        assert!(h.contains("\u{f023}"), "不可写应显示锁,实际 {h:?}");
+        // 都不命中 → 段默认色。
+        let cfg = Config::parse(
+            "layout { left { line { dir #true } } }\n\
+             dir-classes { class \"/nope/**\" state=\"X\" }\n\
+             segments { dir fg=31 { state \"X\" fg=196 } }",
+        )
+        .unwrap();
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 120).join("\n");
+        assert!(h.contains("[38;5;31m"), "没命中应用段默认色,实际 {h:?}");
+        assert!(!h.contains("[38;5;196m"), "实际 {h:?}");
     }
 
     #[test]
