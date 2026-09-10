@@ -19,6 +19,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use crate::i18n::t;
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 
 /// 颜色:数字=256 调色板、`#rrggbb`=24 位、`"default"`/缺省=继承终端。
@@ -394,8 +395,7 @@ impl Default for Config {
 impl Config {
     /// 解析 KDL 文本为配置。
     pub fn parse(src: &str) -> Result<Config, String> {
-        let doc = KdlDocument::parse(src)
-            .map_err(|e| format!("{}{e}", crate::i18n::t("KDL parse error: ")))?;
+        let doc = KdlDocument::parse(src).map_err(|e| format!("{}{e}", t("KDL parse error: ")))?;
         Self::parse_doc(&doc)
     }
 
@@ -1140,7 +1140,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
             match child.name().value() {
                 "state" => {
                     let Some(nm) = first_state_name(child) else {
-                        return Err(crate::i18n::t("`state` needs a name (a positional string)"));
+                        return Err(t("`state` needs a name (a positional string)"));
                     };
                     // state 覆盖 = 样式 + 可选 char。
                     let st = Style::from_entries(child.entries());
@@ -1159,7 +1159,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                         return Err(format!(
                             "{}{}",
                             child.name().value(),
-                            crate::i18n::t(" needs text (a positional string)")
+                            t(" needs text (a positional string)")
                         ));
                     };
                     let attach = AttachText {

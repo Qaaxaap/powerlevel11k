@@ -120,9 +120,9 @@ target/debug/p11k --shell zsh                    # English (default)
 `P11K_LOCALEDIR` overrides the translation directory (defaults to the one baked
 in at build time), e.g. `P11K_LOCALEDIR=/usr/share/locale` for a system install.
 Adding a language is one file plus a rebuild — copy `po/zh_CN.po` to
-`po/<lang>.po`, translate the `msgstr`s, `cargo build -p p11k-engine`. A unit
-test keeps `po/` honest: every msgid in a catalog must still appear in the
-sources.
+`po/<lang>.po`, translate the `msgstr`s, `cargo build -p p11k-engine`. Catalogs
+are kept in sync with the code by `tools/i18n.sh extract|update`, and a unit
+test fails when the sources, `po/p11k.pot` and the catalogs disagree.
 
 ## compat/p10k: a drop-in gitstatusd
 

@@ -7,7 +7,7 @@
 
 use std::sync::Once;
 
-use gettextrs::{bindtextdomain, gettext, setlocale, textdomain, LocaleCategory};
+use gettextrs::{LocaleCategory, bindtextdomain, gettext, setlocale, textdomain};
 
 static INIT: Once = Once::new();
 
@@ -16,59 +16,171 @@ pub fn init() {
     INIT.call_once(|| {
         // 空字符串 = 从环境变量取 locale。
         let _ = setlocale(LocaleCategory::LcAll, "");
-        let dir = std::env::var("P11K_LOCALEDIR")
-            .unwrap_or_else(|_| env!("P11K_LOCALEDIR").to_string());
+        let dir =
+            std::env::var("P11K_LOCALEDIR").unwrap_or_else(|_| env!("P11K_LOCALEDIR").to_string());
         let _ = bindtextdomain("p11k", dir);
         let _ = textdomain("p11k");
     });
 }
 
 /// 翻译一条 msgid。找不到翻译时返回原文。
-pub fn t(msgid: &str) -> String {
-    gettext(msgid)
+pub fn t(s: &str) -> String {
+    gettext(s)
+}
+
+/// 标记一个字符串是 msgid，不翻译。
+///
+/// 给「先收下文案、稍后在别处统一翻译」的地方用（wizard 的问题标题与选项：
+/// 调用点只传字面量，翻译发生在 `ask_choice_preview`/`ask_yn` 里）。有了它，
+/// `xgettext --keyword=msgid` 就能把那些字面量一并提取进 `po/p11k.pot`。
+pub const fn msgid(s: &'static str) -> &'static str {
+    s
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
-    /// 参与文案的源文件:po 里的每条 msgid 都必须能在其中一处找到原文,
-    /// 否则就是改了文案没同步翻译(或拼错了)。
-    const SOURCES: &[&str] = &[
-        include_str!("main.rs"),
-        include_str!("config.rs"),
-        include_str!("render.rs"),
-        include_str!("presets.rs"),
-        include_str!("wizard.rs"),
+    /// 装了文案的源文件（与 tools/i18n.sh 扫的是同一批；i18n.rs 自己不算，
+    /// 它只有封装，没有文案）。
+    const SOURCES: &[(&str, &str)] = &[
+        ("main.rs", include_str!("main.rs")),
+        ("config.rs", include_str!("config.rs")),
+        ("render.rs", include_str!("render.rs")),
+        ("presets.rs", include_str!("presets.rs")),
+        ("wizard.rs", include_str!("wizard.rs")),
     ];
 
-    fn po_msgids(po: &str) -> Vec<String> {
-        let mut ids = Vec::new();
-        for block in po.split("\n\n") {
-            for line in block.lines() {
-                if let Some(rest) = line.strip_prefix("msgid \"") {
-                    let id = rest.strip_suffix('"').unwrap_or(rest);
-                    // 头部那条 `msgid ""`(元信息)不算。
-                    if !id.is_empty() {
-                        ids.push(id.to_string());
+    /// 解析 .po/.pot:每条 msgid 取出来（含续行分片），头部那条空 msgid 跳过。
+    fn catalog_msgids(text: &str) -> BTreeSet<String> {
+        let mut ids = BTreeSet::new();
+        let mut cur: Option<String> = None;
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("msgid ") {
+                if let Some(s) = cur.take() {
+                    ids.insert(s);
+                }
+                cur = Some(unescape(rest.trim_matches('"')));
+            } else if let Some(rest) = line.strip_prefix('"') {
+                // 上一条 msgid 的续行分片（msgstr 的续行不会走到这里：
+                // msgstr 行本身以 `msgstr` 开头，会先清掉 cur）。
+                if let Some(s) = cur.as_mut() {
+                    s.push_str(&unescape(rest.trim_matches('"')));
+                }
+            } else {
+                if let Some(s) = cur.take() {
+                    ids.insert(s);
+                }
+            }
+        }
+        if let Some(s) = cur {
+            ids.insert(s);
+        }
+        ids.remove("");
+        ids
+    }
+
+    fn unescape(s: &str) -> String {
+        let mut out = String::new();
+        let mut it = s.chars();
+        while let Some(c) = it.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            match it.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        }
+        out
+    }
+
+    /// 扫源码里的 `t("…")` 与 `msgid("…")`。
+    ///
+    /// 逐行去掉 `//` 注释后拼成一段字符流再找标记：rustfmt 会把长文案折行，
+    /// 所以 `t(`/`msgid(` 后面允许换行与缩进，只看紧跟的是不是字符串字面量。
+    /// 标记前面必须是分隔符，免得 `format!(`、`gettext(` 之类被算进来。
+    fn source_msgids(name: &str, src: &str) -> BTreeSet<String> {
+        let code: String = src
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut ids = BTreeSet::new();
+        for marker in ["t(", "msgid("] {
+            let mut from = 0;
+            while let Some(pos) = code[from..].find(marker) {
+                let at = from + pos;
+                let prev = code[..at].chars().next_back();
+                let after = &code[at + marker.len()..];
+                let indented = after.len() - after.trim_start().len();
+                let is_call = !prev.is_some_and(|c| c.is_alphanumeric() || c == '_');
+                if is_call {
+                    if let Some(rest) = after.trim_start().strip_prefix('"') {
+                        let end = rest
+                            .find('"')
+                            .unwrap_or_else(|| panic!("{name}: 字符串字面量未闭合: {after:.40}"));
+                        assert!(
+                            !rest[..end].ends_with('\\'),
+                            "{name}: 有转义引号，扫描器处理不了: {after:.40}"
+                        );
+                        ids.insert(unescape(&rest[..end]));
                     }
                 }
+                from = at + marker.len() + indented;
             }
         }
         ids
     }
 
+    fn all_source_msgids() -> BTreeSet<String> {
+        SOURCES
+            .iter()
+            .flat_map(|(name, src)| source_msgids(name, src))
+            .collect()
+    }
+
     #[test]
-    fn every_translated_msgid_is_present_in_the_sources() {
-        let po = include_str!("../po/zh_CN.po");
-        let ids = po_msgids(po);
-        assert!(ids.len() > 50, "po 里的条目太少，像是没解析出来");
-        for id in ids {
-            assert!(
-                SOURCES.iter().any(|src| src.contains(&id)),
-                "po 里的 msgid 在源码中找不到:{id:?}"
-            );
-        }
+    fn source_msgids_match_the_pot() {
+        let src = all_source_msgids();
+        let pot = catalog_msgids(include_str!("../po/p11k.pot"));
+        assert!(src.len() > 60, "源码里扫到的 msgid 太少:{src:?}");
+        let missing: Vec<_> = src.difference(&pot).collect();
+        let stale: Vec<_> = pot.difference(&src).collect();
+        assert!(
+            missing.is_empty() && stale.is_empty(),
+            "源码与 po/p11k.pot 不一致，跑 tools/i18n.sh extract\n  只在源码里:{missing:?}\n  只在 pot 里:{stale:?}"
+        );
+    }
+
+    #[test]
+    fn catalogs_cover_every_msgid() {
+        let src = all_source_msgids();
+        let pot = catalog_msgids(include_str!("../po/p11k.pot"));
+        let po = catalog_msgids(include_str!("../po/zh_CN.po"));
+
+        let untranslated: Vec<_> = pot.difference(&po).collect();
+        assert!(
+            untranslated.is_empty(),
+            "zh_CN.po 缺条目（跑 tools/i18n.sh update 再补 msgstr）:{untranslated:?}"
+        );
+        let stale: Vec<_> = po.difference(&src).collect();
+        assert!(
+            stale.is_empty(),
+            "zh_CN.po 里有源码里已经没有的条目:{stale:?}"
+        );
     }
 
     #[test]
@@ -86,7 +198,8 @@ mod tests {
         assert_eq!(gettext("Prompt Style"), "提示符风格");
         assert_eq!(gettext("Restart from the beginning."), "从头再来。");
         // 没有翻译条目的 msgid 原样返回(英文即默认语言)。
-        assert_eq!(gettext("no such msgid"), "no such msgid");
+        let unknown = String::from("no such msgid");
+        assert_eq!(gettext(&unknown), unknown);
 
         let _ = setlocale(LocaleCategory::LcAll, "C");
     }

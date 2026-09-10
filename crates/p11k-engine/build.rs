@@ -14,10 +14,7 @@ fn main() {
     let locale_dir = out_dir.join("locale");
 
     println!("cargo:rerun-if-changed=po");
-    println!(
-        "cargo:rustc-env=P11K_LOCALEDIR={}",
-        locale_dir.display()
-    );
+    println!("cargo:rustc-env=P11K_LOCALEDIR={}", locale_dir.display());
 
     let Ok(entries) = std::fs::read_dir(&po_dir) else {
         println!("cargo:warning=no po/ directory, building without translations");
@@ -39,21 +36,16 @@ fn main() {
         }
         let mo = target_dir.join("p11k.mo");
         println!("cargo:rerun-if-changed={}", path.display());
-        match Command::new(&msgfmt)
-            .arg("-o")
-            .arg(&mo)
-            .arg(&path)
-            .output()
-        {
+        match Command::new(&msgfmt).arg("-o").arg(&mo).arg(&path).output() {
             Ok(out) if out.status.success() => {}
             Ok(out) => println!(
                 "cargo:warning=msgfmt failed for {}: {}",
                 lang,
                 String::from_utf8_lossy(&out.stderr).trim()
             ),
-            Err(e) => println!(
-                "cargo:warning=cannot run {msgfmt} ({e}); building without translations"
-            ),
+            Err(e) => {
+                println!("cargo:warning=cannot run {msgfmt} ({e}); building without translations")
+            }
         }
     }
 }

@@ -35,6 +35,26 @@ The theme config language has its own spec, kept in sync with the engine:
 [docs/config-language.md](docs/config-language.md). Follow it when
 changing config parsing or rendering.
 
+## Translations
+
+User-facing text is gettext: English msgids in the code, catalogs in
+`crates/p11k-engine/po/`. When you add, remove or reword user-facing text:
+
+```bash
+tools/i18n.sh extract   # xgettext -> po/p11k.pot
+tools/i18n.sh update    # msgmerge the new entries into every po/*.po
+```
+
+then fill in the new `msgstr`s. Two rules the test suite enforces:
+
+- Text that is translated right where it is written goes through
+  `t("…")`; text that is collected and translated later (wizard question
+  titles and options) is wrapped in `msgid("…")` so the extractor sees it.
+  Both must be plain string literals.
+- `cargo test -p p11k-engine` fails if the sources, `po/p11k.pot` and the
+  catalogs disagree in either direction, so a forgotten extract/update or
+  a stale entry cannot slip through.
+
 ## AI policy
 
 Production code in this repository is written by humans. The maintainer
@@ -121,6 +141,25 @@ Everything in this repository is LGPL-3.0-or-later, including contributions.
 
 主题配置语言规范在独立文档，随引擎同步维护:
 [docs/config-language.md](docs/config-language.md)。改动配置解析或渲染时遵守。
+
+## 文案翻译
+
+用户可见文案走 gettext：代码里写英文 msgid，词条放在
+`crates/p11k-engine/po/`。新增/删除/改写用户可见文案时：
+
+```bash
+tools/i18n.sh extract   # xgettext → po/p11k.pot
+tools/i18n.sh update    # msgmerge 把新条目并进每个 po/*.po
+```
+
+再补上新条目的 `msgstr`。有两条由测试兜底的规矩：
+
+- 就地翻译的文案写 `t("…")`；先收集、稍后统一翻译的（wizard 的问题标题
+  与选项）包一层 `msgid("…")`，好让提取器看得见。两者都必须是纯字符串
+  字面量。
+- 源码、`po/p11k.pot`、各语言词条三者只要有一处对不上，
+  `cargo test -p p11k-engine` 就失败——忘了 extract/update 或留下过时条目
+  都混不过去。
 
 ## AI 政策
 

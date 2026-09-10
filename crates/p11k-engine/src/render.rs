@@ -10,6 +10,7 @@
 use std::fmt::Write as _;
 
 use crate::config::{AttachText, Color, Config, Element, Segment, Style};
+use crate::i18n::t;
 use crate::theme::{GitStatus, HeaderInfo};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -126,7 +127,9 @@ pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
             if w != base {
                 return Err(format!(
                     "{}: prompt_char state `{name}` is {w} wide, the normal state is {base}",
-                    crate::i18n::t("prompt_char states must all be the same width (the prompt width is fixed at startup)")
+                    t(
+                        "prompt_char states must all be the same width (the prompt width is fixed at startup)"
+                    )
                 ));
             }
         }

@@ -98,8 +98,8 @@ target/debug/p11k --shell zsh                    # 英文（默认）
 `P11K_LOCALEDIR` 可覆盖翻译目录（缺省用构建期写进二进制的那个），例如装到系统
 后用 `P11K_LOCALEDIR=/usr/share/locale`。加一门语言就是加一个文件再重新构建：
 把 `po/zh_CN.po` 复制成 `po/<lang>.po`，改 `msgstr`，`cargo build -p p11k-engine`。
-有个单元测试盯着 `po/`：里面每条 msgid 都必须仍能在源码里找到，防止改了文案忘
-同步翻译。
+词条与代码的同步由 `tools/i18n.sh extract|update` 负责，源码、`po/p11k.pot`、
+各语言词条三者只要对不上，单元测试就会失败。
 
 ## compat/p10k：gitstatusd 即插即用
 

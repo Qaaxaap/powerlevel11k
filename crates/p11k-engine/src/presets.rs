@@ -8,6 +8,7 @@
 use crate::config::{
     Color, Config, Element, Frame, FramePiece, Prop, Segment, Separators, StateSpec, Style,
 };
+use crate::i18n::msgid;
 
 /// classic 段背景四档（Lightest/Light/Dark/Darkest）。
 pub const BG_COLORS: [u8; 4] = [240, 238, 236, 234];
@@ -423,10 +424,10 @@ impl PresetKind {
     /// 向导里的风格名（对齐 p10k `ask_style` 的说法）。
     pub fn title(self) -> &'static str {
         match self {
-            PresetKind::Lean => "Lean.",
-            PresetKind::Classic => "Classic.",
-            PresetKind::Rainbow => "Rainbow.",
-            PresetKind::Pure => "Pure.",
+            PresetKind::Lean => msgid("Lean."),
+            PresetKind::Classic => msgid("Classic."),
+            PresetKind::Rainbow => msgid("Rainbow."),
+            PresetKind::Pure => msgid("Pure."),
         }
     }
 

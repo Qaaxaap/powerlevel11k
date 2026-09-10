@@ -52,6 +52,7 @@ extern "C" fn handle_sigwinch(_sig: libc::c_int) {
 }
 
 use config::Config;
+use i18n::t;
 use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use theme::{GitStatus, HeaderInfo};
@@ -111,7 +112,7 @@ fn load_config() -> Config {
             Ok(c) => return c,
             Err(e) => eprintln!(
                 "p11k: {}{path:?}: {e}",
-                i18n::t("cannot read config, falling back to the built-in lean theme: ")
+                t("cannot read config, falling back to the built-in lean theme: ")
             ),
         }
     }
@@ -121,7 +122,9 @@ fn load_config() -> Config {
         }
         eprintln!(
             "p11k: {}{name:?}",
-            i18n::t("unknown preset, falling back to the built-in lean theme (expected lean/classic/rainbow/pure): ")
+            t(
+                "unknown preset, falling back to the built-in lean theme (expected lean/classic/rainbow/pure): "
+            )
         );
     }
     fallback()
@@ -371,12 +374,12 @@ fn main() -> anyhow::Result<()> {
             "p11k: {}\n\
              p11k: {}\n\
              p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k --shell zsh",
-            i18n::t("recursive launch detected (p11k started inside a p11k session)"),
-            i18n::t("make sure the bootstrap line in ~/.zshrc is guarded, e.g.:")
+            t("recursive launch detected (p11k started inside a p11k session)"),
+            t("make sure the bootstrap line in ~/.zshrc is guarded, e.g.:")
         );
         use std::os::unix::process::CommandExt;
         let err = std::process::Command::new("zsh").arg("-f").exec();
-        eprintln!("p11k: {}{err}", i18n::t("cannot exec zsh -f: "));
+        eprintln!("p11k: {}{err}", t("cannot exec zsh -f: "));
         std::process::exit(1);
     }
 
@@ -386,10 +389,12 @@ fn main() -> anyhow::Result<()> {
     // prompt_char 各态(正常/ERROR)提示符必须等宽。
     // 不等宽是配置错误,直接在真实终端报错,再 exec 干净 shell
     if let Err(e) = crate::render::check_prompt_char_widths(&config) {
-        eprintln!("p11k: {}{e}", i18n::t("config error: "));
+        eprintln!("p11k: {}{e}", t("config error: "));
         eprintln!(
             "p11k: {}",
-            i18n::t("every prompt_char state must be the same width (the prompt width is fixed at startup). Fix the config and start p11k again.")
+            t(
+                "every prompt_char state must be the same width (the prompt width is fixed at startup). Fix the config and start p11k again."
+            )
         );
         use std::os::unix::process::CommandExt;
         let err = match shell {
@@ -399,7 +404,7 @@ fn main() -> anyhow::Result<()> {
                 .exec(),
             Shell::Fish => std::process::Command::new("fish").arg("--no-config").exec(),
         };
-        eprintln!("p11k: {}{err}", i18n::t("cannot exec a clean shell: "));
+        eprintln!("p11k: {}{err}", t("cannot exec a clean shell: "));
         std::process::exit(1);
     }
     let prefix = crate::render::input_prefix(&config, None);
