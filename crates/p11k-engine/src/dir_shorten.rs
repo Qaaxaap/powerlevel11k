@@ -93,6 +93,11 @@ pub struct Opts {
     pub delimiter: String,
     /// `SHORTEN_FOLDER_MARKER`；空 = 用内置 marker 列表。
     pub marker: String,
+    /// `truncate_to_unique` 的折叠预算：`None` = 不折（整行放得下时 p10k 就是
+    /// 原样显示），`Some(n)` = 这一行超宽了、需要省出 n 列。p10k 是按行宽动态
+    /// 决定折几级的（实测 100 列不折、90 列折一级、80 列折两级）。其它策略与
+    /// p10k 一样与宽度无关，忽略本字段。
+    pub budget: Option<usize>,
 }
 
 /// 内置 marker 文件（p10k 的默认 `markers` 列表）。
@@ -145,9 +150,14 @@ fn to_parts(p: &Path) -> Vec<String> {
 }
 
 /// `truncate_to_unique`：锚点保留，其余缩到唯一前缀。
+///
+/// `opts.budget` 为 `None` 时整条路径原样（p10k 放得下就不折）；`Some(n)` 时
+/// 从前往后逐级折，累计省出的列数够 n 就停——p10k 在窄终端正是这个行为。
 fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) -> Vec<DirPart> {
     let n = parts.len();
     let anchor_tail = shortenlen.min(n);
+    let delim_len = opts.delimiter.chars().count();
+    let mut saved = 0usize;
     let mut out: Vec<DirPart> = Vec::with_capacity(n);
     for (i, part) in parts.iter().enumerate() {
         let abs = join(base, &parts[..=i]);
@@ -157,15 +167,30 @@ fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) ->
                 text: part.clone(),
                 class: Class::Anchor,
             });
-        } else {
-            let text = shorten_component(&abs, part);
-            let class = if text != *part {
-                Class::Shortened
-            } else {
-                Class::Normal
-            };
-            out.push(DirPart { text, class });
+            continue;
         }
+        let text = match opts.budget {
+            None => part.clone(),
+            Some(budget) => {
+                let short = shorten_component(&abs, part);
+                let gain = part
+                    .chars()
+                    .count()
+                    .saturating_sub(short.chars().count() + delim_len);
+                if gain > 0 && saved < budget {
+                    saved += gain;
+                    short
+                } else {
+                    part.clone()
+                }
+            }
+        };
+        let class = if text != *part {
+            Class::Shortened
+        } else {
+            Class::Normal
+        };
+        out.push(DirPart { text, class });
     }
     out
 }
@@ -443,6 +468,8 @@ mod tests {
             length,
             delimiter: delimiter.into(),
             marker: String::new(),
+            // 测试里给足预算(等价于"行放不下、随便折")。
+            budget: Some(usize::MAX),
         }
     }
 

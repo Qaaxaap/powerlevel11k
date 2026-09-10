@@ -156,14 +156,17 @@ pub fn render_header_lines(
     let frame = &config.frame;
     (0..lines)
         .map(|i| {
-            let l = left
-                .get(i)
-                .map(|seg| render_row(config, seg, info, vcs, false))
-                .unwrap_or_default();
-            let r = right
-                .get(i)
-                .map(|seg| render_row(config, seg, info, vcs, true))
-                .unwrap_or_default();
+            let render_side = |budget: Option<usize>| {
+                let l = left
+                    .get(i)
+                    .map(|seg| render_row(config, seg, info, vcs, false, budget))
+                    .unwrap_or_default();
+                let r = right
+                    .get(i)
+                    .map(|seg| render_row(config, seg, info, vcs, true, budget))
+                    .unwrap_or_default();
+                (l, r)
+            };
             // 每行帧:首行 first,其余 header 行 newline。
             let (prefix, suffix) = if i == 0 {
                 (&frame.first_prefix, &frame.first_suffix)
@@ -177,12 +180,19 @@ pub fn render_header_lines(
                 row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
             }
             // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
-            let body = assemble_row(
-                &l,
-                &r,
-                cols.saturating_sub(pre_w + suf_w),
-                &config.separators,
-            );
+            let body_budget = cols.saturating_sub(pre_w + suf_w);
+            // 第一遍:完全不折(p10k 放得下时就是原样)。
+            let (l, r) = render_side(None);
+            let body = assemble_row(&l, &r, body_budget, &config.separators);
+            // 超宽了 → 按超出多少列给 dir 一个折叠预算,重渲染一遍。
+            // (p10k 的 dir 折叠是动态的:窄终端折、宽终端不折。)
+            let width = display_width(&body);
+            let body = if width > body_budget {
+                let (l, r) = render_side(Some(width - body_budget));
+                assemble_row(&l, &r, body_budget, &config.separators)
+            } else {
+                body
+            };
             row.push_str(&body);
             if !suffix.text.is_empty() {
                 row.push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
@@ -199,12 +209,13 @@ fn render_row(
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
     right: bool,
+    dir_budget: Option<usize>,
 ) -> Vec<SegmentText> {
     elements
         .iter()
         .map(|el| match el {
-            Element::Seg(name) => render_segment(config, name, info, vcs, right),
-            Element::Joined(name) => render_segment(config, name, info, vcs, right),
+            Element::Seg(name) => render_segment(config, name, info, vcs, right, dir_budget),
+            Element::Joined(name) => render_segment(config, name, info, vcs, right, dir_budget),
             Element::Text(t) => {
                 let mut style = config
                     .segment("text")
@@ -233,6 +244,7 @@ fn render_segment(
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
     right: bool,
+    dir_budget: Option<usize>,
 ) -> SegmentText {
     let seg = config.segment(name);
     let mut style = seg.effective_style(None, &config.defaults);
@@ -248,7 +260,7 @@ fn render_segment(
         };
     }
     let text = match name {
-        "dir" => dir_seg_text(config, info, seg, &style),
+        "dir" => dir_seg_text(config, info, seg, &style, dir_budget),
         "vcs" => {
             let branch = icon_str(config, "branch").unwrap_or_default();
             let commit = icon_str(config, "commit").unwrap_or_default();
@@ -1709,14 +1721,25 @@ fn dir_seg_text(
     info: &HeaderInfo,
     seg: &crate::config::Segment,
     default: &Style,
+    dir_budget: Option<usize>,
 ) -> String {
     let shorten = shorten_len(seg);
     let cwd = std::path::Path::new(&info.cwd);
     let home = std::env::var("HOME").ok();
     let home = home.as_deref().map(std::path::Path::new);
-    let parts = crate::dir_shorten::shorten(cwd, home, &dir_shorten_opts(seg, shorten));
+    let bool_prop = |name: &str| matches!(seg.prop(name), Some(crate::config::Prop::Bool(true)));
+    // p10k `DIR_PATH_ABSOLUTE`：不看 $HOME，直接显示绝对路径；相应地拆分时也
+    // 不能用 home 当前缀（否则拿不回完整路径）。
+    let absolute = bool_prop("path-absolute");
+    let parts = crate::dir_shorten::shorten(
+        cwd,
+        if absolute { None } else { home },
+        &dir_shorten_opts(seg, shorten, dir_budget),
+    );
     let mut s = String::new();
-    let is_home = home.map(|h| cwd.starts_with(h)).unwrap_or(false);
+    let is_home = !absolute && home.map(|h| cwd.starts_with(h)).unwrap_or(false);
+    // p10k `DIR_OMIT_FIRST_CHARACTER`：绝对路径省掉开头那个 `/`（cwd=`/` 时仍显示 `/`）。
+    let omit_first = bool_prop("omit-first-character");
     // home 前缀缩写（p10k `HOME_FOLDER_ABBREVIATION`，缺省 `~`）。
     let abbrev = match seg.prop("home-abbreviation") {
         Some(crate::config::Prop::Str(a)) => a.clone(),
@@ -1724,16 +1747,23 @@ fn dir_seg_text(
     };
     // 路径分隔符自己的颜色（p10k `DIR_PATH_SEPARATOR_FOREGROUND`），缺省段样式。
     let sep_style = prop_style(seg, default, "path-separator-foreground");
-    if is_home {
+    let is_root = info.cwd == "/";
+    if is_root {
+        // 根目录没有部件，p10k 此时显示的就是一个 `/`。
+        s.push_str(&paint("/", &sep_style));
+    } else if is_home {
         let st = seg.effective_style(Some("ANCHOR"), &config.defaults);
         s.push_str(&paint(&abbrev, &st));
         if !parts.is_empty() {
             s.push_str(&paint("/", &sep_style));
         }
-    } else if !parts.is_empty() {
+    } else if !parts.is_empty() && (!omit_first || is_root) {
         // 绝对路径起始 `/`。
         s.push_str(&paint("/", &sep_style));
     }
+    // p10k `DIR_PATH_HIGHLIGHT_{FOREGROUND,BOLD}`：末级组件（当前目录）单独配色。
+    let highlight_bold = bool_prop("path-highlight-bold");
+    let last = parts.len().saturating_sub(1);
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
             s.push_str(&paint("/", &sep_style)); // 分隔符
@@ -1743,14 +1773,48 @@ fn dir_seg_text(
             crate::dir_shorten::Class::Shortened => Some("SHORTENED"),
             crate::dir_shorten::Class::Normal => None,
         };
-        let st = seg.effective_style(state, &config.defaults);
+        let mut st = seg.effective_style(state, &config.defaults);
+        if i == last {
+            st = prop_style(seg, &st, "path-highlight-foreground");
+            if highlight_bold {
+                st.bold = true;
+            }
+        }
         s.push_str(&paint(&part.text, &st));
     }
-    if seg.content.is_some() {
+    let s = if seg.content.is_some() {
         value_of(seg.content.as_deref(), s)
     } else {
         s
+    };
+    // p10k `DIR_HYPERLINK`：把目录包成 OSC 8 超链接（仅绝对路径）。
+    if bool_prop("hyperlink") && info.cwd.starts_with('/') {
+        format!(
+            "\u{1b}]8;;file://{}\u{7}{}\u{1b}]8;;\u{7}",
+            url_escape(&info.cwd),
+            s
+        )
+    } else {
+        s
     }
+}
+
+/// p10k `_p9k_url_escape`：`[a-zA-Z0-9"/:_.-!'()~]` 之外按 `%XX` 转义。
+fn url_escape(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        let keep = b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'"' | b'/' | b':' | b'_' | b'.' | b'-' | b'!' | b'\'' | b'(' | b')' | b'~'
+            );
+        if keep {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
 }
 
 /// 读 dir 段的 `shorten-dir-length`(保留末 N 级,默认 1=p10k)。
@@ -1764,7 +1828,11 @@ fn shorten_len(seg: &crate::config::Segment) -> usize {
 
 /// dir 段的折叠选项:`shorten-strategy` / `shorten-delimiter` /
 /// `shorten-folder-marker`(对齐 p10k 的 `SHORTEN_*`)。
-fn dir_shorten_opts(seg: &crate::config::Segment, length: usize) -> crate::dir_shorten::Opts {
+fn dir_shorten_opts(
+    seg: &crate::config::Segment,
+    length: usize,
+    budget: Option<usize>,
+) -> crate::dir_shorten::Opts {
     let str_prop = |name: &str, default: &str| -> String {
         match seg.prop(name) {
             Some(crate::config::Prop::Str(s)) => s.clone(),
@@ -1778,6 +1846,7 @@ fn dir_shorten_opts(seg: &crate::config::Segment, length: usize) -> crate::dir_s
         // （跟 p10k 默认配置的 `SHORTEN_DELIMITER=` 一致）。
         delimiter: str_prop("shorten-delimiter", "\u{2026}"),
         marker: str_prop("shorten-folder-marker", ""),
+        budget,
     }
 }
 
@@ -3290,6 +3359,139 @@ mod tests {
         let cfg = Config::parse(src).unwrap_or_else(|e| panic!("parse: {e}\nsrc={src:?}"));
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 40).join("\r\n");
         assert_eq!(display_width(&h), 40, "行宽应仍对齐 cols=40,实际:{h:?}");
+    }
+
+    #[test]
+    #[test]
+    fn dir_absolute_omit_first_highlight_and_hyperlink() {
+        /// 去 SGR 只留可见文字。
+        fn plain(h: &str) -> String {
+            let mut out = String::new();
+            let mut it = h.chars().peekable();
+            while let Some(c) = it.next() {
+                if c == '\u{1b}' {
+                    for d in it.by_ref() {
+                        if d == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
+        fn render(cwd: &str, props: &str) -> String {
+            // 显式给策略：p10k 的 SHORTEN_STRATEGY 声明缺省是空串，空串会走它的
+            // 默认分支（只留末 N 级）；用户配置里都是 truncate_to_unique。
+            let cfg = Config::parse(&format!(
+                "layout {{ left {{ line {{ dir #true }} }} }}\n\
+                 segments {{ dir shorten-strategy=\"truncate_to_unique\" {props} }}"
+            ))
+            .unwrap();
+            render_header_lines(&cfg, &info(cwd, None), None, 200).join("\n")
+        }
+        // p10k DIR_PATH_ABSOLUTE：$HOME 下也显示绝对路径（不缩写 ~）。
+        let home = std::env::var("HOME").unwrap();
+        let under_home = format!("{home}/probe");
+        assert!(plain(&render(&under_home, "")).contains("~/probe"));
+        let abs = plain(&render(&under_home, "path-absolute=#true"));
+        assert!(abs.contains(&under_home), "实际 {abs:?}");
+        assert!(!abs.contains('~'), "不应有 ~ 缩写,实际 {abs:?}");
+        // p10k DIR_OMIT_FIRST_CHARACTER：绝对路径省掉起始 `/`；根目录仍显示 `/`。
+        // 多级路径要配 shorten-dir-length=2,否则默认只留末一级。
+        let two = "shorten-dir-length=2";
+        assert!(plain(&render("/tmp/x", two)).contains("/tmp/x"));
+        let omitted = plain(&render(
+            "/tmp/x",
+            &format!("{two} omit-first-character=#true"),
+        ));
+        assert!(omitted.contains("tmp/x"), "实际 {omitted:?}");
+        assert!(!omitted.contains("/tmp/x"), "起始斜杠应被省掉");
+        assert_eq!(
+            plain(&render("/", "omit-first-character=#true")).trim(),
+            "\u{f07c} /"
+        );
+        // p10k DIR_PATH_HIGHLIGHT_FOREGROUND/BOLD：只给末级组件换色/加粗。
+        let h = render(
+            "/a/b",
+            "shorten-dir-length=2 path-highlight-foreground=196 path-highlight-bold=#true",
+        );
+        let i = h.rfind("\u{1b}[38;5;196m").expect("末级应用 196");
+        assert!(h[i..].contains('b'), "末级应是 b,实际 {h:?}");
+        assert!(
+            !h[..i].contains("196"),
+            "非末级不该用 highlight 色,实际 {h:?}"
+        );
+        assert!(h[i..].contains("\u{1b}[1m"), "highlight-bold 应加粗");
+        // p10k DIR_HYPERLINK：OSC 8 包住目录，路径做 URL 转义。
+        let link = render("/a/b", "shorten-dir-length=2 hyperlink=#true");
+        assert!(
+            link.contains("\u{1b}]8;;file:///a/b\u{7}"),
+            "超链接头不对,实际 {link:?}"
+        );
+        assert!(link.contains("\u{1b}]8;;\u{7}"), "超链接尾不对");
+        assert!(!render("/a/b", "").contains("]8;;"), "没开就不该有超链接");
+    }
+
+    #[test]
+    fn dir_unique_shortening_depends_on_row_width() {
+        // p10k 的 truncate_to_unique 是按行宽动态折的：宽终端原样，窄终端才折
+        // 到唯一前缀（实测同一路径 130/100 列不折、90 列折一级、80 列折两级）。
+        fn dir_text(cols: usize, cwd: &str) -> String {
+            let cfg = Config::parse(
+                "layout { left { line { dir #true } } }\n\
+                 segments { dir shorten-strategy=\"truncate_to_unique\" shorten-dir-length=1 }",
+            )
+            .unwrap();
+            let h = render_header_lines(&cfg, &info(cwd, None), None, cols).join("\n");
+            let mut out = String::new();
+            let mut it = h.chars().peekable();
+            while let Some(c) = it.next() {
+                if c == '\u{1b}' {
+                    for d in it.by_ref() {
+                        if d == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
+        // 同级里只有 Projects/crates 唯一,够长才折。夹具目录名固定,这样各级
+        // 能省多少列是确定的:tmp 省 2、p11k-width-fixture 省 17、Projects 省 7、
+        // powerlevel11k 省 12、crates 省 5(累计 2/19/26/38/43)。
+        let root = std::env::temp_dir().join("p11k-width-fixture");
+        let deep = root.join("Projects/powerlevel11k/crates/p11k-engine");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&deep).unwrap();
+        let cwd = deep.to_str().unwrap().to_string();
+        // 先量出"完全不折"时这一行有多宽(200 列足够宽)。
+        let cfg = Config::parse(
+            "layout { left { line { dir #true } } }\n\
+             segments { dir shorten-strategy=\"truncate_to_unique\" shorten-dir-length=1 }",
+        )
+        .unwrap();
+        let full = render_header_lines(&cfg, &info(&cwd, None), None, 200).join("\n");
+        let full_w = display_width(&full);
+        let wide = dir_text(200, &cwd);
+        assert!(wide.contains("Projects/"), "宽行不该折,实际 {wide:?}");
+        assert!(wide.contains("crates/"), "宽行不该折,实际 {wide:?}");
+        // 差 20 列:前三级(含 Projects)折掉,powerlevel11k/crates 还在。
+        let mid = dir_text(full_w - 20, &cwd);
+        assert!(
+            !mid.contains("Projects") && mid.contains("crates"),
+            "中等宽度只该折到 Projects 为止,实际 {mid:?}"
+        );
+        // 差 40 列:连 crates 一起折。
+        let narrow = dir_text(full_w - 40, &cwd);
+        assert!(
+            !narrow.contains("Projects") && !narrow.contains("crates"),
+            "很窄时两级都该折,实际 {narrow:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
