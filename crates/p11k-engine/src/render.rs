@@ -25,8 +25,36 @@ pub struct InputPrefix {
     pub width: usize,
 }
 
-/// prompt_char 的 state:退出码非 0 → ERROR;0 或无 → 正常态(None)。
-fn prompt_state(exit_code: Option<i32>) -> Option<&'static str> {
+/// 当前 zsh 编辑模式对应的 vi state（p10k 的 `VIINS`/`VICMD`/`VIVIS`/`VIOWR`）。
+fn vi_state() -> Option<&'static str> {
+    let mode = CURRENT_VI_MODE
+        .lock()
+        .map(|m| m.clone())
+        .unwrap_or_default();
+    match mode.as_str() {
+        "viins" => Some("VIINS"),
+        "vicmd" => Some("VICMD"),
+        "vis" | "viopp" => Some("VIVIS"),
+        "viowr" => Some("VIOWR"),
+        _ => None,
+    }
+}
+
+/// prompt_char 的 state。优先 vi 模式（p10k
+/// `PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,VIVIS,VIOWR}`）——但只在用户确实配了
+/// 该 state 的字符时生效；否则按退出码：非 0 → ERROR，其余正常态。
+fn prompt_state(config: &Config, exit_code: Option<i32>) -> Option<&'static str> {
+    if let Some(st) = vi_state() {
+        let configured = config
+            .segment("prompt_char")
+            .states
+            .get(st)
+            .map(|s| s.char.is_some())
+            .unwrap_or(false);
+        if configured {
+            return Some(st);
+        }
+    }
     match exit_code {
         Some(0) | None => None,
         Some(_) => Some("ERROR"),
@@ -55,7 +83,7 @@ fn prefix_width(config: &Config, state: Option<&str>) -> usize {
 /// 计算输入行前缀(如 `╰─❯`)。`last_prefix`(帧样式)/提示符字符(prompt_char 样式,
 /// 可按 `exit_code` 进 ERROR state)已上色;`width` 为去 ANSI 显示宽。
 pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
-    let state = prompt_state(exit_code);
+    let state = prompt_state(config, exit_code);
     let text = prefix_text(config, state);
     let width = display_width(&text);
     InputPrefix { text, width }
@@ -236,8 +264,8 @@ fn render_segment(
             status_text(info, &ok, &err, seg, &style)
         }
         "prompt_char" => {
-            // 提示符字符随退出码进 ERROR state。
-            let state = prompt_state(info.exit_code);
+            // 提示符字符随 vi 模式 / 退出码进对应 state。
+            let state = prompt_state(config, info.exit_code);
             style = seg.effective_style(state, &config.defaults);
             paint(seg.char_for(state, "❯"), &style)
         }
@@ -349,7 +377,7 @@ fn render_segment(
         "lf" => paint(&level_text("LF_LEVEL"), &style),
         "nix_shell" => paint(&nix_shell_text(), &style),
         "history" => paint(&info.history.to_string(), &style),
-        "vi_mode" => paint(&vi_mode_text(), &style),
+        "vi_mode" => paint(&vi_mode_text(seg), &style),
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
     // 段图标:config `icon`(按字符类别自动覆盖适用的 mode)→ 否则内置默认表。
@@ -1152,15 +1180,23 @@ fn json_str_field(content: &str, key: &str) -> Option<String> {
 }
 
 /// vi_mode 段:当前 zsh 编辑模式 → 名称;非 zsh(未上报)为空。
-fn vi_mode_text() -> String {
+fn vi_mode_text(seg: &Segment) -> String {
+    // 文本可配（p10k `VI_INSERT/COMMAND/VISUAL/OVERWRITE_MODE_STRING`）。
+    let sym = |name: &str, default: &str| -> String {
+        match seg.prop(name) {
+            Some(crate::config::Prop::Str(s)) => s.clone(),
+            _ => default.to_string(),
+        }
+    };
     let mode = CURRENT_VI_MODE
         .lock()
         .map(|m| m.clone())
         .unwrap_or_default();
     match mode.as_str() {
-        "vicmd" => "NORMAL".into(),
-        "viins" => "INSERT".into(),
-        "vis" | "viopp" => "VISUAL".into(),
+        "vicmd" => sym("normal", "NORMAL"),
+        "viins" => sym("insert", "INSERT"),
+        "vis" | "viopp" => sym("visual", "VISUAL"),
+        "viowr" => sym("overwrite", "OVERWRITE"),
         "" | "main" => String::new(), // 未上报或 emacs(main)不显示
         other => other.to_string(),
     }
@@ -2552,6 +2588,30 @@ mod tests {
             p.text
         );
         assert!(p.text.contains('❯'), "输入行前缀仍含 prompt_char ❯");
+    }
+
+    #[test]
+    fn prompt_char_vi_states() {
+        // 配了 VIINS/VICMD 的字符后按编辑模式切换（p10k 的
+        // PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,...}）。
+        let cfg = Config::parse(
+            "layout { left { line { dir } } }\nsegments { prompt_char fg=76 {\n  state VIINS char=\"I\"\n  state VICMD char=\"C\"\n} }",
+        )
+        .unwrap();
+        *CURRENT_VI_MODE.lock().unwrap() = "vicmd".to_string();
+        assert!(
+            input_prefix(&cfg, None).text.contains('C'),
+            "vicmd 应换到 VICMD 字符"
+        );
+        *CURRENT_VI_MODE.lock().unwrap() = "viins".to_string();
+        assert!(
+            input_prefix(&cfg, None).text.contains('I'),
+            "viins 应换到 VIINS 字符"
+        );
+        // 没配 vi state 的配置不受编辑模式影响，仍走 ❯/ERROR 那条路。
+        *CURRENT_VI_MODE.lock().unwrap() = String::new();
+        let plain = Config::default_lean().unwrap();
+        assert!(input_prefix(&plain, None).text.contains('❯'));
     }
 
     #[test]
