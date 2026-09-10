@@ -348,15 +348,25 @@ fn render_segment(
     // 文本为空的段：只有"图标即内容"的段（env 指示、os 徽标）才画图标，
     // 其余整段隐藏——对齐 p10k：非 git 仓库不显示 vcs 图标、jobs=0 不显示齿轮。
     let icon = resolve_icon(config, name, vcs);
+    // 图标色：`visual-identifier-color`（p10k `SEG_VISUAL_IDENTIFIER_COLOR`）优先；
+    // vcs 段没配则回退 `clean-foreground`——图标是仓库指示，p10k 默认同为绿色
+    // （图标不跟段默认色走，否则默认主题下会变成终端默认色）。
+    let icon_style = if seg.prop("visual-identifier-color").is_some() {
+        prop_style(seg, &style, "visual-identifier-color")
+    } else if name == "vcs" {
+        prop_style(seg, &style, "clean-foreground")
+    } else {
+        style.clone()
+    };
     let icon_text = match icon {
         Some(ic) if text.is_empty() => {
             if icon_is_content(name) {
-                paint(&ic, &style)
+                paint(&ic, &icon_style)
             } else {
                 String::new()
             }
         }
-        Some(ic) => paint(&format!("{ic} "), &style),
+        Some(ic) => paint(&format!("{ic} "), &icon_style),
         None => String::new(),
     };
     // 附加文字槽:左(icon 前)/中(icon 与内容之间,须二者都有)/右(内容后)。
@@ -1747,9 +1757,12 @@ fn vcs_text(vcs: Option<&GitStatus>, branch_icon: &str, seg: &Segment, style: &S
         parts.push((format!("≡{}", v.stashes), &clean));
     }
     if !parts.is_empty() {
-        s.push(' ');
+        // 空格用段样式上色：裸空格会被终端按默认背景画，在带底色的段里
+        // （classic 等）会露出一条黑缝。
+        let sep = paint(" ", style);
+        s.push_str(&sep);
         let joined: Vec<String> = parts.iter().map(|(t, st)| paint(t, st)).collect();
-        s.push_str(&joined.join(" "));
+        s.push_str(&joined.join(&sep));
     }
     s
 }
@@ -2139,6 +2152,41 @@ mod tests {
         assert!(p.text.contains('╰'), "前缀应含帧 last-prefix");
         assert!(p.text.contains('❯'), "前缀应含 prompt_char");
         assert!(p.text.ends_with(' '), "前缀应以空格收尾");
+    }
+
+    #[test]
+    fn vcs_state_colors_and_inner_spaces() {
+        // classic(2) 段底 238、clean 76、modified 178。
+        let cfg = crate::presets::classic(2);
+        let v = GitStatus {
+            branch: "main".into(),
+            staged: 0,
+            unstaged: 2,
+            conflicted: 0,
+            untracked: 0,
+            ahead: 0,
+            behind: 0,
+            stashes: 0,
+            remote_url: String::new(),
+        };
+        let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n");
+        // 分支名/图标走 clean-foreground(76),`~2` 走 modified-foreground(178),
+        // 两者都落在段底(238)上。
+        assert!(
+            h.contains("\u{1b}[38;5;76m\u{1b}[48;5;238m"),
+            "分支/图标应按 clean 上色且带段底,实际 {h:?}"
+        );
+        assert!(
+            h.contains("\u{1b}[38;5;178m\u{1b}[48;5;238m~2"),
+            "unstaged 应按 modified 上色,实际 {h:?}"
+        );
+        // 分支与计数之间的空格必须带段背景(48;5;238),裸空格会露出黑缝。
+        let after_branch = h.split("main").nth(1).expect("应含分支名");
+        let gap = after_branch.split('~').next().unwrap_or("");
+        assert!(
+            gap.contains("48;5;238"),
+            "vcs 内容之间的空格应带段背景,实际 {gap:?}"
+        );
     }
 
     #[test]
