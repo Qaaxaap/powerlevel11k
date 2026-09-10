@@ -1840,7 +1840,16 @@ fn assemble_row(
                 let ch = if same { &seps.sub } else { &seps.segment };
                 if !ch.is_empty() {
                     if same {
-                        out.push_str(&paint(ch, &s.style));
+                        // 同底细线：配了 `sub-foreground` 就用它（p10k 的
+                        // sep_color，统一灰），否则跟后段前景色。
+                        let st = match &seps.sub_foreground {
+                            Some(fg) => Style {
+                                fg: fg.clone(),
+                                ..s.style.clone()
+                            },
+                            None => s.style.clone(),
+                        };
+                        out.push_str(&paint(ch, &st));
                     } else {
                         out.push_str(&arrow(ch, prev_bg.clone(), s.style.bg.clone()));
                     }
@@ -1881,7 +1890,14 @@ fn assemble_row(
                     let same = s.style.bg != Color::Default && s.style.bg == prev_bg;
                     if same {
                         if !seps.right_sub.is_empty() {
-                            right_str.push_str(&paint(&seps.right_sub, &s.style));
+                            let st = match &seps.right_sub_foreground {
+                                Some(fg) => Style {
+                                    fg: fg.clone(),
+                                    ..s.style.clone()
+                                },
+                                None => s.style.clone(),
+                            };
+                            right_str.push_str(&paint(&seps.right_sub, &st));
                         }
                     } else if !seps.right_segment.is_empty() {
                         right_str.push_str(&arrow(

@@ -149,6 +149,11 @@ pub struct Separators {
     /// gap 填充字符的前景色(`separators gap-foreground=240`;缺省=终端默认色)。
     /// 对齐 p10k `POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_FOREGROUND`。
     pub gap_foreground: Option<Color>,
+    /// 同底段间细线的前景色(`sub-foreground=246`;缺省跟后段样式)。
+    /// 对齐 p10k `LEFT_SUBSEGMENT_SEPARATOR` 里嵌的颜色(p10k 的 `sep_color`)。
+    pub sub_foreground: Option<Color>,
+    /// 右段同底细线的前景色(对齐 p10k `RIGHT_SUBSEGMENT_SEPARATOR`)。
+    pub right_sub_foreground: Option<Color>,
 }
 
 /// 帧的一块(行首/行尾装饰字符):文本 + 可选独立样式。
@@ -437,9 +442,14 @@ impl Config {
     fn separators_node(&self) -> KdlNode {
         let s = &self.separators;
         let mut n = KdlNode::new("separators");
-        if let Some(fg) = &s.gap_foreground {
-            n.entries_mut()
-                .push(KdlEntry::new_prop("gap-foreground", color_value(fg)));
+        for (k, c) in [
+            ("gap-foreground", &s.gap_foreground),
+            ("sub-foreground", &s.sub_foreground),
+            ("right-sub-foreground", &s.right_sub_foreground),
+        ] {
+            if let Some(c) = c {
+                n.entries_mut().push(KdlEntry::new_prop(k, color_value(c)));
+            }
         }
         let ch = n.ensure_children();
         for (name, val) in [
@@ -1082,9 +1092,16 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
 /// 解析 `separators` 节点:`segment`/`sub`/`end` 子节点,值=字符串(首字符)。
 fn parse_separators(node: &KdlNode) -> Separators {
     let mut s = Separators::default();
-    // `gap-foreground` 是 separators 节点的属性(不是子节点)。
+    // `gap-foreground` / `sub-foreground` / `right-sub-foreground` 是
+    // separators 节点的属性(不是子节点)。
     if let Some(c) = named_color(node, "gap-foreground") {
         s.gap_foreground = Some(c);
+    }
+    if let Some(c) = named_color(node, "sub-foreground") {
+        s.sub_foreground = Some(c);
+    }
+    if let Some(c) = named_color(node, "right-sub-foreground") {
+        s.right_sub_foreground = Some(c);
     }
     if let Some(ch) = node.children() {
         for child in ch.nodes() {

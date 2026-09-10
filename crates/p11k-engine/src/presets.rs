@@ -11,6 +11,8 @@ use crate::config::{
 
 /// classic 段背景四档（Lightest/Light/Dark/Darkest）。
 pub const BG_COLORS: [u8; 4] = [240, 238, 236, 234];
+/// classic `sub` 细线四档（p10k wizard 的 `sep_color`）。
+pub const SEP_COLORS: [u8; 4] = [248, 246, 244, 242];
 /// 帧四档（classic/rainbow 的 frame 线条颜色）。
 pub const FRAME_COLORS: [u8; 4] = [244, 242, 240, 238];
 
@@ -158,7 +160,9 @@ fn powerline_frame(color: u8) -> Frame {
     f
 }
 
-fn powerline_separators() -> Separators {
+/// `sub` 细线的前景色（p10k wizard 的 `sep_color`，随 classic 颜色档变）。
+/// rainbow 不设（p10k 的 rainbow subsep 不嵌颜色，跟段底渐变）。
+fn powerline_separators(sub_foreground: Option<u8>) -> Separators {
     Separators {
         segment: "\u{e0b0}".into(),
         sub: "\u{e0b1}".into(),
@@ -170,6 +174,8 @@ fn powerline_separators() -> Separators {
         right_tail: String::new(),
         gap: " ".into(),
         gap_foreground: None,
+        sub_foreground: sub_foreground.map(x),
+        right_sub_foreground: sub_foreground.map(x),
     }
 }
 
@@ -243,7 +249,7 @@ pub fn classic(color: usize) -> Config {
         Element::Seg("command_execution_time".into()),
         Element::Seg("background_jobs".into()),
     ]];
-    cfg.separators = powerline_separators();
+    cfg.separators = powerline_separators(Some(SEP_COLORS[i]));
     cfg.frame = powerline_frame(frame);
     cfg.segments.insert("os_icon".into(), os_icon_seg(255, bg));
     cfg.segments
@@ -277,7 +283,8 @@ pub fn rainbow(color: usize) -> Config {
         Element::Seg("command_execution_time".into()),
         Element::Seg("background_jobs".into()),
     ]];
-    cfg.separators = powerline_separators();
+    // rainbow 的细线不嵌颜色（p10k 同款，跟段底渐变）。
+    cfg.separators = powerline_separators(None);
     cfg.frame = powerline_frame(frame);
     // 彩虹底：os 白、dir 蓝、vcs 绿、status 黑、exec 黄、jobs 黑。
     cfg.segments.insert("os_icon".into(), os_icon_seg(232, 7));
