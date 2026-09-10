@@ -9,7 +9,7 @@
 
 use std::fmt::Write as _;
 
-use crate::config::{AttachText, Color, Config, Element, Style};
+use crate::config::{AttachText, Color, Config, Element, Segment, Style};
 use crate::theme::{GitStatus, HeaderInfo};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -224,18 +224,15 @@ fn render_segment(
         "vcs" => {
             let branch = icon_str(config, "branch").unwrap_or_default();
             if seg.content.is_some() {
-                paint(
-                    &value_of(seg.content.as_deref(), vcs_text(vcs, &branch)),
-                    &style,
-                )
+                paint(&value_of(seg.content.as_deref(), String::new()), &style)
             } else {
-                paint(&vcs_text(vcs, &branch), &style)
+                vcs_text(vcs, &branch, seg, &style)
             }
         }
         "status" => {
             let ok = icon_str(config, "ok").unwrap_or_default();
             let err = icon_str(config, "error").unwrap_or_default();
-            paint(&status_text(info, &ok, &err), &style)
+            status_text(info, &ok, &err, seg, &style)
         }
         "prompt_char" => {
             // 提示符字符随退出码进 ERROR state。
@@ -1698,54 +1695,87 @@ fn expand_env(s: &str) -> String {
 }
 
 /// git 文本:分支 + 计数。
-fn vcs_text(vcs: Option<&GitStatus>, branch_icon: &str) -> String {
+/// 段上一个"前景色"行为属性 → 样式（缺省沿用段样式）。
+fn prop_style(seg: &Segment, style: &Style, prop: &str) -> Style {
+    match seg.prop(prop) {
+        Some(crate::config::Prop::Int(n)) => Style {
+            fg: Color::Xterm(i64::clamp(*n, 0, 255) as u8),
+            ..style.clone()
+        },
+        _ => style.clone(),
+    }
+}
+
+/// vcs 段文本。按 p10k 的配色分段上色：分支名/分支图标/ahead/behind/stash 用
+/// `clean-foreground`，staged/unstaged/conflicted 计数用 `modified-foreground`，
+/// 未跟踪用 `untracked-foreground`（缺省回退段样式）。返回的字符串已上色。
+fn vcs_text(vcs: Option<&GitStatus>, branch_icon: &str, seg: &Segment, style: &Style) -> String {
     let Some(v) = vcs else { return String::new() };
+    let clean = prop_style(seg, style, "clean-foreground");
+    let modified = prop_style(seg, style, "modified-foreground");
+    let untracked = prop_style(seg, style, "untracked-foreground");
     let mut s = String::new();
     if !v.branch.is_empty() {
-        if branch_icon.is_empty() {
-            s.push_str(&v.branch);
-        } else {
-            s.push_str(branch_icon);
-            s.push(' ');
-            s.push_str(&v.branch);
+        let mut b = String::new();
+        if !branch_icon.is_empty() {
+            b.push_str(branch_icon);
+            b.push(' ');
         }
+        b.push_str(&v.branch);
+        s.push_str(&paint(&b, &clean));
     }
-    let mut parts: Vec<String> = Vec::new();
+    let mut parts: Vec<(String, &Style)> = Vec::new();
     if v.staged > 0 {
-        parts.push(format!("+{}", v.staged));
+        parts.push((format!("+{}", v.staged), &modified));
     }
     if v.unstaged > 0 {
-        parts.push(format!("~{}", v.unstaged));
+        parts.push((format!("~{}", v.unstaged), &modified));
     }
     if v.conflicted > 0 {
-        parts.push(format!("!{}", v.conflicted));
+        parts.push((format!("!{}", v.conflicted), &modified));
     }
     if v.untracked > 0 {
-        parts.push(format!("?{}", v.untracked));
+        parts.push((format!("?{}", v.untracked), &untracked));
     }
     if v.ahead > 0 {
-        parts.push(format!("↑{}", v.ahead));
+        parts.push((format!("↑{}", v.ahead), &clean));
     }
     if v.behind > 0 {
-        parts.push(format!("↓{}", v.behind));
+        parts.push((format!("↓{}", v.behind), &clean));
     }
     if v.stashes > 0 {
-        parts.push(format!("≡{}", v.stashes));
+        parts.push((format!("≡{}", v.stashes), &clean));
     }
     if !parts.is_empty() {
         s.push(' ');
-        s.push_str(&parts.join(" "));
+        let joined: Vec<String> = parts.iter().map(|(t, st)| paint(t, st)).collect();
+        s.push_str(&joined.join(" "));
     }
     s
 }
 
-/// 退出码状态:OK/ERROR 图标字符由调用方从图标名 `ok`/`error` 解析传入
-/// (用户可在顶层 `icon{}` 覆盖)。
-fn status_text(info: &HeaderInfo, ok: &str, err: &str) -> String {
+/// 退出码状态。OK/ERROR 图标字符由调用方从图标名 `ok`/`error` 解析传入
+/// (用户可在顶层 `icon{}` 覆盖)；颜色取 `ok-foreground`/`error-foreground`。
+/// `verbose #false` 时成功不显示（对齐 p10k 的 `STATUS_OK`）。
+fn status_text(info: &HeaderInfo, ok: &str, err: &str, seg: &Segment, style: &Style) -> String {
     match info.exit_code {
         None => String::new(),
-        Some(0) => ok.to_string(),
-        Some(n) => format!("{err} {n}"),
+        Some(0) => {
+            let verbose = matches!(seg.prop("verbose"), Some(crate::config::Prop::Bool(true)));
+            if verbose {
+                paint(ok, &prop_style(seg, style, "ok-foreground"))
+            } else {
+                String::new()
+            }
+        }
+        Some(n) => {
+            let text = if err.is_empty() {
+                n.to_string()
+            } else {
+                format!("{err} {n}")
+            };
+            paint(&text, &prop_style(seg, style, "error-foreground"))
+        }
     }
 }
 
@@ -2254,11 +2284,19 @@ mod tests {
     #[test]
     fn icon_mode_switches_default_icons() {
         // status_text 收 ok/err 图标字符,默认字符本身走 icon{} 表/默认。
-        assert_eq!(
-            status_text(&info("/tmp", Some(0)), "\u{f00c}", "\u{f00d}"),
-            "\u{f00c}"
+        let mut seg = Segment::default();
+        seg.props
+            .insert("verbose".into(), crate::config::Prop::Bool(true));
+        let style = Style::default();
+        assert!(
+            status_text(&info("/tmp", Some(0)), "\u{f00c}", "\u{f00d}", &seg, &style)
+                .contains("\u{f00c}"),
+            "OK 应显示 ok 图标"
         );
-        assert_eq!(status_text(&info("/tmp", Some(1)), "ok", "err"), "err 1");
+        assert!(
+            status_text(&info("/tmp", Some(1)), "ok", "err", &seg, &style).contains("err 1"),
+            "ERROR 应显示 err 图标 + 退出码"
+        );
         // 图标名默认随 mode:folder 的 nf 有字形,compat/ascii 空;go 三档文本。
         let mk = |m: &str| {
             Config::parse(&format!(
