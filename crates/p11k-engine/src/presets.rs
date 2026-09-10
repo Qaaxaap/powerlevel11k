@@ -71,6 +71,14 @@ fn vcs_seg(fg: Option<u8>, clean: u8, modified: u8, untracked: u8, bg: Option<u8
         .insert("modified-foreground".into(), Prop::Int(modified as i64));
     s.props
         .insert("untracked-foreground".into(), Prop::Int(untracked as i64));
+    // 分支名超 32 字符 → 前 12 + … + 后 12（对齐 p10k 各 config 里硬编码的
+    // `(( $#branch > 32 )) && branch[13,-13]="…"`）。
+    s.props.insert("shorten-length".into(), Prop::Int(12));
+    s.props.insert("shorten-min-length".into(), Prop::Int(32));
+    s.props.insert(
+        "shorten-strategy".into(),
+        Prop::Str("truncate_middle".into()),
+    );
     s
 }
 
