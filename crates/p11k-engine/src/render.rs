@@ -1637,7 +1637,7 @@ fn dir_seg_text(
     let cwd = std::path::Path::new(&info.cwd);
     let home = std::env::var("HOME").ok();
     let home = home.as_deref().map(std::path::Path::new);
-    let parts = crate::dir_shorten::truncate_to_unique(cwd, shorten, home);
+    let parts = crate::dir_shorten::shorten(cwd, home, &dir_shorten_opts(seg, shorten));
     let mut s = String::new();
     let is_home = home.map(|h| cwd.starts_with(h)).unwrap_or(false);
     if is_home {
@@ -1676,6 +1676,25 @@ fn shorten_len(seg: &crate::config::Segment) -> usize {
         (*n).clamp(1, 20) as usize
     } else {
         1
+    }
+}
+
+/// dir 段的折叠选项:`shorten-strategy` / `shorten-delimiter` /
+/// `shorten-folder-marker`(对齐 p10k 的 `SHORTEN_*`)。
+fn dir_shorten_opts(seg: &crate::config::Segment, length: usize) -> crate::dir_shorten::Opts {
+    let str_prop = |name: &str, default: &str| -> String {
+        match seg.prop(name) {
+            Some(crate::config::Prop::Str(s)) => s.clone(),
+            _ => default.to_string(),
+        }
+    };
+    crate::dir_shorten::Opts {
+        strategy: crate::dir_shorten::Strategy::parse(&str_prop("shorten-strategy", "")),
+        length,
+        // p10k 引擎的缺省省略符是 `…`；`truncate_to_unique` 不输出它
+        // （跟 p10k 默认配置的 `SHORTEN_DELIMITER=` 一致）。
+        delimiter: str_prop("shorten-delimiter", "\u{2026}"),
+        marker: str_prop("shorten-folder-marker", ""),
     }
 }
 

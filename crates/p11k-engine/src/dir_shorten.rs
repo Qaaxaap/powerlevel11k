@@ -1,13 +1,23 @@
-//! `dir` 段截断策略 `truncate_to_unique`。
+//! `dir` 段截断策略（对齐 p10k `POWERLEVEL9K_SHORTEN_STRATEGY` 全量）。
 //!
-//! 从当前目录往回,把每个非锚定部件缩短到"它在目录兄弟中的最短唯一前缀";
-//! 锚点(home `~`/根、末尾 `shortenlen` 级、含 marker 文件的祖先)不缩;缩短后无省略符。
+//! 支持的策略：
+//! - `truncate_to_unique`（默认）：从当前目录往回，把每个非锚定部件缩短到
+//!   "它在目录兄弟中的最短唯一前缀"；缩短后无省略符（对齐 p10k 的默认配置
+//!   `SHORTEN_DELIMITER=`）。锚点（home `~`/根、末尾 `length` 级、含 marker
+//!   文件的祖先）不缩。
+//! - `truncate_middle` / `truncate_from_right`：每级留前 `length`（middle 再留
+//!   后 `length`）字符，中间/尾部换成省略符。
+//! - `truncate_to_last`：只留末 `length` 级。
+//! - `truncate_to_first_and_last`：首 `length` 级 + 末 `length` 级，中间省略。
+//! - `truncate_absolute(_chars)`：整条路径按字符数硬截断（保留末尾）。
+//! - `truncate_with_folder_marker`：在 marker 文件处折叠。
 //!
-//! 返回按类别标记的部件,render 据此映射到 state 上色。
+//! 返回按类别标记的部件，render 据此映射到 state 上色。
 //!
-//! # 性能(对齐 p10k 的 mtime 缓存)
+//! # 性能（对齐 p10k 的 mtime 缓存）
 //!
-//! 每级按 `(绝对目录, 父目录 mtime_ns)` 缓存缩短结果:目录不变直接复用,不加 `readdir`。
+//! `truncate_to_unique` 每级按 `(绝对目录, 父目录 mtime_ns)` 缓存缩短结果：
+//! 目录不变直接复用，不加 `readdir`。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -19,13 +29,13 @@ thread_local! {
 }
 
 /// 部件类别。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Class {
-    /// 锚(首 `~`/根/当前目录/marker 祖先),不缩。
+    /// 锚（首 `~`/根/当前目录/marker 祖先），不缩。
     Anchor,
-    /// 被缩短(唯一前缀)。
+    /// 被缩短。
     Shortened,
-    /// 普通(未缩但非锚)。
+    /// 普通（未缩但非锚）。
     Normal,
 }
 
@@ -36,45 +46,120 @@ pub struct DirPart {
     pub class: Class,
 }
 
-/// 折叠绝对路径 `cwd`,返回部件序列(不含 `~`/`/`;调用方拼装并加前缀)。
-pub fn truncate_to_unique(cwd: &Path, shortenlen: usize, home: Option<&Path>) -> Vec<DirPart> {
-    let shortenlen = shortenlen.max(1);
-    if let Some(home) = home {
-        if let Ok(rel) = cwd.strip_prefix(home) {
-            let parts: Vec<String> = rel
-                .components()
-                .filter(|c| matches!(c, Component::Normal(_)))
-                .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                .collect();
-            return fold(&parts, shortenlen, home);
-        }
-    }
-    let parts: Vec<String> = cwd
-        .components()
-        .filter(|c| matches!(c, Component::Normal(_)))
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    fold(&parts, shortenlen, Path::new("/"))
+/// 截断策略（p10k `POWERLEVEL9K_SHORTEN_STRATEGY`）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Strategy {
+    /// 每级缩到兄弟中的最短唯一前缀。p11k/p10k 默认。
+    #[default]
+    TruncateToUnique,
+    /// 每级留前 N + 省略符 + 后 N。
+    TruncateMiddle,
+    /// 每级留前 N + 省略符。
+    TruncateFromRight,
+    /// 只留末 N 级。
+    TruncateToLast,
+    /// 首 N 级 + 末 N 级，中间省略。
+    TruncateToFirstAndLast,
+    /// 整条路径按字符数硬截断（保留末尾）。
+    TruncateAbsolute,
+    /// 在 marker 文件处折叠。
+    TruncateWithFolderMarker,
+    /// 空/未知策略（p10k 的默认分支）：只保留末 N 级，前面用省略符。
+    FoldToLast,
 }
 
-/// 折叠一组相对部件(相对 `base`),返回带类别的部件序列。
-/// 首部件(若绝对路径是根后第一个、或 home 后的第一个)与末 `shortenlen` 个、
-/// marker 祖先为 Anchor;其余缩到唯一前缀 → Shortened。
-fn fold(parts: &[String], shortenlen: usize, base: &Path) -> Vec<DirPart> {
+impl Strategy {
+    /// p10k 的策略名 → 策略；空/未知走默认分支（`FoldToLast`）。
+    pub fn parse(s: &str) -> Strategy {
+        match s {
+            "truncate_to_unique" => Strategy::TruncateToUnique,
+            "truncate_middle" => Strategy::TruncateMiddle,
+            "truncate_from_right" => Strategy::TruncateFromRight,
+            "truncate_to_last" => Strategy::TruncateToLast,
+            "truncate_to_first_and_last" => Strategy::TruncateToFirstAndLast,
+            "truncate_absolute" | "truncate_absolute_chars" => Strategy::TruncateAbsolute,
+            "truncate_with_folder_marker" => Strategy::TruncateWithFolderMarker,
+            _ => Strategy::FoldToLast,
+        }
+    }
+}
+
+/// 折叠选项（对应 p10k `SHORTEN_*` / `DIR_*` 那几个参数）。
+pub struct Opts {
+    pub strategy: Strategy,
+    /// `SHORTEN_DIR_LENGTH`（保留级数 / 每级字符数）。
+    pub length: usize,
+    /// `SHORTEN_DELIMITER`；空 = 不留省略符（p10k 的默认配置就是空）。
+    pub delimiter: String,
+    /// `SHORTEN_FOLDER_MARKER`；空 = 用内置 marker 列表。
+    pub marker: String,
+}
+
+/// 内置 marker 文件（p10k 的默认 `markers` 列表）。
+const MARKERS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "Cargo.toml",
+    "package.json",
+    "go.mod",
+];
+
+/// 折叠绝对路径 `cwd`，返回部件序列（不含 `~`/`/`；调用方拼装并加前缀）。
+pub fn shorten(cwd: &Path, home: Option<&Path>, opts: &Opts) -> Vec<DirPart> {
+    let len = opts.length.max(1);
+    let (parts, base) = split_parts(cwd, home);
+    if parts.is_empty() {
+        return Vec::new();
+    }
+    match opts.strategy {
+        Strategy::TruncateToUnique => fold_unique(&parts, len, &base, opts),
+        Strategy::TruncateMiddle => fold_truncate(&parts, len, &opts.delimiter, true),
+        Strategy::TruncateFromRight => fold_truncate(&parts, len, &opts.delimiter, false),
+        Strategy::TruncateToLast => fold_to_last(&parts, len, &opts.delimiter),
+        Strategy::TruncateToFirstAndLast => fold_first_last(&parts, len, &opts.delimiter),
+        Strategy::TruncateAbsolute => fold_absolute(&parts, len, &opts.delimiter),
+        Strategy::TruncateWithFolderMarker => {
+            fold_folder_marker(&parts, &base, &opts.delimiter, opts)
+        }
+        Strategy::FoldToLast => fold_keep_last(&parts, len, &opts.delimiter),
+    }
+}
+
+/// 拆成部件序列 + 基准目录（home 优先，否则根）。
+fn split_parts(cwd: &Path, home: Option<&Path>) -> (Vec<String>, PathBuf) {
+    if let Some(home) = home {
+        if let Ok(rel) = cwd.strip_prefix(home) {
+            let parts = to_parts(rel);
+            return (parts, home.to_path_buf());
+        }
+    }
+    (to_parts(cwd), PathBuf::from("/"))
+}
+
+fn to_parts(p: &Path) -> Vec<String> {
+    p.components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// `truncate_to_unique`：锚点保留，其余缩到唯一前缀。
+fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) -> Vec<DirPart> {
     let n = parts.len();
     let anchor_tail = shortenlen.min(n);
     let mut out: Vec<DirPart> = Vec::with_capacity(n);
-    for i in 0..n {
+    for (i, part) in parts.iter().enumerate() {
         let abs = join(base, &parts[..=i]);
-        let is_anchor = i >= n - anchor_tail || has_marker_in(&abs);
+        let is_anchor = i >= n - anchor_tail || has_marker_in(&abs, opts);
         if is_anchor {
             out.push(DirPart {
-                text: parts[i].clone(),
+                text: part.clone(),
                 class: Class::Anchor,
             });
         } else {
-            let text = shorten_component(&abs, &parts[i]);
-            let class = if text != parts[i] {
+            let text = shorten_component(&abs, part);
+            let class = if text != *part {
                 Class::Shortened
             } else {
                 Class::Normal
@@ -85,6 +170,212 @@ fn fold(parts: &[String], shortenlen: usize, base: &Path) -> Vec<DirPart> {
     out
 }
 
+/// `truncate_middle` / `truncate_from_right`：首尾两个部件保留，中间每级截断。
+fn fold_truncate(parts: &[String], len: usize, delim: &str, middle: bool) -> Vec<DirPart> {
+    let d = delim.chars().count();
+    let n = parts.len();
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, part)| {
+            // p10k 只处理第 2 个到倒数第 2 个部件（首尾原样）。
+            let interior = i > 0 && i + 1 < n;
+            let chars: Vec<char> = part.chars().collect();
+            let suf = if middle { len } else { 0 };
+            if interior && chars.len() > len + suf + d {
+                let head: String = chars[..len].iter().collect();
+                let tail: String = chars[chars.len() - suf..].iter().collect();
+                DirPart {
+                    text: format!("{head}{delim}{tail}"),
+                    class: Class::Shortened,
+                }
+            } else {
+                DirPart {
+                    text: part.clone(),
+                    class: class_for(i, n),
+                }
+            }
+        })
+        .collect()
+}
+
+/// `truncate_to_last`：只留末 `len` 级，前面的整体丢成一个省略符。
+fn fold_to_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
+    let n = parts.len();
+    if n <= len {
+        return plain(parts);
+    }
+    let mut out = Vec::new();
+    if !delim.is_empty() {
+        out.push(DirPart {
+            text: delim.to_string(),
+            class: Class::Shortened,
+        });
+    }
+    for (i, part) in parts.iter().enumerate().skip(n - len) {
+        out.push(DirPart {
+            text: part.clone(),
+            class: class_for(i, n),
+        });
+    }
+    out
+}
+
+/// `truncate_to_first_and_last`：首 `len` + 末 `len`，中间一个省略符。
+fn fold_first_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
+    let n = parts.len();
+    if n <= len * 2 {
+        return plain(parts);
+    }
+    let mut out: Vec<DirPart> = Vec::new();
+    for (i, part) in parts.iter().enumerate() {
+        if i < len {
+            out.push(DirPart {
+                text: part.clone(),
+                class: Class::Anchor,
+            });
+        } else if i == len {
+            out.push(DirPart {
+                text: delim.to_string(),
+                class: Class::Shortened,
+            });
+        } else if i >= n - len {
+            out.push(DirPart {
+                text: part.clone(),
+                class: Class::Anchor,
+            });
+        }
+    }
+    out
+}
+
+/// `truncate_absolute(_chars)`：整条路径按字符数截断，保留末尾。
+fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
+    // 从末尾往回累加部件，直到超过 len；越界的那级只留末尾若干字符。
+    let mut acc = 0usize;
+    let mut start = 0usize;
+    for i in (0..parts.len()).rev() {
+        let l = parts[i].chars().count() + 1; // +1 是分隔符
+        if acc + l > len {
+            start = i;
+            break;
+        }
+        acc += l;
+    }
+    let mut out: Vec<DirPart> = Vec::new();
+    if start > 0 {
+        // 越界的那级截掉开头，前面丢弃。
+        let part = &parts[start];
+        let keep = len.saturating_sub(acc);
+        let chars: Vec<char> = part.chars().collect();
+        let text = if keep > 0 && keep < chars.len() {
+            format!(
+                "{}{}",
+                delim,
+                chars[chars.len() - keep..].iter().collect::<String>()
+            )
+        } else {
+            part.clone()
+        };
+        out.push(DirPart {
+            text,
+            class: Class::Shortened,
+        });
+    }
+    for (i, part) in parts.iter().enumerate().skip(start) {
+        out.push(DirPart {
+            text: part.clone(),
+            class: class_for(i, parts.len()),
+        });
+    }
+    out
+}
+
+/// `truncate_with_folder_marker`：marker 文件之间的间隔折叠成省略符。
+fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -> Vec<DirPart> {
+    // 从末尾往回找出每个含 marker 的祖先级。
+    let n = parts.len();
+    let mut marks: Vec<usize> = Vec::new();
+    for i in (0..n).rev() {
+        let abs = join(base, &parts[..=i]);
+        if has_marker_in(&abs, opts) {
+            marks.push(i);
+        }
+    }
+    marks.push(usize::MAX); // 相当于 p10k 里补的那个 1（前面没有 marker 时也要收口）
+    let mut hidden: Vec<bool> = vec![false; n];
+    for w in marks.windows(2) {
+        let (hi, lo) = (w[0], w[1]);
+        let gap = if lo == usize::MAX { hi + 1 } else { hi - lo };
+        if gap > 2 {
+            let from = if lo == usize::MAX { 0 } else { lo + 1 };
+            for h in hidden.iter_mut().take(hi).skip(from) {
+                *h = true;
+            }
+        }
+    }
+    let mut out: Vec<DirPart> = Vec::new();
+    let mut elided = false;
+    for (i, part) in parts.iter().enumerate() {
+        if hidden[i] {
+            if !elided && !delim.is_empty() {
+                out.push(DirPart {
+                    text: delim.to_string(),
+                    class: Class::Shortened,
+                });
+                elided = true;
+            }
+            continue;
+        }
+        out.push(DirPart {
+            text: part.clone(),
+            class: class_for(i, n),
+        });
+    }
+    out
+}
+
+/// 空策略的默认分支：保留末 `len` 级，前面一个省略符。
+fn fold_keep_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
+    let n = parts.len();
+    if n <= len {
+        return plain(parts);
+    }
+    let mut out = vec![DirPart {
+        text: delim.to_string(),
+        class: Class::Shortened,
+    }];
+    for (i, part) in parts.iter().enumerate().skip(n - len) {
+        out.push(DirPart {
+            text: part.clone(),
+            class: class_for(i, n),
+        });
+    }
+    out
+}
+
+/// 全保留（策略不需要折叠时）。
+fn plain(parts: &[String]) -> Vec<DirPart> {
+    let n = parts.len();
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, p)| DirPart {
+            text: p.clone(),
+            class: class_for(i, n),
+        })
+        .collect()
+}
+
+/// 非折叠部件的类别：最后一个部件是锚（当前目录），其余普通。
+fn class_for(i: usize, n: usize) -> Class {
+    if i + 1 == n {
+        Class::Anchor
+    } else {
+        Class::Normal
+    }
+}
+
 fn join(base: &Path, parts: &[String]) -> PathBuf {
     let mut p = base.to_path_buf();
     for x in parts {
@@ -93,7 +384,7 @@ fn join(base: &Path, parts: &[String]) -> PathBuf {
     p
 }
 
-/// 部件在它目录兄弟中的最短唯一前缀(缓存优先)。
+/// 部件在它目录兄弟中的最短唯一前缀（缓存优先）。
 fn shorten_component(abs: &Path, name: &str) -> String {
     let parent = abs.parent().unwrap_or_else(|| Path::new("/"));
     let parent_mtime = file_mtime(parent).unwrap_or(-1);
@@ -119,16 +410,11 @@ fn shorten_component(abs: &Path, name: &str) -> String {
     best
 }
 
-/// 该绝对路径前缀是否含 marker 文件的祖先。
-fn has_marker_in(abs: &Path) -> bool {
-    const MARKERS: &[&str] = &[
-        ".git",
-        ".hg",
-        ".svn",
-        "Cargo.toml",
-        "package.json",
-        "go.mod",
-    ];
+/// 该绝对路径前缀是否含 marker 文件的祖先（`opts.marker` 非空时只用它）。
+fn has_marker_in(abs: &Path, opts: &Opts) -> bool {
+    if !opts.marker.is_empty() {
+        return abs.join(&opts.marker).exists();
+    }
     MARKERS
         .iter()
         .any(|m| abs.join(m).exists() || abs.join(m).is_dir())
@@ -151,21 +437,89 @@ fn file_mtime(path: &Path) -> Option<i64> {
 mod tests {
     use super::*;
 
+    fn opts(strategy: Strategy, length: usize, delimiter: &str) -> Opts {
+        Opts {
+            strategy,
+            length,
+            delimiter: delimiter.into(),
+            marker: String::new(),
+        }
+    }
+
+    fn texts(cwd: &str, o: &Opts) -> Vec<String> {
+        shorten(Path::new(cwd), None, o)
+            .into_iter()
+            .map(|p| p.text)
+            .collect()
+    }
+
     #[test]
-    fn home_prefix_is_tilde_and_last_is_anchor() {
-        let home = std::env::temp_dir().join("p11k-shorten-home");
+    fn truncate_middle_keeps_head_and_tail() {
+        let o = opts(Strategy::TruncateMiddle, 2, "…");
+        // 首尾部件原样；中间部件留前 2 + 省略符 + 后 2。
+        assert_eq!(
+            texts("/alpha/bravocharlie/delta/echo", &o),
+            vec!["alpha", "br…ie", "delta", "echo"]
+        );
+    }
+
+    #[test]
+    fn truncate_from_right_keeps_head() {
+        let o = opts(Strategy::TruncateFromRight, 3, "…");
+        // delta(5) > 3+1 也截；最后一个部件始终原样。
+        assert_eq!(
+            texts("/alpha/bravocharlie/delta/echo", &o),
+            vec!["alpha", "bra…", "del…", "echo"]
+        );
+    }
+
+    #[test]
+    fn truncate_to_last_keeps_tail_levels() {
+        let o = opts(Strategy::TruncateToLast, 2, "…");
+        assert_eq!(
+            texts("/alpha/bravo/charlie/delta", &o),
+            vec!["…", "charlie", "delta"]
+        );
+    }
+
+    #[test]
+    fn truncate_to_first_and_last_collapses_middle() {
+        let o = opts(Strategy::TruncateToFirstAndLast, 1, "…");
+        assert_eq!(
+            texts("/alpha/bravo/charlie/delta/echo", &o),
+            vec!["alpha", "…", "echo"]
+        );
+    }
+
+    #[test]
+    fn fold_to_last_is_the_default_branch() {
+        let o = opts(Strategy::FoldToLast, 2, "…");
+        assert_eq!(texts("/a/b/c/d", &o), vec!["…", "c", "d"]);
+    }
+
+    #[test]
+    fn short_paths_are_left_alone() {
+        for s in [
+            Strategy::TruncateMiddle,
+            Strategy::TruncateFromRight,
+            Strategy::TruncateToLast,
+            Strategy::TruncateToFirstAndLast,
+        ] {
+            let o = opts(s, 3, "…");
+            assert_eq!(texts("/a/b", &o), vec!["a", "b"], "{s:?}");
+        }
+    }
+
+    #[test]
+    fn home_prefix_keeps_last_as_anchor() {
+        let home = std::env::temp_dir().join("p11k-shorten-home2");
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join("Projects").join("p11k")).unwrap();
         std::fs::create_dir_all(home.join("Templates")).unwrap();
         let cwd = home.join("Projects").join("p11k");
-        let parts = truncate_to_unique(&cwd, 1, Some(&home));
-        assert!(parts.last().map(|p| p.text.as_str()) == Some("p11k"));
-        assert!(parts.last().map(|p| p.class) == Some(Class::Anchor));
-    }
-
-    #[test]
-    fn non_home_produces_parts() {
-        let parts = truncate_to_unique(Path::new("/a/b/c"), 1, None);
-        assert_eq!(parts.last().map(|p| p.text.as_str()), Some("c"));
+        let o = opts(Strategy::TruncateToUnique, 1, "");
+        let parts = shorten(&cwd, Some(&home), &o);
+        assert_eq!(parts.last().map(|p| p.text.as_str()), Some("p11k"));
+        assert_eq!(parts.last().map(|p| p.class), Some(Class::Anchor));
     }
 }
