@@ -37,11 +37,23 @@ pub struct GitStatus {
     pub untracked: usize,
     pub ahead: usize,
     pub behind: usize,
+    /// push remote 的领先/落后（p10k `VCS_STATUS_PUSH_COMMITS_{AHEAD,BEHIND}`）。
+    pub push_ahead: usize,
+    pub push_behind: usize,
     pub stashes: usize,
     /// 进行中的操作（merge/rebase/...，p10k `VCS_STATUS_ACTION`），空 = 无。
     pub action: String,
     /// HEAD 指向的标签（p10k `VCS_STATUS_TAG`）；无本地分支时显示 `#tag`。
     pub tag: String,
+    /// upstream 分支名（p10k `VCS_STATUS_REMOTE_BRANCH`）；与本地分支名不同时
+    /// 显示 `本地:远端`。
+    pub remote_branch: String,
+    /// 最后一次提交的标题（p10k `VCS_STATUS_COMMIT_SUMMARY`）：含 wip/WIP 时
+    /// 显示 `wip` 标记。
+    pub commit_summary: String,
+    /// 索引条目数（p10k `VCS_STATUS_INDEX_SIZE`）：与 `max-index-size-dirty`
+    /// 一比就知道 dirty 统计是不是被跳过了（跳过时 unstaged 数未知，画 `─`）。
+    pub index_size: usize,
     /// tracking 远端 URL(用于按域名选 vcs 图标,如 github/archlinux)。
     pub remote_url: String,
 }

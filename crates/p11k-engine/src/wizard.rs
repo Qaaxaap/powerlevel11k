@@ -209,9 +209,14 @@ fn sample_vcs() -> crate::theme::GitStatus {
         untracked: 1,
         ahead: 1,
         behind: 0,
+        push_ahead: 0,
+        push_behind: 0,
         stashes: 0,
         action: String::new(),
         tag: String::new(),
+        remote_branch: String::new(),
+        commit_summary: "Add feature".into(),
+        index_size: 3,
         remote_url: "https://github.com/example/repo".into(),
     }
 }

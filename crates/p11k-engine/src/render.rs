@@ -1887,6 +1887,12 @@ fn vcs_text(
         s.push_str(&paint("@", &meta));
         s.push_str(&paint(&hash, &clean));
     }
+    // p10k:`if [[ -n ${VCS_STATUS_REMOTE_BRANCH:#$VCS_STATUS_LOCAL_BRANCH} ]]`
+    // → `${meta}:${clean}${remote_branch}`,紧跟在分支名后面(不加空格)。
+    if !v.remote_branch.is_empty() && v.remote_branch != v.branch {
+        s.push_str(&paint(":", &meta));
+        s.push_str(&paint(&v.remote_branch, &clean));
+    }
     // 计数符号可被 props 覆盖（p10k 里这些字符写死在 config 的格式化函数里，
     // 这里给出来让用户不用改引擎就能换）。
     let sym = |name: &str, default: &str| -> String {
@@ -1897,9 +1903,13 @@ fn vcs_text(
     };
     let mut parts: Vec<(String, &Style)> = Vec::new();
     // 顺序与符号都照抄 p10k 生成配置里的 vcs 格式化函数:
-    //   ⇣behind⇡ahead → *stashes → <action> → ~conflicted → +staged
-    //   → !unstaged → ?untracked
-    // ahead/behind 之间不加空格(p10k 是 `⇣42⇡42`,只有都缺省时才退化成一个)。
+    //   wip → ⇣behind⇡ahead → ⇠push_behind⇢push_ahead → *stashes → <action>
+    //   → ~conflicted → +staged → !unstaged → ?untracked → ─
+    // ahead/behind(以及 push 的那对)之间不加空格(p10k 是 `⇣42⇡42`)。
+    // p10k:提交标题里出现独立单词 wip/WIP 时插一个 `wip`(modified 色)。
+    if has_wip_word(&v.commit_summary) {
+        parts.push(("wip".to_string(), &modified));
+    }
     if v.ahead > 0 || v.behind > 0 {
         let mut ab = String::new();
         if v.behind > 0 {
@@ -1909,6 +1919,25 @@ fn vcs_text(
             ab.push_str(&format!("{}{}", sym("ahead-symbol", "⇡"), v.ahead));
         }
         parts.push((ab, &clean));
+    }
+    // p10k:`${clean}⇠N` / `${clean}⇢N`(push remote 的落后/领先)。
+    if v.push_ahead > 0 || v.push_behind > 0 {
+        let mut pb = String::new();
+        if v.push_behind > 0 {
+            pb.push_str(&format!(
+                "{}{}",
+                sym("push-behind-symbol", "⇠"),
+                v.push_behind
+            ));
+        }
+        if v.push_ahead > 0 {
+            pb.push_str(&format!(
+                "{}{}",
+                sym("push-ahead-symbol", "⇢"),
+                v.push_ahead
+            ));
+        }
+        parts.push((pb, &clean));
     }
     if v.stashes > 0 {
         parts.push((format!("{}{}", sym("stash-symbol", "*"), v.stashes), &clean));
@@ -1942,6 +1971,18 @@ fn vcs_text(
             &untracked,
         ));
     }
+    // p10k:`(( VCS_STATUS_HAS_UNSTAGED == -1 )) && res+=" ${modified}─"`：
+    // 配了 `max-index-size-dirty` 且索引比它大 → dirty 扫描被跳过,unstaged 数
+    // 未知(gitstatus 插件就是在客户端按这条规则把 HAS_UNSTAGED 置 -1 的)。
+    let dirty_cap = match seg.prop("max-index-size-dirty") {
+        Some(crate::config::Prop::Int(n)) => Some(*n),
+        _ => None,
+    };
+    if let Some(cap) = dirty_cap {
+        if cap >= 0 && v.index_size > cap as usize {
+            parts.push(("─".to_string(), &modified));
+        }
+    }
     if !parts.is_empty() {
         // 空格用段样式上色：裸空格会被终端按默认背景画，在带底色的段里
         // （classic 等）会露出一条黑缝。
@@ -1951,6 +1992,26 @@ fn vcs_text(
         s.push_str(&joined.join(&sep));
     }
     s
+}
+
+/// p10k 的 `[[ $VCS_STATUS_COMMIT_SUMMARY == (|*[^[:alnum:]])(wip|WIP)(|[^[:alnum:]]*) ]]`：
+/// 提交标题里出现被非字母数字（或串首尾）界定的 `wip` / `WIP`。
+fn has_wip_word(summary: &str) -> bool {
+    let bytes: Vec<char> = summary.chars().collect();
+    let is_word = |c: char| c.is_alphanumeric();
+    let mut i = 0;
+    while i + 3 <= bytes.len() {
+        let cand: String = bytes[i..i + 3].iter().collect();
+        if cand == "wip" || cand == "WIP" {
+            let before_ok = i == 0 || !is_word(bytes[i - 1]);
+            let after_ok = i + 3 == bytes.len() || !is_word(bytes[i + 3]);
+            if before_ok && after_ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
 }
 
 /// 分支名折叠（p10k `VCS_SHORTEN_*`）：`shorten-length` 与 `shorten-min-length`
@@ -2316,9 +2377,14 @@ mod tests {
                 untracked: 0,
                 ahead: 0,
                 behind: 0,
+                push_ahead: 0,
+                push_behind: 0,
                 stashes: 0,
                 action: String::new(),
                 tag: String::new(),
+                remote_branch: String::new(),
+                commit_summary: String::new(),
+                index_size: 0,
                 remote_url: String::new(),
             };
             render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n")
@@ -2346,9 +2412,14 @@ mod tests {
             untracked: 0,
             ahead: 0,
             behind: 0,
+            push_ahead: 0,
+            push_behind: 0,
             stashes: 0,
             action: String::new(),
             tag: String::new(),
+            remote_branch: String::new(),
+            commit_summary: String::new(),
+            index_size: 0,
             remote_url: String::new(),
         };
         let mut cfg = Config::default();
@@ -2427,6 +2498,132 @@ mod tests {
     }
 
     #[test]
+    fn vcs_wip_remote_branch_push_counts_and_dash() {
+        /// 去 SGR 只留可见文字。
+        fn plain(h: &str) -> String {
+            let mut out = String::new();
+            let mut it = h.chars().peekable();
+            while let Some(c) = it.next() {
+                if c == '\u{1b}' {
+                    for d in it.by_ref() {
+                        if d == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    out.push(c);
+                }
+            }
+            out
+        }
+        fn render(v: &GitStatus) -> String {
+            let mut cfg = Config::default();
+            cfg.layout.left = vec![vec![Element::Seg("vcs".into())]];
+            let mut s = crate::config::Segment::default();
+            s.props
+                .insert("clean-foreground".into(), crate::config::Prop::Int(76));
+            s.props
+                .insert("meta-foreground".into(), crate::config::Prop::Int(246));
+            cfg.segments.insert("vcs".into(), s);
+            plain(&render_header_lines(&cfg, &info("/tmp", None), Some(v), 120).join("\n"))
+        }
+        let base = GitStatus {
+            branch: "main".into(),
+            commit: "aa2fdd09deadbeef".into(),
+            staged: 0,
+            unstaged: 0,
+            conflicted: 0,
+            untracked: 0,
+            ahead: 0,
+            behind: 0,
+            push_ahead: 0,
+            push_behind: 0,
+            stashes: 0,
+            action: String::new(),
+            tag: String::new(),
+            remote_branch: String::new(),
+            commit_summary: String::new(),
+            index_size: 0,
+            remote_url: String::new(),
+        };
+        // 分支名后面直接跟 `:远端名`(p10k 不加空格);与本地同名时不显示。
+        let same = GitStatus {
+            remote_branch: "main".into(),
+            ..base.clone()
+        };
+        let same_out = render(&same);
+        assert!(
+            !same_out.contains(':'),
+            "同名远端不应重复显示,实际 {same_out:?}"
+        );
+        let diff = GitStatus {
+            remote_branch: "origin/main".into(),
+            ..base.clone()
+        };
+        assert!(render(&diff).contains("main:origin/main"));
+        // wip:提交标题里独立的 wip/WIP 才算(被字母数字包围的不算)。
+        for (summary, want) in [
+            ("wip", true),
+            ("WIP: fix", true),
+            ("fix (WIP)", true),
+            ("wipe out", false),
+            ("swipe", false),
+            ("", false),
+        ] {
+            let v = GitStatus {
+                commit_summary: summary.into(),
+                ..base.clone()
+            };
+            let got = render(&v).contains("main wip");
+            assert_eq!(got, want, "summary={summary:?} 时 wip 判断错");
+        }
+        // push remote 的 ⇠/⇢ 紧跟 ahead/behind 之后。
+        let push = GitStatus {
+            ahead: 1,
+            push_behind: 2,
+            push_ahead: 3,
+            stashes: 4,
+            ..base.clone()
+        };
+        let out = render(&push);
+        assert!(
+            out.contains("main ⇡1 ⇠2⇢3 *4"),
+            "push 计数位置/符号不对,实际 {out:?}"
+        );
+        // 配了 max-index-size-dirty 且索引更大 → 末尾画 `─`；没配就不画。
+        let dash = GitStatus {
+            index_size: 500,
+            ..base.clone()
+        };
+        fn render_with_cap(v: &GitStatus, cap: Option<i64>) -> String {
+            let mut cfg = Config::default();
+            cfg.layout.left = vec![vec![Element::Seg("vcs".into())]];
+            let mut s = crate::config::Segment::default();
+            if let Some(cap) = cap {
+                s.props
+                    .insert("max-index-size-dirty".into(), crate::config::Prop::Int(cap));
+            }
+            cfg.segments.insert("vcs".into(), s);
+            plain(&render_header_lines(&cfg, &info("/tmp", None), Some(v), 120).join("\n"))
+        }
+        assert!(
+            render_with_cap(&dash, Some(100))
+                .trim_end()
+                .ends_with("main ─"),
+            "索引超上限应画 ─,实际 {:?}",
+            render_with_cap(&dash, Some(100))
+        );
+        assert!(
+            !render_with_cap(&dash, Some(1000)).contains('─'),
+            "索引没超上限不该画 ─"
+        );
+        assert!(
+            !render_with_cap(&dash, None).contains('─'),
+            "没配上限不该画 ─"
+        );
+    }
+
+    #[test]
     fn vcs_detached_and_tag_match_p10k() {
         // p10k 的格式化函数:无分支有标签 → `${meta}#${clean}tag`,
         // 无分支无标签 → `${meta}@${clean}commit[1,8]`。
@@ -2450,9 +2647,14 @@ mod tests {
             untracked: 0,
             ahead: 0,
             behind: 0,
+            push_ahead: 0,
+            push_behind: 0,
             stashes: 0,
             action: String::new(),
             tag: String::new(),
+            remote_branch: String::new(),
+            commit_summary: String::new(),
+            index_size: 0,
             remote_url: String::new(),
         };
         let h = render(&base);
@@ -2510,9 +2712,14 @@ mod tests {
             untracked: 4,
             ahead: 2,
             behind: 1,
+            push_ahead: 0,
+            push_behind: 0,
             stashes: 3,
             action: "merge".into(),
             tag: String::new(),
+            remote_branch: String::new(),
+            commit_summary: String::new(),
+            index_size: 0,
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 120).join("\n");
@@ -2536,9 +2743,14 @@ mod tests {
             untracked: 0,
             ahead: 0,
             behind: 0,
+            push_ahead: 0,
+            push_behind: 0,
             stashes: 0,
             action: String::new(),
             tag: String::new(),
+            remote_branch: String::new(),
+            commit_summary: String::new(),
+            index_size: 0,
             remote_url: String::new(),
         };
         fn render(v: &GitStatus, conflicted_fg: Option<i64>) -> String {
@@ -2711,9 +2923,14 @@ mod tests {
             untracked: 0,
             ahead: 0,
             behind: 0,
+            push_ahead: 0,
+            push_behind: 0,
             stashes: 0,
             action: String::new(),
             tag: String::new(),
+            remote_branch: String::new(),
+            commit_summary: String::new(),
+            index_size: 0,
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n");
@@ -2748,9 +2965,14 @@ mod tests {
             untracked: 3,
             ahead: 1,
             behind: 0,
+            push_ahead: 0,
+            push_behind: 0,
             stashes: 0,
             action: String::new(),
             tag: String::new(),
+            remote_branch: String::new(),
+            commit_summary: String::new(),
+            index_size: 0,
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
@@ -2795,9 +3017,14 @@ mod tests {
             untracked: 0,
             ahead: 0,
             behind: 0,
+            push_ahead: 0,
+            push_behind: 0,
             stashes: 0,
             action: String::new(),
             tag: String::new(),
+            remote_branch: String::new(),
+            commit_summary: String::new(),
+            index_size: 0,
             remote_url: String::new(),
         };
         // 设置异底段间用 powerline 箭头,末尾端符。

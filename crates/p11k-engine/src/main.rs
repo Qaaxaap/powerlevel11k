@@ -508,17 +508,26 @@ fn main() -> anyhow::Result<()> {
     // 首次扫描 1~2s 也不会卡住 prompt 显示。
     let (req_tx, req_rx) = mpsc::channel::<GitRequest>();
     let (res_tx, res_rx) = mpsc::channel::<GitResult>();
+    // 按照 p10k 惯例进行调用;计数上限与 dirty 跳过阈值来自 vcs 段属性
+    // (p10k 里是全局的 POWERLEVEL9K_VCS_*_MAX_NUM 与
+    // POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY,-1 = 不限)。先取值再 spawn,
+    // 免得把整个 config 移动进线程。
+    let dirty_cap = vcs_int_prop(&config, "max-index-size-dirty", -1);
+    let max_staged = vcs_int_prop(&config, "max-num-staged", -1);
+    let max_unstaged = vcs_int_prop(&config, "max-num-unstaged", -1);
+    let max_conflicted = vcs_int_prop(&config, "max-num-conflicted", -1);
+    let max_untracked = vcs_int_prop(&config, "max-num-untracked", -1);
     std::thread::spawn(move || {
-        // 按照 p10k 惯例进行调用，计数无上限;扫描并行度 = 2*cpu(cap 32)。
         let num_threads = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1)
             .min(32);
         let opts = Options {
-            max_num_staged: -1,
-            max_num_unstaged: -1,
-            max_num_conflicted: -1,
-            max_num_untracked: -1,
+            max_num_staged: max_staged,
+            max_num_unstaged: max_unstaged,
+            max_num_conflicted: max_conflicted,
+            max_num_untracked: max_untracked,
+            dirty_max_index_size: dirty_cap,
             num_threads,
             ..Default::default()
         };
@@ -1025,6 +1034,7 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 fn git_status(cache: &mut RepoCache, cwd: &str) -> Option<GitStatus> {
     let repo = cache.get_or_open(cwd.as_bytes(), false)?;
     let f = repo.build_fields(false);
+    let index_size = parse_field(&f[field::INDEX_SIZE]);
     Some(GitStatus {
         branch: String::from_utf8_lossy(&f[field::LOCAL_BRANCH]).into_owned(),
         commit: String::from_utf8_lossy(&f[field::COMMIT]).into_owned(),
@@ -1034,11 +1044,25 @@ fn git_status(cache: &mut RepoCache, cwd: &str) -> Option<GitStatus> {
         untracked: parse_field(&f[field::NUM_UNTRACKED]),
         ahead: parse_field(&f[field::COMMITS_AHEAD]),
         behind: parse_field(&f[field::COMMITS_BEHIND]),
+        push_ahead: parse_field(&f[field::PUSH_COMMITS_AHEAD]),
+        push_behind: parse_field(&f[field::PUSH_COMMITS_BEHIND]),
         stashes: parse_field(&f[field::STASHES]),
         action: String::from_utf8_lossy(&f[field::ACTION]).into_owned(),
         tag: String::from_utf8_lossy(&f[field::TAG]).into_owned(),
+        remote_branch: String::from_utf8_lossy(&f[field::REMOTE_BRANCH]).into_owned(),
+        commit_summary: String::from_utf8_lossy(&f[field::COMMIT_SUMMARY]).into_owned(),
+        index_size,
         remote_url: String::from_utf8_lossy(&f[field::REMOTE_URL]).into_owned(),
     })
+}
+
+/// 取 `vcs` 段上的整数属性（p10k 的全局 `POWERLEVEL9K_VCS_*` 参数在 KDL 里
+/// 落在 vcs 段上）；缺省或不合法时用 `default`。
+fn vcs_int_prop(config: &Config, key: &str, default: i64) -> i64 {
+    match config.segment("vcs").prop(key) {
+        Some(crate::config::Prop::Int(n)) => *n,
+        _ => default,
+    }
 }
 
 /// 字段是 SafePrint 后的十进制字符串，解析为 usize；失败按 0 处理。
