@@ -666,6 +666,8 @@ fn main() -> anyhow::Result<()> {
     // 用户自当前 prompt 就绪以来敲过键没有：缩窗时代 pwsh 敲空回车只在输入行
     // 还空着时才敢做，否则会把用户没写完的命令提交掉。
     let mut typed_since_prompt = false;
+    // 最后一次被判定成"用户输入"的原始字节，只用于诊断日志（-e 转义）。
+    let mut last_input: Vec<u8> = Vec::new();
     // 上一次次替 pwsh 敲回车的时刻（拖动窗口会连发 SIGWINCH，节流一下）。
     let mut last_pwsh_nudge: Option<std::time::Instant> = None;
 
@@ -750,6 +752,11 @@ fn main() -> anyhow::Result<()> {
                     let _ = writer.write_all(b"\r");
                     let _ = writer.flush();
                     last_pwsh_nudge = Some(std::time::Instant::now());
+                } else if shell == Shell::Pwsh && at_prompt {
+                    log(&format!(
+                        "resize: no pwsh nudge (typed={typed_since_prompt}, last_input={:?})",
+                        String::from_utf8_lossy(&last_input)
+                    ));
                 }
             }
         }
@@ -950,8 +957,11 @@ fn main() -> anyhow::Result<()> {
                         at_prompt = false;
                         typed_since_prompt = false;
                         last_enter = Some(std::time::Instant::now()); // 命令开始计时
-                    } else {
+                    } else if !is_terminal_reply(&buf[..n]) {
+                        // 终端应答（DSR 光标位置等）不算用户输入。
                         typed_since_prompt = true;
+                        last_input.clear();
+                        last_input.extend_from_slice(&buf[..n.min(32)]);
                     }
                     writer.write_all(&buf[..n])?;
                 }
@@ -1224,6 +1234,25 @@ fn log(msg: &str) {
     }
 }
 
+/// 终端对程序查询的应答，不算"用户在输入行打字"。
+///
+/// PSReadLine 会时不时发 DSR（`\x1b[6n`）问光标在哪，终端回的 `\x1b[<行>;<列>R`
+/// 走的是 stdin —— 引擎如果不认出来，就会以为用户敲了键，缩窗时代敲空回车的
+/// 逻辑就再也不触发。焦点事件 `\x1b[I`/`\x1b[O` 与设备属性应答 `\x1b[?...c`
+/// 同理。方向键（`\x1b[A`）之类是真的按键，不能算进来。
+fn is_terminal_reply(buf: &[u8]) -> bool {
+    let Some(rest) = buf.strip_prefix(b"\x1b[") else {
+        return false;
+    };
+    let Some((&last, params)) = rest.split_last() else {
+        return false;
+    };
+    matches!(last, b'R' | b'c' | b'I' | b'O')
+        && params
+            .iter()
+            .all(|b| b.is_ascii_digit() || *b == b';' || *b == b'?')
+}
+
 /// 在 `haystack` 里找子切片 `needle` 的首位置。
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
@@ -1378,5 +1407,23 @@ mod tests {
             t.contains("try { . $P11kUserProfile } catch"),
             "点源要兜异常"
         );
+    }
+
+    /// DSR/DA/焦点这些是终端应答，不是用户打字 —— 认错会让 pwsh 的缩窗代敲
+    /// 逻辑彻底失效（真实终端上 PSReadLine 一直在问光标位置）。
+    #[test]
+    fn terminal_replies_are_not_user_typing() {
+        assert!(is_terminal_reply(b"\x1b[24;1R"), "DSR 光标位置应答");
+        assert!(is_terminal_reply(b"\x1b[1;1R"));
+        assert!(is_terminal_reply(b"\x1b[?1;2c"), "设备属性应答");
+        assert!(is_terminal_reply(b"\x1b[I"), "焦点进入");
+        assert!(is_terminal_reply(b"\x1b[O"), "焦点离开");
+        assert!(!is_terminal_reply(b"\x1b[A"), "方向键是用户按键");
+        assert!(!is_terminal_reply(b"\x1b[H"));
+        assert!(!is_terminal_reply(b"\x1b"), "裸 Esc 是用户按键");
+        assert!(!is_terminal_reply(b"\x1b[200~"), "粘贴开始标记");
+        assert!(!is_terminal_reply(b"a"));
+        assert!(!is_terminal_reply(b"\r"));
+        assert!(!is_terminal_reply(b""));
     }
 }
