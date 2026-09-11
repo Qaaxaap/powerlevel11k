@@ -99,7 +99,7 @@ msgstr "覆盖翻译目录。"
 #: crates/p11k-engine/src/main.rs:446
 msgid ""
 "To use p11k as your theme, add one line to your shell rc — see README.md."
-msgstr "当主题用的话，在 shell rc 里加一行——见 README.md。"
+msgstr "若做主题使用，请修改 shell rc，详见 README.zh.md"
 
 # ---- 引擎本体 ----
 #: crates/p11k-engine/src/main.rs:482
