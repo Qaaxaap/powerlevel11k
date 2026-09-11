@@ -162,8 +162,11 @@ fn line(out: &mut io::Stdout, s: &str) -> io::Result<()> {
     out.flush()
 }
 
-/// 读单键，返回读到的字节；EOF(读到 0 字节)返回 None。按键语义(`q`/`r`/`y`/`n`/数字)由调用方解释。
-fn key() -> io::Result<Option<u8>> {
+/// 读单键并归一化：`q`、Ctrl-C（raw 模式下 ISIG 被清，0x03 以字节形式到达）
+/// 与 Esc 都当作 `q`（放弃并退出），EOF 同样当作 `q` —— 否则调用方收到
+/// `None` 会落进 `_ => {}` 而无限重画。其余字节原样返回，语义（`r`/`y`/`n`/
+/// 数字）由调用方解释。
+fn key() -> io::Result<u8> {
     let mut b = [0u8; 1];
     loop {
         let n = unsafe { libc::read(libc::STDIN_FILENO, b.as_mut_ptr().cast(), 1) };
@@ -175,9 +178,12 @@ fn key() -> io::Result<Option<u8>> {
             return Err(e);
         }
         if n == 0 {
-            return Ok(None);
+            return Ok(b'q'); // EOF（Ctrl-D）等同于放弃
         }
-        return Ok(Some(b[0]));
+        return Ok(match b[0] {
+            0x03 | 0x1b => b'q', // Ctrl-C / Esc
+            other => other,
+        });
     }
 }
 
@@ -699,10 +705,11 @@ fn ask_choice_preview(
             line(out, "")?;
         }
         line(out, &format!("(r)  {}", t("Restart from the beginning.")))?;
+        line(out, &format!("(q)  {}", t("Quit")))?;
         match key()? {
-            Some(b'q') => return Ok(Step::Quit),
-            Some(b'r') => return Ok(Step::Restart),
-            Some(k @ b'1'..=b'9') => {
+            b'q' => return Ok(Step::Quit),
+            b'r' => return Ok(Step::Restart),
+            k @ b'1'..=b'9' => {
                 let i = (k - b'1') as usize;
                 if i < options.len() {
                     return Ok(Step::Answer(i));
@@ -760,11 +767,12 @@ fn ask_yn(
         line(out, "")?;
         line(out, &format!("(n)  {}", t(no)))?;
         line(out, &format!("(r)  {}", t("Restart from the beginning.")))?;
+        line(out, &format!("(q)  {}", t("Quit")))?;
         match key()? {
-            Some(b'q') => return Ok(Step::Quit),
-            Some(b'r') => return Ok(Step::Restart),
-            Some(b'y') => return Ok(Step::Answer(true)),
-            Some(b'n') => return Ok(Step::Answer(false)),
+            b'q' => return Ok(Step::Quit),
+            b'r' => return Ok(Step::Restart),
+            b'y' => return Ok(Step::Answer(true)),
+            b'n' => return Ok(Step::Answer(false)),
             _ => {}
         }
     }
