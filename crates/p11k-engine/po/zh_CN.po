@@ -86,15 +86,15 @@ msgstr "  configure        交互式主题向导"
 
 #: crates/p11k-engine/src/main.rs:442
 msgid "Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"
-msgstr "环境变量：P11K_ENGINE 防递归加载；P11K_USER_ZSHRC 与"
+msgstr "环境变量：P11K_ENGINE 用于防止递归加载；P11K_USER_ZSHRC 与"
 
 #: crates/p11k-engine/src/main.rs:443
 msgid "P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"
-msgstr "P11K_USER_PROFILE 覆盖被 source 的 rc；P11K_LOCALEDIR"
+msgstr "P11K_USER_PROFILE 用于覆盖所 source 的 rc；P11K_LOCALEDIR"
 
 #: crates/p11k-engine/src/main.rs:444
 msgid "overrides the translation directory."
-msgstr "覆盖翻译目录。"
+msgstr "用于覆盖翻译目录。"
 
 #: crates/p11k-engine/src/main.rs:446
 msgid ""
