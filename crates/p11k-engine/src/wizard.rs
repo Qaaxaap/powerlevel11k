@@ -876,6 +876,13 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
         out,
         &format!("  fish: if not set -q P11K_ENGINE; exec {exe} --shell fish --config {p}; end"),
     )?;
+    // pwsh 没有 exec：起引擎、等它退出再退出外层 pwsh。这行写进 $PROFILE。
+    line(
+        out,
+        &format!(
+            "  pwsh: if (-not $env:P11K_ENGINE) {{ & '{exe}' --shell pwsh --config '{p}'; exit }}"
+        ),
+    )?;
     line(out, "")?;
     line(
         out,

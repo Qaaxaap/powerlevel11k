@@ -2,7 +2,7 @@
 
 用 Rust 延续 powerlevel10k 生命的提示符。
 
-架构天然跨 shell。当前支持 bash/fish/zsh。
+架构天然跨 shell。当前支持 bash/fish/pwsh/zsh。
 
 powerlevel10k 于 2024 年进入纯维护模式：不新增功能、多数 bug 不再修、求助被
 忽略、仓库不会移交。它今天依然好用，但想要 v1.20.0 之外东西的人没有去处。
@@ -34,7 +34,7 @@ shell 钩子宣告 prompt 后，引擎绘制主题 header，画完交还。输�
 - 多行主题 header：p10k 样式，按 KDL v2 配置生成，配置文件人类友好。
 - **instant header**：打开终端立刻见 prompt，不等 shell 慢悠悠加载配置。
 - **transient prompt**（zsh）：提交命令后 header 折叠成单行 `❯`（对应 p10k
-  `TRANSIENT_PROMPT`）；bash/fish 没有 zle，此功能不生效。
+  `TRANSIENT_PROMPT`）；bash/fish/pwsh 没有 zle，此功能不生效。
 - **vi_mode / history / 宽松布局**：vi 模式指示、历史命令号、`prompt-add-newline`
   空行等，跟随配置开合。
 - **80+ 内置段**：dir、vcs、status、time、command_execution_time、后台任务、
@@ -62,7 +62,7 @@ p11k 并非传统的 shell 主题，如果不清除原有 shell 主题则会叠�
 cargo build -p p11k-engine
 
 # 开发：直接启动主题引擎（让 P11K_USER_ZSHRC 指向一个去掉了主题的配置副本）。
-P11K_USER_ZSHRC=/path/to/your/rc target/debug/p11k --shell <bash/fish/zsh>
+P11K_USER_ZSHRC=/path/to/your/rc target/debug/p11k --shell <bash/fish/pwsh/zsh>
 
 # 带主题文件（缺省用内置 lean 主题）。
 target/debug/p11k --shell zsh --config path/to/theme.kdl
@@ -78,6 +78,15 @@ target/debug/p11k --shell zsh --config path/to/theme.kdl
 # fish
 if not set -q P11K_ENGINE; exec /path/to/p11k --shell fish; end
 ```
+
+PowerShell 写进 `$PROFILE`（pwsh 没有 exec，引擎退出后再退出外层 pwsh）：
+
+```powershell
+if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
+```
+
+`--shell` 建议显式给：从 zsh/bash 里起 pwsh 时 `$SHELL` 不会变。省略时引擎回退
+到 `$SHELL`，并用 `PSModulePath`/`PSHOME` 认 PowerShell。
 
 引擎 exec 覆盖启动 shell，继承其环境；内部 shell 会重新 source 用户配置
 （主题本身除外——引擎就是主题）。`P11K_ENGINE` 用于打破递归。
@@ -121,7 +130,7 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 
 - gitstatusd 兼容内核（v1.5.5 协议）与性能核心：index 解析、`fstatat`
   扫描、并行分片、untracked cache
-- 引擎占位协议：多行 header 几何自洽，zsh/bash/fish 三 shell
+- 引擎占位协议：多行 header 几何自洽，zsh/bash/fish/pwsh 四 shell
 - instant / transient prompt、vi_mode、history、宽松布局
 - 80+ 段与 KDL 主题语言、图标三档 mode 与 `icon{}` 覆盖
 

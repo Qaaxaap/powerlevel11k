@@ -2,7 +2,7 @@
 
 A prompt that keeps powerlevel10k alive, with Rust.
 
-The architecture is naturally cross-shell. bash/fish/zsh are currently
+The architecture is naturally cross-shell. bash/fish/pwsh/zsh are currently
 supported.
 
 powerlevel10k moved to maintenance-only mode in 2024: no new features, most
@@ -47,8 +47,8 @@ be:
 - **Instant header**: open a terminal and the prompt is there, no waiting for
   a slow shell config to load.
 - **Transient prompt** (zsh): the header folds to a single-line `❯` the moment
-  a command is submitted (p10k `TRANSIENT_PROMPT`); bash/fish have no zle, so
-  it does nothing there.
+  a command is submitted (p10k `TRANSIENT_PROMPT`); bash/fish/pwsh have no zle,
+  so it does nothing there.
 - **vi_mode / history / loose layout**: vi mode indicator, history number,
   `prompt-add-newline` blank line, on/off per config.
 - **80+ built-in segments**: dir, vcs, status, time, command_execution_time,
@@ -81,7 +81,7 @@ cargo build -p p11k-engine
 
 # dev: start the engine directly (point P11K_USER_ZSHRC at a copy of your rc
 # with the theme removed).
-P11K_USER_ZSHRC=/path/to/your/rc target/debug/p11k --shell <bash/fish/zsh>
+P11K_USER_ZSHRC=/path/to/your/rc target/debug/p11k --shell <bash/fish/pwsh/zsh>
 
 # with a theme file (defaults to the built-in lean theme).
 target/debug/p11k --shell zsh --config path/to/theme.kdl
@@ -97,6 +97,17 @@ As a "theme": add one exec line to the shell's rc:
 # fish
 if not set -q P11K_ENGINE; exec /path/to/p11k --shell fish; end
 ```
+
+For PowerShell put this in `$PROFILE` (pwsh has no `exec`, so the outer shell
+exits once the engine does):
+
+```powershell
+if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
+```
+
+Pass `--shell` explicitly: `$SHELL` does not change when pwsh is started from
+zsh or bash. Without the flag the engine falls back to `$SHELL`, using
+`PSModulePath`/`PSHOME` to recognise PowerShell.
 
 The engine execs over the launching shell and inherits its environment; the
 inner shell re-sources the user config (except the theme — the engine is the
@@ -146,7 +157,7 @@ Done:
 - gitstatusd-compatible core (v1.5.5 protocol) and the performance core:
   index parsing, `fstatat` scanning, parallel shards, untracked cache
 - engine placeholder protocol: self-consistent multi-line geometry across
-  zsh / bash / fish
+  zsh / bash / fish / pwsh
 - instant / transient prompt, vi_mode, history, loose layout
 - 80+ segments and the KDL theme language, three-mode icons + `icon{}`
   overrides

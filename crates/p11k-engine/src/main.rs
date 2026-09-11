@@ -63,6 +63,7 @@ enum Shell {
     Zsh,
     Bash,
     Fish,
+    Pwsh,
 }
 
 impl Shell {
@@ -71,6 +72,7 @@ impl Shell {
             Shell::Zsh => "zsh",
             Shell::Bash => "bash",
             Shell::Fish => "fish",
+            Shell::Pwsh => "pwsh",
         }
     }
 }
@@ -83,6 +85,7 @@ fn shell_from_args() -> Option<Shell> {
         Some("zsh") => Some(Shell::Zsh),
         Some("bash") => Some(Shell::Bash),
         Some("fish") => Some(Shell::Fish),
+        Some("pwsh") | Some("powershell") => Some(Shell::Pwsh),
         _ => None,
     }
 }
@@ -135,10 +138,18 @@ fn detect_shell() -> Shell {
     if let Some(s) = shell_from_args() {
         return s;
     }
+    // pwsh 不动 $SHELL（从 zsh 里起 pwsh，$SHELL 仍是 /bin/zsh），所以 $SHELL
+    // 认不出 PowerShell；PSModulePath/PSHOME 是 PowerShell 必设的，用它认。
+    // 反过来，在 pwsh 里再起 bash 再 exec p11k 会被错认成 pwsh —— 想避免歧义
+    // 就显式写 `--shell <name>`（安装行里就是这么给用户的）。
+    if std::env::var_os("PSModulePath").is_some() || std::env::var_os("PSHOME").is_some() {
+        return Shell::Pwsh;
+    }
     let she = std::env::var("SHELL").unwrap_or_default();
     match she.rsplit('/').next().unwrap_or("") {
         "bash" => Shell::Bash,
         "fish" => Shell::Fish,
+        "pwsh" | "powershell" => Shell::Pwsh,
         _ => Shell::Zsh,
     }
 }
@@ -359,6 +370,60 @@ function fish_prompt
 end
 "#;
 
+/// pwsh 协议层（`-NoProfile -NoExit -Command ". <rc>"` 注入）。
+///
+/// pwsh 也没有 precmd/zle/PROMPT_COMMAND 那套：宣告 `h` 放在 prompt 函数里，
+/// 等引擎 ack 后才返回占位符 → 引擎在透传流里字节匹配占位符画前缀覆盖
+/// （同 bash/fish，没有 `p` 宣告）。resize 在 prompt 里比较窗口尺寸后宣告 `r`：
+/// pwsh 不把 SIGWINCH 变成可挂接的事件。
+///
+/// 实现体写成独立函数，prompt 只做转发：用户 profile 覆盖 prompt 后，
+/// 末尾再重新指回引擎实现即可（bash/fish 模板是把整段抄两遍）。
+const PWSH_TEMPLATE: &str = r#"# p11k engine bootstrap (pwsh) —— 协议层 + 用户配置。
+$P11kAnnounce = $env:P11K_ANNOUNCE
+$P11kAck = $env:P11K_ACK
+$script:P11kCols = $Host.UI.RawUI.WindowSize.Width
+$script:P11kRows = $Host.UI.RawUI.WindowSize.Height
+
+function global:P11kEnginePrompt {
+    # 第一行就得读 $?：prompt 里后面任何语句都会覆盖它。
+    $P11kCode = if ($?) { 0 } elseif ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } else { 1 }
+    $P11kSize = $Host.UI.RawUI.WindowSize
+    if ($P11kSize.Width -ne $script:P11kCols -or $P11kSize.Height -ne $script:P11kRows) {
+        $script:P11kCols = $P11kSize.Width
+        $script:P11kRows = $P11kSize.Height
+        # 只宣告 `r` 就返回会把占位符留在屏幕上：引擎此刻可能不在 prompt
+        # 状态（刚回车），既不上移回填也不覆盖。所以继续往下走正常宣告。
+        [IO.File]::AppendAllText($script:P11kAnnounce, "r`n")
+    }
+    $P11kJobs = @(Get-Job -ErrorAction SilentlyContinue).Count
+    $P11kHist = (Get-History).Count
+    [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n")
+    # 等引擎 ack：占位符先输出，header 之后回填。
+    while (-not [IO.File]::Exists($script:P11kAck)) { Start-Sleep -Milliseconds 5 }
+    [IO.File]::Delete($script:P11kAck)
+    # prompt 就绪，清掉防递归标记（同 zsh 的 zle-line-init）：之后在会话里
+    # 手动再起一次 p11k 不会被当成递归加载。
+    if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
+    '__'
+}
+
+function global:prompt { P11kEnginePrompt }
+
+# ===== 用户配置 =====
+$P11kUserProfile = if ($env:P11K_USER_PROFILE) { $env:P11K_USER_PROFILE } else { $PROFILE }
+if ($P11kUserProfile -and (Test-Path -LiteralPath $P11kUserProfile)) {
+    # 点源失败不能带崩后面重新声明 prompt 的协议不变量。
+    try { . $P11kUserProfile } catch { Write-Warning "p11k: cannot load $P11kUserProfile`: $_" }
+}
+
+# ===== 协议不变量 =====
+# 用户 profile 可能换掉 prompt，这里指回引擎实现。
+$P11kAnnounce = $env:P11K_ANNOUNCE
+$P11kAck = $env:P11K_ACK
+function global:prompt { P11kEnginePrompt }
+"#;
+
 fn main() -> anyhow::Result<()> {
     // 文案按 locale 取翻译(默认英文,中文见 po/zh_CN.po)。
     i18n::init();
@@ -404,6 +469,9 @@ fn main() -> anyhow::Result<()> {
                 .args(["--noprofile", "--norc"])
                 .exec(),
             Shell::Fish => std::process::Command::new("fish").arg("--no-config").exec(),
+            Shell::Pwsh => std::process::Command::new("pwsh")
+                .args(["-NoProfile", "-NoLogo"])
+                .exec(),
         };
         eprintln!("p11k: {}{err}", t("cannot exec a clean shell: "));
         std::process::exit(1);
@@ -454,6 +522,15 @@ fn main() -> anyhow::Result<()> {
         Shell::Fish => {
             // fish 通过 XDG_CONFIG_HOME 重定向，读 $XDG_CONFIG_HOME/fish/config.fish。
             cmd.env("XDG_CONFIG_HOME", &state.dir);
+        }
+        Shell::Pwsh => {
+            // pwsh 没有 --rcfile/ZDOTDIR：用 -NoProfile 关掉默认 profile，
+            // 再让 -Command 点源引擎的协议层脚本；-NoExit 保证留在交互模式。
+            cmd.arg("-NoProfile");
+            cmd.arg("-NoLogo");
+            cmd.arg("-NoExit");
+            cmd.arg("-Command");
+            cmd.arg(format!(". '{}'", state.rc.display()));
         }
     }
     cmd.env("P11K_ANNOUNCE", &state.announce);
@@ -768,21 +845,32 @@ fn main() -> anyhow::Result<()> {
                     at_prompt = true; // 输入行就绪
                 }
                 AnnMsg::Resize => {
-                    // 尺寸检查在循环开头已 resize pty。先更新 header，
-                    // 延迟 ~60ms 再补画 prompt（等 zle 重绘 占位prompt+buffer 透传完）。
+                    // 尺寸检查在循环开头已 resize pty。
+                    // zsh：zle 重绘占位 prompt，回填走 `p` 宣告，这里先把 header 换掉，
+                    // 延迟 ~60ms 再补画前缀（等 zle 重绘占位+buffer 透传完）。
+                    // 其它 shell：resize 后 shell 从头打印占位符（带新的换行前缀），
+                    // 交给上面 marker 匹配那条路径统一回填——此刻占位符还没输出，
+                    // 先上移画会落在上一屏内容上，而且占位符没人覆盖会留在屏幕上。
                     if at_prompt {
-                        log("r: redraw header, defer prompt");
-                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                        theme::redraw_header_cfg(
-                            &mut stdout,
-                            last_size.1 as usize,
-                            &config,
-                            current_info.as_ref().unwrap_or(&instant_info),
-                            vcs,
-                        )?;
-                        stdout.flush()?;
-                        resize_prompt_at =
-                            Some(std::time::Instant::now() + std::time::Duration::from_millis(60));
+                        if shell == Shell::Zsh {
+                            log("r: redraw header, defer prompt");
+                            let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                            theme::redraw_header_cfg(
+                                &mut stdout,
+                                last_size.1 as usize,
+                                &config,
+                                current_info.as_ref().unwrap_or(&instant_info),
+                                vcs,
+                            )?;
+                            stdout.flush()?;
+                            resize_prompt_at = Some(
+                                std::time::Instant::now() + std::time::Duration::from_millis(60),
+                            );
+                        } else {
+                            log("r: wait for the shell to reprint the placeholder");
+                            pending_placeholder = true;
+                            placeholder_buf.clear();
+                        }
                     } else {
                         log("r: skip redraw (not at prompt)");
                     }
@@ -992,6 +1080,13 @@ impl StateDir {
                 fs::create_dir_all(&fish_dir)?;
                 let rc = fish_dir.join("config.fish");
                 fs::write(&rc, FISH_TEMPLATE.replace("__", placeholder))?;
+                rc
+            }
+            Shell::Pwsh => {
+                // pwsh 没有 rcfile 约定（-Command 点源它）。文件名刻意不含 `__`：
+                // 模板里的占位符是靠字面替换 `__` 注入的。
+                let rc = dir.join("p11k.ps1");
+                fs::write(&rc, PWSH_TEMPLATE.replace("__", placeholder))?;
                 rc
             }
         };
@@ -1207,5 +1302,55 @@ fn tty_size() -> Option<(u16, u16, u16, u16)> {
         Some((ws.ws_row, ws.ws_col, ws.ws_xpixel, ws.ws_ypixel))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_names_match_the_cli_flag() {
+        assert_eq!(Shell::Zsh.name(), "zsh");
+        assert_eq!(Shell::Bash.name(), "bash");
+        assert_eq!(Shell::Fish.name(), "fish");
+        assert_eq!(Shell::Pwsh.name(), "pwsh");
+    }
+
+    /// pwsh 没有 zle：占位符是引擎在透传流里按字节匹配的，所以协议层必须
+    /// 宣告 `h`、等 ack、返回占位符三件事都齐（resize 只加一条 `r`，
+    /// 不能提前 return —— 那样占位符没人回填，会留在屏幕上）。
+    #[test]
+    fn pwsh_template_implements_the_placeholder_protocol() {
+        let t = PWSH_TEMPLATE;
+        assert!(t.contains("function global:prompt"), "要定义 prompt 函数");
+        assert!(t.contains("P11kEnginePrompt"), "prompt 要转发到引擎实现");
+        assert!(t.contains(r#""h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n""#));
+        assert!(t.contains(r#""r`n""#), "resize 要宣告 r");
+        assert!(
+            t.contains("while (-not [IO.File]::Exists($script:P11kAck))"),
+            "要等引擎 ack，否则 header 回填与占位符输出会错序"
+        );
+        assert!(t.contains("[IO.File]::Delete($script:P11kAck)"), "要清 ack");
+        // resize 分支不能 return：return 之后就没有 h 宣告，引擎不会回填。
+        let resize_block = t
+            .split("$P11kSize.Width -ne")
+            .nth(1)
+            .expect("模板里应有 resize 检查");
+        assert!(
+            !resize_block
+                .split("$P11kJobs")
+                .next()
+                .unwrap()
+                .contains("return"),
+            "resize 分支不能提前 return"
+        );
+        // 占位符是字面替换 `__` 注入的：模板里别的地方不能再出现 __。
+        assert_eq!(t.matches("__").count(), 1, "模板里只该有一处占位符字面量");
+        // 用户 profile 加载失败不能带崩协议不变量。
+        assert!(
+            t.contains("try { . $P11kUserProfile } catch"),
+            "点源要兜异常"
+        );
     }
 }
