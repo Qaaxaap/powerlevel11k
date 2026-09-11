@@ -315,15 +315,14 @@ impl Repo {
             f[field::PUSH_COMMITS_AHEAD] = b"0".to_vec();
             f[field::PUSH_COMMITS_BEHIND] = b"0".to_vec();
         }
-        if let Some(oid) = self.head_oid {
-            if let Ok(commit) = self.git.find_commit(oid) {
-                f[field::COMMIT_ENCODING] =
-                    commit.message_encoding().unwrap_or("").as_bytes().to_vec();
-                let mut summary = commit.summary().unwrap_or("").as_bytes().to_vec();
-                // Truncate byte-wise (gitstatus.cc:44-46).
-                summary.truncate(self.limits.max_commit_summary_length);
-                f[field::COMMIT_SUMMARY] = summary;
-            }
+        if let Some(oid) = self.head_oid
+            && let Ok(commit) = self.git.find_commit(oid)
+        {
+            f[field::COMMIT_ENCODING] = commit.message_encoding().unwrap_or("").as_bytes().to_vec();
+            let mut summary = commit.summary().unwrap_or("").as_bytes().to_vec();
+            // Truncate byte-wise (gitstatus.cc:44-46).
+            summary.truncate(self.limits.max_commit_summary_length);
+            f[field::COMMIT_SUMMARY] = summary;
         }
         f
     }
@@ -491,12 +490,11 @@ impl Repo {
                     .and_then(|r| r.target())
                     .map(|o| o == oid)
                     .unwrap_or(false);
-                if matches {
-                    if let Some(name) = t.shorthand() {
-                        if best.as_deref().map(|b| name > b).unwrap_or(true) {
-                            best = Some(name.to_string());
-                        }
-                    }
+                if matches
+                    && let Some(name) = t.shorthand()
+                    && best.as_deref().map(|b| name > b).unwrap_or(true)
+                {
+                    best = Some(name.to_string());
                 }
             }
         }
