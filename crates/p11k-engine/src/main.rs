@@ -156,10 +156,10 @@ fn detect_shell() -> Shell {
 /// 时序：precmd 宣告 `h` → 轮询 ack → 返回后 zsh 渲染占位 PROMPT（zle）
 /// → zle-line-init 宣告 `p` → 引擎回行首画前缀覆盖占位符。
 /// 占位 prompt 由 zle 或其等价物渲染，主题均由引擎负责。
-const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap —— 协议层 + 用户配置。
-# ===== 引擎协议 =====
-# 引擎未启用 transient 时该变量为空；清掉，避免外层环境残留的旧值让
-# zle-line-finish 误折叠。
+const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap -- protocol layer + user config.
+# ===== engine protocol =====
+# Empty when the engine does not enable transient; clear it so a stale value
+# left in the outer environment cannot make zle-line-finish fold wrongly.
 [[ -n "${P11K_TRANSIENT_PROMPT:-}" ]] || unset P11K_TRANSIENT_PROMPT
 _p11k_status=0
 _p11k_pwd=$PWD
@@ -167,58 +167,59 @@ _p11k_pwd=$PWD
 _p11k_precmd() {
   _p11k_status=$?
   _p11k_pwd=$PWD
-  # 用于恢复 transient 折叠后的 PROMPT
+  # Used to restore PROMPT after the transient fold
   PROMPT='__'
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
 }
 
-# zle 渲染完占位 prompt 后宣告 `p`：引擎收到后回行首画真实前缀覆盖占位符。
-# zle hook 只写文件，引擎异步处理（poll ~5ms）。
+# Announce `p` after zle renders the placeholder prompt; the engine then paints the real
+# prefix over it at line start. The zle hook only writes the file; the engine polls (~5ms).
 _p11k_line_init() {
   [[ ${CONTEXT:-start} == cont ]] && return
   if [[ -n "${_p11k_user_line_init:-}" ]] && (( $+functions[$_p11k_user_line_init] )); then
-    "$_p11k_user_line_init"   # 用户注册的 handler（如 autosuggestions）先跑
+    "$_p11k_user_line_init"   # user-registered handler (e.g. autosuggestions) runs first
   fi
   print -r -- "p" >> "$P11K_ANNOUNCE"
-  # 上报当前 keymap:vi 模式(prompt 就绪时 zle 重置为 viins)报 viins → INSERT;
-  # emacs(main)报 main → vi_mode 段隐藏。切换(NORMAL/VISUAL)由 keymap-select 上报。
+  # Report the current keymap: vi mode (zle resets to viins at prompt-ready) reports viins →
+  # INSERT; emacs (main) reports main → the vi_mode segment hides. Switching (NORMAL/VISUAL)
+  # is reported by keymap-select.
   if [[ ${options[vi]} == on ]]; then
     print -r -- "v"$'\t'"viins" >> "$P11K_ANNOUNCE"
   else
     print -r -- "v"$'\t'"main" >> "$P11K_ANNOUNCE"
   fi
-  # prompt 已就绪，清除防递归标记
+  # Prompt is ready, clear the anti-recursion flag
   unset P11K_ENGINE
 }
 
-# ===== 用户配置 =====
-# 优先 $P11K_USER_ZSHRC，否则默认 $HOME/.zshrc。
+# ===== user config =====
+# Prefer $P11K_USER_ZSHRC, otherwise default to $HOME/.zshrc.
 if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
   source "$P11K_USER_ZSHRC"
 elif [[ -r "$HOME/.zshrc" ]]; then
   source "$HOME/.zshrc"
 fi
 
-# ===== 协议不变量 =====
-# PROMPT 为占位。
+# ===== protocol invariants =====
+# PROMPT is a placeholder.
 PROMPT='__'
 RPROMPT=''
 PROMPT2='> '
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
-# zle-line-init 单 handler，保留用户注册的，再注册引擎宣告。
+# zle-line-init takes one handler: keep the user's, then register the engine announce.
 if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p11k_line_init ]]; then
   _p11k_user_line_init=${widgets[zle-line-init]#user:}
 fi
 zle -N zle-line-init _p11k_line_init
-# vi_mode:zle-keymap-select 时把当前 keymap 上报给引擎。
+# vi_mode: report the current keymap to the engine on zle-keymap-select.
 _p11k_vi_mode() {
   local m=$KEYMAP
   if [[ ${options[vi]} == on ]]; then
     case $KEYMAP in
       vicmd|vis|viopp) m=$KEYMAP;;
-      *) m=viins;;  # zsh 在 insert 时可能报 main → 归一成 viins
+      *) m=viins;;  # zsh may report main while inserting → normalize to viins
     esac
   else
     m=main
@@ -229,8 +230,8 @@ if [[ -n "${widgets[zle-keymap-select]:-}" && "${widgets[zle-keymap-select]}" !=
   _p11k_user_vi_mode=${widgets[zle-keymap-select]#user:}
 fi
 zle -N zle-keymap-select _p11k_vi_mode
-# transient:命令提交时把多行 header 折叠成单行 ❯。
-# 使用 zsh 自行渲染折叠后的 prompt。
+# transient: on command submit fold the multi-line header into a single ❯ line.
+# Let zsh render the folded prompt itself.
 _p11k_line_finish() {
   if [[ -n "${_p11k_user_line_finish:-}" ]] && (( $+functions[$_p11k_user_line_finish] )); then
     "$_p11k_user_line_finish"
@@ -245,8 +246,8 @@ if [[ -n "${widgets[zle-line-finish]:-}" && "${widgets[zle-line-finish]}" != use
   _p11k_user_line_finish=${widgets[zle-line-finish]#user:}
 fi
 zle -N zle-line-finish _p11k_line_finish
-# resize 宣告：SIGWINCH → zsh 延迟执行 TRAPWINCH，
-# 检测到变化宣告 `r`，引擎清屏重画 prompt 窗口。
+# resize announce: SIGWINCH → zsh defers the TRAPWINCH run,
+# detects the change, announces `r`; the engine clears and repaints the prompt window.
 _p11k_last_cols=$COLUMNS
 _p11k_last_rows=$LINES
 TRAPWINCH() {
@@ -257,9 +258,10 @@ TRAPWINCH() {
   fi
 }
 
-# 补全：compinit 激活 + complist/menu select。
-# 注意别在这里碰补全的着色（list-colors）：设成空值会让 zsh 退回内置默认，
-# 目录变粗体红，与用户 rc（oh-my-zsh 从 LS_COLORS 派生的 di=01;34 蓝）不一致。
+# Completion: compinit plus complist/menu select.
+# Do not touch the completion coloring (list-colors) here: setting it empty makes zsh fall
+# back to its built-in default, directories turn bold red, unlike the user rc
+# (oh-my-zsh derives di=01;34 blue from LS_COLORS).
 autoload -Uz compinit && compinit
 zmodload -i zsh/complist
 setopt auto_menu complete_in_word always_to_end
@@ -272,11 +274,11 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 
 /// bash 没有 `p` 宣告，引擎 ack 后 bash 直接打印 PS1（`__`），引擎靠字节匹配
 /// 画前缀覆盖。resize 用 trap WINCH 检测尺寸变化宣告 `r`。
-const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) —— 协议层 + 用户配置。
+const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol layer + user config.
 PS1='__'
 
-# PROMPT_COMMAND 在 PS1 显示前执行：记录退出码、宣告 `h` 后等
-# 引擎 ack 才返回。
+# PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
+# then wait for the engine ack before returning.
 _p11k_prompt_command() {
   local _st=$?
   printf 'h\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" >> "$P11K_ANNOUNCE"
@@ -285,7 +287,7 @@ _p11k_prompt_command() {
 }
 PROMPT_COMMAND=_p11k_prompt_command
 
-# resize：SIGWINCH 后 bash 更新 COLUMNS/LINES，trap 检测变化宣告 `r`。
+# resize: after SIGWINCH bash updates COLUMNS/LINES; the trap detects the change, announces `r`.
 _p11k_last_cols=$COLUMNS
 _p11k_last_rows=$LINES
 _p11k_winch() {
@@ -297,14 +299,14 @@ _p11k_winch() {
 }
 trap '_p11k_winch' WINCH
 
-# ===== 用户配置 =====
+# ===== user config =====
 if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
   source "$P11K_USER_ZSHRC"
 elif [[ -r "$HOME/.bashrc" ]]; then
   source "$HOME/.bashrc"
 fi
 
-# ===== 协议不变量 =====
+# ===== protocol invariants =====
 PS1='__'
 PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
@@ -315,14 +317,14 @@ trap '_p11k_winch' WINCH
 /// fish 没有 precmd/zle/PROMPT_COMMAND：宣告 h 放在 `fish_prompt`
 /// 里，等 ack 后返回占位；引擎字节匹配占位画前缀覆盖（同
 /// bash，无 `p` 宣告）。resize 用 `--on-signal WINCH`。
-const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) —— 协议层 + 用户配置。
+const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) -- protocol layer + user config.
 
 set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 
-# fish_prompt 在渲染主 prompt 时调用。两种情形：
-# - 尺寸变化（resize 重绘）：宣告 `r`。
-# - 正常 prompt：宣告 `h` 后等引擎 ack 才返回。
+# fish_prompt is called when the main prompt is rendered. Two cases:
+# - size change (resize repaint): announce `r`.
+# - normal prompt: announce `h`, then wait for the engine ack before returning.
 function fish_prompt
     set -l _st $status
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
@@ -340,14 +342,14 @@ function fish_prompt
     printf '__'
 end
 
-# ===== 用户配置 =====
+# ===== user config =====
 if test -n "$P11K_USER_ZSHRC"; and test -r "$P11K_USER_ZSHRC"
     source "$P11K_USER_ZSHRC"
 else if test -r "$HOME/.config/fish/config.fish"
     source "$HOME/.config/fish/config.fish"
 end
 
-# ===== 协议不变量 =====
+# ===== protocol invariants =====
 set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 function fish_prompt
@@ -377,46 +379,47 @@ end
 ///
 /// 实现体写成独立函数，prompt 只做转发：用户 profile 覆盖 prompt 后，
 /// 末尾再重新指回引擎实现即可（bash/fish 模板是把整段抄两遍）。
-const PWSH_TEMPLATE: &str = r#"# p11k engine bootstrap (pwsh) —— 协议层 + 用户配置。
+const PWSH_TEMPLATE: &str = r#"# p11k engine bootstrap (pwsh) -- protocol layer + user config.
 $P11kAnnounce = $env:P11K_ANNOUNCE
 $P11kAck = $env:P11K_ACK
 $script:P11kCols = $Host.UI.RawUI.WindowSize.Width
 $script:P11kRows = $Host.UI.RawUI.WindowSize.Height
 
 function global:P11kEnginePrompt {
-    # 第一行就得读 $?：prompt 里后面任何语句都会覆盖它。
+    # $? must be read on the first line: any later statement in prompt overwrites it.
     $P11kCode = if ($?) { 0 } elseif ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } else { 1 }
     $P11kSize = $Host.UI.RawUI.WindowSize
     if ($P11kSize.Width -ne $script:P11kCols -or $P11kSize.Height -ne $script:P11kRows) {
         $script:P11kCols = $P11kSize.Width
         $script:P11kRows = $P11kSize.Height
-        # 只宣告 `r` 就返回会把占位符留在屏幕上：引擎此刻可能不在 prompt
-        # 状态（刚回车），既不上移回填也不覆盖。所以继续往下走正常宣告。
+        # Announcing only `r` and returning would leave the placeholder on screen: the engine
+        # may not be in prompt state right now (just pressed enter), so it neither moves up to
+        # backfill nor paints over the placeholder. Hence fall through to the normal announce.
         [IO.File]::AppendAllText($script:P11kAnnounce, "r`n")
     }
     $P11kJobs = @(Get-Job -ErrorAction SilentlyContinue).Count
     $P11kHist = (Get-History).Count
     [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n")
-    # 等引擎 ack：占位符先输出，header 之后回填。
+    # Wait for the engine ack: the placeholder is printed first, the header is backfilled after.
     while (-not [IO.File]::Exists($script:P11kAck)) { Start-Sleep -Milliseconds 5 }
     [IO.File]::Delete($script:P11kAck)
-    # prompt 就绪，清掉防递归标记（同 zsh 的 zle-line-init）：之后在会话里
-    # 手动再起一次 p11k 不会被当成递归加载。
+    # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
+    # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
     '__'
 }
 
 function global:prompt { P11kEnginePrompt }
 
-# ===== 用户配置 =====
+# ===== user config =====
 $P11kUserProfile = if ($env:P11K_USER_PROFILE) { $env:P11K_USER_PROFILE } else { $PROFILE }
 if ($P11kUserProfile -and (Test-Path -LiteralPath $P11kUserProfile)) {
-    # 点源失败不能带崩后面重新声明 prompt 的协议不变量。
+    # A failed dot-source must not break the later protocol invariants that re-declare prompt.
     try { . $P11kUserProfile } catch { Write-Warning "p11k: cannot load $P11kUserProfile`: $_" }
 }
 
-# ===== 协议不变量 =====
-# 用户 profile 可能换掉 prompt，这里指回引擎实现。
+# ===== protocol invariants =====
+# The user profile may replace prompt; point it back to the engine implementation here.
 $P11kAnnounce = $env:P11K_ANNOUNCE
 $P11kAck = $env:P11K_ACK
 function global:prompt { P11kEnginePrompt }
@@ -1435,29 +1438,48 @@ mod tests {
             "must clear the ack"
         );
         // resize 分支不能 return：return 之后就没有 h 宣告，引擎不会回填。
+        // 只看代码行 —— 注释里出现 "returning" 之类的词不该让断言翻车。
         let resize_block = t
             .split("$P11kSize.Width -ne")
             .nth(1)
             .expect("template should have the resize check");
+        let resize_code = resize_block
+            .split("$P11kJobs")
+            .next()
+            .unwrap()
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
-            !resize_block
-                .split("$P11kJobs")
-                .next()
-                .unwrap()
-                .contains("return"),
+            !resize_code.contains("return"),
             "the resize branch must not return early"
-        );
-        // 占位符是字面替换 `__` 注入的：模板里别的地方不能再出现 __。
-        assert_eq!(
-            t.matches("__").count(),
-            1,
-            "the template should contain exactly one placeholder literal"
         );
         // 用户 profile 加载失败不能带崩协议不变量。
         assert!(
             t.contains("try { . $P11kUserProfile } catch"),
             "sourcing must catch exceptions"
         );
+    }
+
+    /// 占位符是 `replace("__", placeholder)` 字面替换进去的：模板里有几处 `__`
+    /// 就会替换出几份占位符。注释里混进一个 `__` 就多替换一份，prompt 几何跟着崩。
+    /// 下面的数字是设计值，改模板时要一起改。只有 pwsh 是 1 处，别照着它改别的。
+    #[test]
+    fn templates_carry_the_expected_number_of_placeholder_slots() {
+        for (name, template, want) in [
+            ("ZSHRC_TEMPLATE", ZSHRC_TEMPLATE, 2),
+            ("BASHRC_TEMPLATE", BASHRC_TEMPLATE, 2),
+            ("FISH_TEMPLATE", FISH_TEMPLATE, 4),
+            ("PWSH_TEMPLATE", PWSH_TEMPLATE, 1),
+        ] {
+            assert_eq!(
+                template.matches("__").count(),
+                want,
+                "{name}: every `__` becomes the placeholder, so this count is part of the \
+                 protocol — and a comment must never contain `__`"
+            );
+        }
     }
 
     /// DSR/DA/焦点这些是终端应答，不是用户打字 —— 认错会让 pwsh 的缩窗代敲
