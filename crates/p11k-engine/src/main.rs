@@ -52,7 +52,7 @@ extern "C" fn handle_sigwinch(_sig: libc::c_int) {
 }
 
 use config::Config;
-use i18n::t;
+use i18n::{msgid, t};
 use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use theme::{GitStatus, HeaderInfo};
@@ -422,9 +422,50 @@ $P11kAck = $env:P11K_ACK
 function global:prompt { P11kEnginePrompt }
 "#;
 
+/// `--help` 的用法说明。逐行交给 gettext（字面量用 `msgid` 标记，好让
+/// xgettext 提取），空行直接打印，免得在 po 里混进空 msgid。
+fn print_help() {
+    for line in [
+        msgid("usage: p11k [options]"),
+        msgid("       p11k configure"),
+        "",
+        msgid("Options:"),
+        msgid("  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: $SHELL)"),
+        msgid("  --config <path>  KDL theme file (default: the built-in lean theme)"),
+        msgid("  --preset <name>  built-in theme: lean, classic, rainbow or pure"),
+        msgid("  --version        print the version and exit"),
+        msgid("  --help           print this help and exit"),
+        "",
+        msgid("Commands:"),
+        msgid("  configure        interactive theme wizard"),
+        "",
+        msgid("Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"),
+        msgid("P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"),
+        msgid("overrides the translation directory."),
+        "",
+        msgid("To use p11k as your theme, add one line to your shell rc — see README.md."),
+    ] {
+        if line.is_empty() {
+            println!();
+        } else {
+            println!("{}", t(line));
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     // 文案按 locale 取翻译(默认英文,中文见 po/zh_CN.po)。
     i18n::init();
+    // `--version`/`--help`：在碰任何终端状态之前处理，这样在管道、
+    // 没有 tty 的环境里也能用（CI、脚本里查版本号）。
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("p11k {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if std::env::args().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return Ok(());
+    }
     // `p11k configure`：进入交互配置向导，不 spawn shell。
     if std::env::args().any(|a| a == "configure") {
         return crate::wizard::run();
