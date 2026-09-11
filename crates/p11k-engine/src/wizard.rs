@@ -22,7 +22,7 @@ enum Step<T> {
 /// 把任意 `Step<T>` 的 Restart/Quit 变体转成 `Step<U>`（Answer 不会走到这里）。
 fn early<T, U>(s: Step<T>) -> Step<U> {
     match s {
-        Step::Answer(_) => unreachable!("early 只处理 Restart/Quit"),
+        Step::Answer(_) => unreachable!("early only handles Restart/Quit"),
         Step::Restart => Step::Restart,
         Step::Quit => Step::Quit,
     }

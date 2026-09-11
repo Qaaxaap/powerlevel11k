@@ -127,17 +127,15 @@ mod tests {
                 let after = &code[at + marker.len()..];
                 let indented = after.len() - after.trim_start().len();
                 let is_call = !prev.is_some_and(|c| c.is_alphanumeric() || c == '_');
-                if is_call {
-                    if let Some(rest) = after.trim_start().strip_prefix('"') {
-                        let end = rest
-                            .find('"')
-                            .unwrap_or_else(|| panic!("{name}: 字符串字面量未闭合: {after:.40}"));
-                        assert!(
-                            !rest[..end].ends_with('\\'),
-                            "{name}: 有转义引号，扫描器处理不了: {after:.40}"
-                        );
-                        ids.insert(unescape(&rest[..end]));
-                    }
+                if is_call && let Some(rest) = after.trim_start().strip_prefix('"') {
+                    let end = rest.find('"').unwrap_or_else(|| {
+                        panic!("{name}: unterminated string literal: {after:.40}")
+                    });
+                    assert!(
+                        !rest[..end].ends_with('\\'),
+                        "{name}: escaped quote, scanner cannot handle it: {after:.40}"
+                    );
+                    ids.insert(unescape(&rest[..end]));
                 }
                 from = at + marker.len() + indented;
             }
@@ -156,12 +154,15 @@ mod tests {
     fn source_msgids_match_the_pot() {
         let src = all_source_msgids();
         let pot = catalog_msgids(include_str!("../po/p11k.pot"));
-        assert!(src.len() > 60, "源码里扫到的 msgid 太少:{src:?}");
+        assert!(
+            src.len() > 60,
+            "too few msgids scanned from sources: {src:?}"
+        );
         let missing: Vec<_> = src.difference(&pot).collect();
         let stale: Vec<_> = pot.difference(&src).collect();
         assert!(
             missing.is_empty() && stale.is_empty(),
-            "源码与 po/p11k.pot 不一致，跑 tools/i18n.sh extract\n  只在源码里:{missing:?}\n  只在 pot 里:{stale:?}"
+            "sources and po/p11k.pot are out of sync, run tools/i18n.sh extract\n  only in sources: {missing:?}\n  only in pot: {stale:?}"
         );
     }
 
@@ -174,12 +175,12 @@ mod tests {
         let untranslated: Vec<_> = pot.difference(&po).collect();
         assert!(
             untranslated.is_empty(),
-            "zh_CN.po 缺条目（跑 tools/i18n.sh update 再补 msgstr）:{untranslated:?}"
+            "zh_CN.po is missing entries (run tools/i18n.sh update, then fill in msgstr): {untranslated:?}"
         );
         let stale: Vec<_> = po.difference(&src).collect();
         assert!(
             stale.is_empty(),
-            "zh_CN.po 里有源码里已经没有的条目:{stale:?}"
+            "zh_CN.po has entries that no longer exist in the sources: {stale:?}"
         );
     }
 
@@ -194,12 +195,12 @@ mod tests {
             .join("zh_CN/LC_MESSAGES/p11k.mo")
             .exists()
         {
-            eprintln!("跳过：没有编译好的 zh_CN 词条（缺 msgfmt？）");
+            eprintln!("skipping: no compiled zh_CN catalog (msgfmt missing?)");
             return;
         }
         let got = setlocale(LocaleCategory::LcAll, "zh_CN.UTF-8");
         if !got.as_deref().is_some_and(|s| !s.is_empty()) {
-            eprintln!("跳过：系统没有 zh_CN.UTF-8 locale");
+            eprintln!("skipping: system has no zh_CN.UTF-8 locale");
             return;
         }
 

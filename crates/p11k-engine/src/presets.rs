@@ -465,7 +465,7 @@ mod tests {
             let cfg = build(kind);
             let out = cfg.to_kdl();
             let reparsed = crate::config::Config::parse(&out).unwrap();
-            assert_eq!(cfg, reparsed, "{:?} round-trip 失败", kind.name());
+            assert_eq!(cfg, reparsed, "{:?} round-trip failed", kind.name());
         }
     }
 
@@ -476,7 +476,7 @@ mod tests {
         assert_ne!(
             light.segment("dir").style.bg,
             dark.segment("dir").style.bg,
-            "四档段底色应不同"
+            "segment bg should differ across the four shades"
         );
         assert_ne!(light.frame.style.fg, dark.frame.style.fg);
     }
@@ -492,17 +492,21 @@ mod tests {
                 assert_eq!(
                     c.segment(seg).style.bg,
                     x(want),
-                    "第 {color} 档 {seg} 段底色应为 {want}"
+                    "shade {color}: segment {seg} bg should be {want}"
                 );
             }
             assert_eq!(
                 c.defaults.bg,
                 crate::config::Color::Default,
-                "defaults 不该有 bg（否则帧字符会被染色）"
+                "defaults should have no bg (otherwise frame chars get tinted)"
             );
             // 帧块样式：只有前景色，没有背景。
             let piece = c.frame_piece_style(&c.frame.first_prefix);
-            assert_eq!(piece.bg, crate::config::Color::Default, "帧字符必须透明");
+            assert_eq!(
+                piece.bg,
+                crate::config::Color::Default,
+                "frame chars must be transparent"
+            );
         }
         // lean/pure/rainbow 全局透明；rainbow 每段各自底色。
         assert_eq!(lean(false).defaults.bg, crate::config::Color::Default);
@@ -511,7 +515,7 @@ mod tests {
         assert_eq!(
             rainbow(1).segment("os_icon").style.bg,
             x(7),
-            "rainbow 每段各有底色"
+            "rainbow gives every segment its own bg"
         );
     }
 
@@ -527,18 +531,21 @@ mod tests {
         let dir_line = kdl
             .lines()
             .find(|l| l.trim_start().starts_with("dir "))
-            .expect("应有 dir 段");
+            .expect("should have a dir segment");
         assert!(
             dir_line.contains("bg=238"),
-            "classic 第 2 档的段底色应为 238: {dir_line}"
+            "classic shade 2 segment bg should be 238: {dir_line}"
         );
         assert!(
             !kdl.contains("defaults"),
-            "不该写 defaults（会把帧字符也染色）:\n{kdl}"
+            "should not write defaults (it would tint frame chars too):\n{kdl}"
         );
         // rainbow 相反：每段各有底色，time 段自己带 7。
         let rb = rainbow(1).to_kdl();
-        assert!(rb.contains("bg=7"), "rainbow 的 os_icon 应有底色:\n{rb}");
+        assert!(
+            rb.contains("bg=7"),
+            "rainbow os_icon should have a bg:\n{rb}"
+        );
     }
 
     #[test]

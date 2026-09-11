@@ -23,7 +23,7 @@ fn run_git(dir: &std::path::Path, args: &[&str]) {
 }
 
 fn num(cache: &mut RepoCache, dir: &[u8], fld: usize) -> usize {
-    let repo = cache.get_or_open(dir, false).expect("repo 应可打开");
+    let repo = cache.get_or_open(dir, false).expect("repo should open");
     let f = repo.build_fields(false);
     String::from_utf8_lossy(&f[fld]).parse().unwrap_or(0)
 }
@@ -42,7 +42,7 @@ fn staged_refreshes_after_git_add_with_same_head() {
     let mut cache = RepoCache::new(&opts);
     let dir_bytes: Vec<u8> = dir.path().as_os_str().as_bytes().to_vec();
 
-    assert_eq!(num(&mut cache, &dir_bytes, field::NUM_STAGED), 0, "干净");
+    assert_eq!(num(&mut cache, &dir_bytes, field::NUM_STAGED), 0, "clean");
     assert_eq!(num(&mut cache, &dir_bytes, field::NUM_UNSTAGED), 0);
 
     // 修改 + git add：index 变、HEAD 不变。同一 daemon 实例再查必须刷新。
@@ -52,7 +52,7 @@ fn staged_refreshes_after_git_add_with_same_head() {
     assert_eq!(
         num(&mut cache, &dir_bytes, field::NUM_STAGED),
         1,
-        "git add 后 staged 应刷新为 1"
+        "staged must refresh to 1 after git add"
     );
 
     // commit：HEAD 移动。同 daemon 再查 staged 应清 0，COMMIT 字段应为新 commit。
@@ -60,16 +60,18 @@ fn staged_refreshes_after_git_add_with_same_head() {
     assert_eq!(
         num(&mut cache, &dir_bytes, field::NUM_STAGED),
         0,
-        "commit 后 staged 应清 0"
+        "staged must reset to 0 after commit"
     );
-    let repo = cache.get_or_open(&dir_bytes, false).expect("repo 应可打开");
+    let repo = cache
+        .get_or_open(&dir_bytes, false)
+        .expect("repo should open");
     let f = repo.build_fields(false);
     let commit = String::from_utf8_lossy(&f[field::COMMIT]);
     let head = run_git_out(dir.path(), &["rev-parse", "HEAD"]);
     assert_eq!(
         commit.trim(),
         head.trim(),
-        "COMMIT 字段应刷新为新 HEAD（commit 后）"
+        "COMMIT field must refresh to the new HEAD after commit"
     );
 }
 

@@ -137,11 +137,11 @@ mod tests {
         let s = String::from_utf8_lossy(&out);
         assert!(
             s.starts_with("\x1b[s\r❯ "),
-            "应保存光标、回行首画前缀覆盖占位符、再恢复光标"
+            "should save the cursor, go back to column 0 to draw the prefix over the placeholder, then restore the cursor"
         );
         assert!(
             s.ends_with("\x1b]133;B\x07"),
-            "应以 OSC 133 B 标记结尾（告知终端 prompt 就绪）"
+            "should end with the OSC 133 B marker (telling the terminal the prompt is ready)"
         );
     }
 }

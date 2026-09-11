@@ -133,11 +133,11 @@ pub fn shorten(cwd: &Path, home: Option<&Path>, opts: &Opts) -> Vec<DirPart> {
 
 /// 拆成部件序列 + 基准目录（home 优先，否则根）。
 fn split_parts(cwd: &Path, home: Option<&Path>) -> (Vec<String>, PathBuf) {
-    if let Some(home) = home {
-        if let Ok(rel) = cwd.strip_prefix(home) {
-            let parts = to_parts(rel);
-            return (parts, home.to_path_buf());
-        }
+    if let Some(home) = home
+        && let Ok(rel) = cwd.strip_prefix(home)
+    {
+        let parts = to_parts(rel);
+        return (parts, home.to_path_buf());
     }
     (to_parts(cwd), PathBuf::from("/"))
 }

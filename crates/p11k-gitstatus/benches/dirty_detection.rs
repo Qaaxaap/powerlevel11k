@@ -22,25 +22,25 @@ use std::path::PathBuf;
 
 /// 取基准仓库路径；未设置环境变量返回 None。
 fn bench_repo() -> Option<PathBuf> {
-    todo!("实现：读 P11K_BENCH_REPO 环境变量")
+    todo!("read the P11K_BENCH_REPO env var")
 }
 
 /// 场景 1：干净仓库热路径（parse index + 全量脏扫描，无脏文件）。
 fn bench_clean_repo(c: &mut criterion::Criterion) {
     let _ = (bench_repo, c);
-    todo!("实现：criterion.bench_function 包住 get_dirty_candidates 的干净仓调用")
+    todo!("wrap the clean-repo get_dirty_candidates call in criterion.bench_function")
 }
 
 /// 场景 2：单文件修改（脏候选 1 个，验证提前终止不会退化）。
 fn bench_single_dirty_file(c: &mut criterion::Criterion) {
     let _ = (bench_repo, c);
-    todo!("实现：同上，fixture 为 1 个已修改文件")
+    todo!("same as above, fixture is 1 modified file")
 }
 
 /// 场景 3：大量 untracked（untracked 缓存与扫描路径）。
 fn bench_many_untracked(c: &mut criterion::Criterion) {
     let _ = (bench_repo, c);
-    todo!("实现：同上，fixture 为数千 untracked 文件")
+    todo!("same as above, fixture is thousands of untracked files")
 }
 
 // criterion 入口：三个场景各自成组。

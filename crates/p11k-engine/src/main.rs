@@ -106,7 +106,7 @@ fn preset_from_args() -> Option<String> {
 
 /// 加载主题:--config 文件 > --preset 内置 > 缺省 lean;前两者失败打日志回退。
 fn load_config() -> Config {
-    let fallback = || Config::default_lean().expect("内置 lean 配置应合法");
+    let fallback = || Config::default_lean().expect("built-in lean config should be valid");
     if let Some(path) = config_from_args() {
         match std::fs::read_to_string(&path)
             .map_err(|e| e.to_string())
@@ -1040,35 +1040,27 @@ fn main() -> anyhow::Result<()> {
                 .map(|i| i.cwd.clone())
                 .unwrap_or_default();
             last_vcs = Some((cwd.clone(), res.status.clone()));
-            if at_prompt {
-                if let Some(info) = &current_info {
-                    let vcs = res.status.as_ref();
-                    theme::redraw_header_cfg(
-                        &mut stdout,
-                        last_size.1 as usize,
-                        &config,
-                        info,
-                        vcs,
-                    )?;
-                    stdout.flush()?;
-                }
+            if at_prompt && let Some(info) = &current_info {
+                let vcs = res.status.as_ref();
+                theme::redraw_header_cfg(&mut stdout, last_size.1 as usize, &config, info, vcs)?;
+                stdout.flush()?;
             }
             // 输入行未就绪:last_vcs 已更新,`p`/marker 回填时自然带上,无需补画。
         }
 
         // resize 后延迟补画 prompt。
-        if let Some(deadline) = resize_prompt_at {
-            if std::time::Instant::now() >= deadline {
-                resize_prompt_at = None;
-                let text = crate::render::input_prefix(
-                    &config,
-                    current_info.as_ref().and_then(|i| i.exit_code),
-                )
-                .text;
-                theme::render_prompt(&mut stdout, &text)?;
-                stdout.flush()?;
-                log("deferred prompt drawn");
-            }
+        if let Some(deadline) = resize_prompt_at
+            && std::time::Instant::now() >= deadline
+        {
+            resize_prompt_at = None;
+            let text = crate::render::input_prefix(
+                &config,
+                current_info.as_ref().and_then(|i| i.exit_code),
+            )
+            .text;
+            theme::render_prompt(&mut stdout, &text)?;
+            stdout.flush()?;
+            log("deferred prompt drawn");
         }
     }
 
@@ -1378,34 +1370,47 @@ mod tests {
     #[test]
     fn pwsh_template_implements_the_placeholder_protocol() {
         let t = PWSH_TEMPLATE;
-        assert!(t.contains("function global:prompt"), "要定义 prompt 函数");
-        assert!(t.contains("P11kEnginePrompt"), "prompt 要转发到引擎实现");
+        assert!(
+            t.contains("function global:prompt"),
+            "must define the prompt function"
+        );
+        assert!(
+            t.contains("P11kEnginePrompt"),
+            "prompt must forward to the engine implementation"
+        );
         assert!(t.contains(r#""h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n""#));
-        assert!(t.contains(r#""r`n""#), "resize 要宣告 r");
+        assert!(t.contains(r#""r`n""#), "resize must announce r");
         assert!(
             t.contains("while (-not [IO.File]::Exists($script:P11kAck))"),
-            "要等引擎 ack，否则 header 回填与占位符输出会错序"
+            "must wait for the engine ack, otherwise header refill and placeholder output get out of order"
         );
-        assert!(t.contains("[IO.File]::Delete($script:P11kAck)"), "要清 ack");
+        assert!(
+            t.contains("[IO.File]::Delete($script:P11kAck)"),
+            "must clear the ack"
+        );
         // resize 分支不能 return：return 之后就没有 h 宣告，引擎不会回填。
         let resize_block = t
             .split("$P11kSize.Width -ne")
             .nth(1)
-            .expect("模板里应有 resize 检查");
+            .expect("template should have the resize check");
         assert!(
             !resize_block
                 .split("$P11kJobs")
                 .next()
                 .unwrap()
                 .contains("return"),
-            "resize 分支不能提前 return"
+            "the resize branch must not return early"
         );
         // 占位符是字面替换 `__` 注入的：模板里别的地方不能再出现 __。
-        assert_eq!(t.matches("__").count(), 1, "模板里只该有一处占位符字面量");
+        assert_eq!(
+            t.matches("__").count(),
+            1,
+            "the template should contain exactly one placeholder literal"
+        );
         // 用户 profile 加载失败不能带崩协议不变量。
         assert!(
             t.contains("try { . $P11kUserProfile } catch"),
-            "点源要兜异常"
+            "sourcing must catch exceptions"
         );
     }
 
@@ -1413,15 +1418,21 @@ mod tests {
     /// 逻辑彻底失效（真实终端上 PSReadLine 一直在问光标位置）。
     #[test]
     fn terminal_replies_are_not_user_typing() {
-        assert!(is_terminal_reply(b"\x1b[24;1R"), "DSR 光标位置应答");
+        assert!(
+            is_terminal_reply(b"\x1b[24;1R"),
+            "DSR cursor position reply"
+        );
         assert!(is_terminal_reply(b"\x1b[1;1R"));
-        assert!(is_terminal_reply(b"\x1b[?1;2c"), "设备属性应答");
-        assert!(is_terminal_reply(b"\x1b[I"), "焦点进入");
-        assert!(is_terminal_reply(b"\x1b[O"), "焦点离开");
-        assert!(!is_terminal_reply(b"\x1b[A"), "方向键是用户按键");
+        assert!(is_terminal_reply(b"\x1b[?1;2c"), "device attributes reply");
+        assert!(is_terminal_reply(b"\x1b[I"), "focus in");
+        assert!(is_terminal_reply(b"\x1b[O"), "focus out");
+        assert!(!is_terminal_reply(b"\x1b[A"), "arrow keys are user typing");
         assert!(!is_terminal_reply(b"\x1b[H"));
-        assert!(!is_terminal_reply(b"\x1b"), "裸 Esc 是用户按键");
-        assert!(!is_terminal_reply(b"\x1b[200~"), "粘贴开始标记");
+        assert!(!is_terminal_reply(b"\x1b"), "bare Esc is user typing");
+        assert!(
+            !is_terminal_reply(b"\x1b[200~"),
+            "bracketed paste start marker"
+        );
         assert!(!is_terminal_reply(b"a"));
         assert!(!is_terminal_reply(b"\r"));
         assert!(!is_terminal_reply(b""));

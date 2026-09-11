@@ -35,14 +35,14 @@ pub enum Color {
 impl Color {
     fn from_str(s: &str) -> Color {
         if let Some(hex) = s.strip_prefix('#') {
-            if hex.len() == 6 {
-                if let (Ok(r), Ok(g), Ok(b)) = (
+            if hex.len() == 6
+                && let (Ok(r), Ok(g), Ok(b)) = (
                     u8::from_str_radix(&hex[0..2], 16),
                     u8::from_str_radix(&hex[2..4], 16),
                     u8::from_str_radix(&hex[4..6], 16),
-                ) {
-                    return Color::Rgb(r, g, b);
-                }
+                )
+            {
+                return Color::Rgb(r, g, b);
             }
             Color::Named(s.to_string())
         } else if s == "default" {
@@ -281,12 +281,11 @@ impl Segment {
 
     /// 段在当前 state 下渲染的字符:state.char → 段 `char` 属性 → `default_char`。
     pub fn char_for<'a>(&'a self, state: Option<&str>, default_char: &'a str) -> &'a str {
-        if let Some(st) = state {
-            if let Some(spec) = self.states.get(st) {
-                if let Some(c) = &spec.char {
-                    return c;
-                }
-            }
+        if let Some(st) = state
+            && let Some(spec) = self.states.get(st)
+            && let Some(c) = &spec.char
+        {
+            return c;
         }
         match &self.props.get("char") {
             Some(Prop::Str(c)) => c,
@@ -1315,7 +1314,12 @@ mod tests {
             let cfg = crate::presets::build(kind);
             let out = cfg.to_kdl();
             let cfg2 = Config::parse(&out).unwrap();
-            assert_eq!(cfg, cfg2, "{} round-trip 失败,输出:\n{out}", kind.name());
+            assert_eq!(
+                cfg,
+                cfg2,
+                "{} round-trip failed, output:\n{out}",
+                kind.name()
+            );
         }
     }
 
@@ -1380,7 +1384,7 @@ icon {
         let cfg = Config::parse(src).unwrap();
         let out = cfg.to_kdl();
         let cfg2 = Config::parse(&out).unwrap();
-        assert_eq!(cfg, cfg2, "rich round-trip 失败,输出:\n{out}");
+        assert_eq!(cfg, cfg2, "rich round-trip failed, output:\n{out}");
     }
 
     #[test]
@@ -1444,7 +1448,7 @@ icon {
         )
         .unwrap();
         assert_eq!(c.layout.left[0][0], Element::Joined("dir".into()));
-        assert_eq!(c.layout.left[0].len(), 2, "#false 的 time 应被跳过");
+        assert_eq!(c.layout.left[0].len(), 2, "#false time should be skipped");
     }
 
     #[test]
@@ -1495,7 +1499,7 @@ icon {
     fn default_lean_parses() {
         let c = Config::default_lean().unwrap();
         assert!(!c.segments.is_empty());
-        assert_eq!(c.layout.left.len(), 1, "lean 左侧 header 只一行");
+        assert_eq!(c.layout.left.len(), 1, "lean left header is a single line");
         assert_eq!(
             c.layout.left[0],
             vec![Element::Seg("dir".into()), Element::Seg("vcs".into())]
@@ -1518,7 +1522,10 @@ icon {
                 .flatten()
                 .any(|e| matches!(e, Element::Seg(s) if s == "prompt_char"))
         );
-        assert!(c.layout.prompt_add_newline == 0, "lean 紧凑,无空行");
+        assert!(
+            c.layout.prompt_add_newline == 0,
+            "lean is compact, no blank lines"
+        );
     }
 
     #[test]

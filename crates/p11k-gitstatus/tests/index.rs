@@ -287,7 +287,11 @@ fn scan_multi_dir_shards_find_all_dirty() {
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     let mut index = Index::from_entries(entries);
     index.init_splits(1); // 16 片
-    assert!(index.splits.len() > 2, "应产生多分片: {:?}", index.splits);
+    assert!(
+        index.splits.len() > 2,
+        "expected multiple shards: {:?}",
+        index.splits
+    );
     let root_fd = open_root(root);
     let mut out = index.get_dirty_candidates(root_fd, &caps(), &opts());
     out.sort();
@@ -311,6 +315,6 @@ fn gitlink_dir_stat_is_not_modified() {
     e.mtime_nsec = 0;
     assert!(
         !is_modified(&e, &st, &caps()),
-        "gitlink 目录仍在不应判 dirty（否则干净仓库的 submodule 全报 unstaged）"
+        "a gitlink dir still present must not be dirty (otherwise every submodule in a clean repo reports unstaged)"
     );
 }

@@ -42,7 +42,7 @@ fn ask(bin: &str, req: &[u8]) -> Vec<u8> {
 fn assert_identical(orig_req: &[u8], p11k_req: &[u8], ctx: &str) {
     let a = ask(&gitstatusd(), orig_req);
     let b = ask(env!("CARGO_BIN_EXE_p11k-d"), p11k_req);
-    assert_eq!(a, b, "对拍不一致：{ctx}\n原版: {a:?}\np11k: {b:?}");
+    assert_eq!(a, b, "mismatch for {ctx}\noriginal: {a:?}\np11k: {b:?}");
 }
 
 /// 用 git2 建一个状态确定的仓库：2 提交、tag、stash、untracked 文件、
@@ -94,7 +94,7 @@ fn make_repo(dir: &std::path::Path) -> String {
 
 /// 对拍：多状态仓库的完整请求（无 diff 字段 + diff='1' 跳过 index）。
 #[test]
-#[ignore = "需要 GITSTATUSD_PATH 指向原版 gitstatusd"]
+#[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
 fn differential_multi_state_repo() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = make_repo(tmp.path());
@@ -114,7 +114,7 @@ fn differential_multi_state_repo() {
 
 /// 对拍：握手与非仓库目录。
 #[test]
-#[ignore = "需要 GITSTATUSD_PATH 指向原版 gitstatusd"]
+#[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
 fn differential_hello_and_not_a_repo() {
     assert_identical(b"}hello\x1f\x1e", b"}hello\x1f\x1e", "handshake");
     let tmp = tempfile::tempdir().unwrap();
@@ -128,7 +128,7 @@ fn differential_hello_and_not_a_repo() {
 
 /// 对拍：GIT_DIR 前缀（from_dotgit）与空仓库。
 #[test]
-#[ignore = "需要 GITSTATUSD_PATH 指向原版 gitstatusd"]
+#[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
 fn differential_gitdir_and_empty_repo() {
     // 空仓库（无提交）
     let tmp = tempfile::tempdir().unwrap();
@@ -153,7 +153,7 @@ fn differential_gitdir_and_empty_repo() {
 /// 手动探测原版时发现的差异：p11k 之前只看 `branch.<n>.remote` 配置就上报，
 /// 于是"remote 未配置""url 为空""tracking ref 不存在"三种情况下都会多报。
 #[test]
-#[ignore = "需要 GITSTATUSD_PATH 指向原版 gitstatusd"]
+#[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
 fn differential_upstream_edge_cases() {
     /// 造一个本地分支 local-name，tracking refs/heads/tracking-test。
     fn make_tracking_repo(dir: &std::path::Path) -> git2::Repository {
@@ -255,7 +255,7 @@ fn differential_upstream_edge_cases() {
 
 /// 对拍：EOF 退出码（两端都应 exit 0）。
 #[test]
-#[ignore = "需要 GITSTATUSD_PATH 指向原版 gitstatusd"]
+#[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
 fn differential_eof_exit_code() {
     for bin in [gitstatusd(), env!("CARGO_BIN_EXE_p11k-d").to_string()] {
         let mut child = Command::new(bin)

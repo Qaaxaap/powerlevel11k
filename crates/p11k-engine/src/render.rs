@@ -758,10 +758,10 @@ fn icon_str(config: &Config, key: &str) -> Option<String> {
         if let Some(c) = exact {
             return Some(c.clone());
         }
-        if let Some(a) = &ov.all {
-            if all_covers(a, &config.mode) {
-                return Some(a.clone());
-            }
+        if let Some(a) = &ov.all
+            && all_covers(a, &config.mode)
+        {
+            return Some(a.clone());
         }
     }
     let e = icon_default(key)?;
@@ -2317,10 +2317,11 @@ fn vcs_text(
         Some(crate::config::Prop::Int(n)) => Some(*n),
         _ => None,
     };
-    if let Some(cap) = dirty_cap {
-        if cap >= 0 && v.index_size > cap as usize {
-            parts.push(("─".to_string(), &modified));
-        }
+    if let Some(cap) = dirty_cap
+        && cap >= 0
+        && v.index_size > cap as usize
+    {
+        parts.push(("─".to_string(), &modified));
     }
     if !parts.is_empty() {
         // 空格用段样式上色：裸空格会被终端按默认背景画，在带底色的段里
@@ -2427,16 +2428,15 @@ fn assemble_row(
 ) -> String {
     let mut out = String::new();
     // 左栏首段起始端符(左三角,画在最左段之前)。
-    if !seps.left_tail.is_empty() {
-        if let Some(first) = left.iter().find(|s| !s.text.is_empty()) {
-            if first.style.bg != Color::Default {
-                out.push_str(&arrow(
-                    &seps.left_tail,
-                    first.style.bg.clone(),
-                    Color::Default,
-                ));
-            }
-        }
+    if !seps.left_tail.is_empty()
+        && let Some(first) = left.iter().find(|s| !s.text.is_empty())
+        && first.style.bg != Color::Default
+    {
+        out.push_str(&arrow(
+            &seps.left_tail,
+            first.style.bg.clone(),
+            Color::Default,
+        ));
     }
     let mut prev_bg = Color::Default;
     let mut prev_padded = false;
@@ -2526,16 +2526,15 @@ fn assemble_row(
             right_str.push_str(&s.text);
         }
         // 右栏末段结束端符(右三角,画在最右段之后)。
-        if !seps.right_tail.is_empty() {
-            if let Some(last) = parts.last() {
-                if last.style.bg != Color::Default {
-                    right_str.push_str(&arrow(
-                        &seps.right_tail,
-                        last.style.bg.clone(),
-                        Color::Default,
-                    ));
-                }
-            }
+        if !seps.right_tail.is_empty()
+            && let Some(last) = parts.last()
+            && last.style.bg != Color::Default
+        {
+            right_str.push_str(&arrow(
+                &seps.right_tail,
+                last.style.bg.clone(),
+                Color::Default,
+            ));
         }
         let lw = display_width(&out);
         let rw = display_width(&right_str);
@@ -2700,10 +2699,13 @@ mod tests {
         };
         cfg.segments.insert("custom".into(), s);
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(h.contains("on "), "prefix 应渲染,实际 {h:?}");
-        assert!(h.contains("main"), "content 应渲染,实际 {h:?}");
+        assert!(h.contains("on "), "prefix should render, got {h:?}");
+        assert!(h.contains("main"), "content should render, got {h:?}");
         let after = h.split("main").nth(1).unwrap_or("");
-        assert!(after.contains('!'), "suffix 应在内容之后,实际 {h:?}");
+        assert!(
+            after.contains('!'),
+            "suffix should come after the content, got {h:?}"
+        );
     }
 
     #[test]
@@ -2739,13 +2741,19 @@ mod tests {
             render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n")
         };
         // 无本地分支（detached HEAD）→ 自动显示前 8 位。
-        assert!(mk("", false).contains("aa2fdd09"), "detached 应显示 hash");
+        assert!(
+            mk("", false).contains("aa2fdd09"),
+            "detached should show the hash"
+        );
         // 有分支且未开启 → 不显示。
-        assert!(!mk("main", false).contains("aa2fdd09"), "有分支默认不显示");
+        assert!(
+            !mk("main", false).contains("aa2fdd09"),
+            "branch present hides it by default"
+        );
         // 显式开启 → 显示。
         assert!(
             mk("main", true).contains("aa2fdd09"),
-            "show-changeset 应显示"
+            "show-changeset should show it"
         );
     }
 
@@ -2786,8 +2794,14 @@ mod tests {
             .insert("staged-symbol".into(), crate::config::Prop::Str("S".into()));
         cfg.segments.insert("vcs".into(), s);
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n");
-        assert!(h.contains("feat\u{2026}anch"), "分支应中间折叠,实际 {h:?}");
-        assert!(h.contains("S2"), "staged 符号应可配,实际 {h:?}");
+        assert!(
+            h.contains("feat\u{2026}anch"),
+            "branch should shorten in the middle, got {h:?}"
+        );
+        assert!(
+            h.contains("S2"),
+            "staged symbol should be configurable, got {h:?}"
+        );
 
         // 只配 length、缺 min-length → 不折叠（p10k 要求两个都设）。
         let mut cfg2 = Config::default();
@@ -2799,7 +2813,7 @@ mod tests {
         let h2 = render_header_lines(&cfg2, &info("/tmp", None), Some(&v), 80).join("\n");
         assert!(
             h2.contains("feature/long-branch"),
-            "缺 min-length 不应折叠,实际 {h2:?}"
+            "missing min-length should not shorten, got {h2:?}"
         );
     }
 
@@ -2828,9 +2842,12 @@ mod tests {
         let nf = render(crate::config::IconMode::NerdfontComplete);
         assert!(
             nf.contains("\u{f252}"),
-            "nerdfont 档应带沙漏图标,实际 {nf:?}"
+            "nerdfont mode should have the hourglass icon, got {nf:?}"
         );
-        assert!(nf.contains("4s"), "内容仍是耗时,实际 {nf:?}");
+        assert!(
+            nf.contains("4s"),
+            "content should still be the duration, got {nf:?}"
+        );
         let other = [
             crate::config::IconMode::NerdfontFontconfig,
             crate::config::IconMode::Compatible,
@@ -2839,9 +2856,15 @@ mod tests {
         for mode in other {
             let h = render(mode.clone());
             if mode == crate::config::IconMode::NerdfontFontconfig {
-                assert!(h.contains("\u{f252}"), "fontconfig 档同字形,实际 {h:?}");
+                assert!(
+                    h.contains("\u{f252}"),
+                    "fontconfig mode has the same glyph, got {h:?}"
+                );
             } else {
-                assert!(!h.contains('\u{f252}'), "{mode:?} 档不应有沙漏,实际 {h:?}");
+                assert!(
+                    !h.contains('\u{f252}'),
+                    "{mode:?} mode has no hourglass, got {h:?}"
+                );
             }
         }
     }
@@ -2903,7 +2926,7 @@ mod tests {
         let same_out = render(&same);
         assert!(
             !same_out.contains(':'),
-            "同名远端不应重复显示,实际 {same_out:?}"
+            "remote branch matching the local name should not be repeated, got {same_out:?}"
         );
         let diff = GitStatus {
             remote_branch: "origin/main".into(),
@@ -2924,7 +2947,7 @@ mod tests {
                 ..base.clone()
             };
             let got = render(&v).contains("main wip");
-            assert_eq!(got, want, "summary={summary:?} 时 wip 判断错");
+            assert_eq!(got, want, "wip detection is wrong for summary={summary:?}");
         }
         // push remote 的 ⇠/⇢ 紧跟 ahead/behind 之后。
         let push = GitStatus {
@@ -2937,7 +2960,7 @@ mod tests {
         let out = render(&push);
         assert!(
             out.contains("main ⇡1 ⇠2⇢3 *4"),
-            "push 计数位置/符号不对,实际 {out:?}"
+            "push count position/symbols are wrong, got {out:?}"
         );
         // 配了 max-index-size-dirty 且索引更大 → 末尾画 `─`；没配就不画。
         let dash = GitStatus {
@@ -2959,16 +2982,16 @@ mod tests {
             render_with_cap(&dash, Some(100))
                 .trim_end()
                 .ends_with("main ─"),
-            "索引超上限应画 ─,实际 {:?}",
+            "index over the cap should draw ─, got {:?}",
             render_with_cap(&dash, Some(100))
         );
         assert!(
             !render_with_cap(&dash, Some(1000)).contains('─'),
-            "索引没超上限不该画 ─"
+            "index not over the cap should not draw ─"
         );
         assert!(
             !render_with_cap(&dash, None).contains('─'),
-            "没配上限不该画 ─"
+            "no cap configured should not draw ─"
         );
     }
 
@@ -3007,27 +3030,44 @@ mod tests {
             remote_url: String::new(),
         };
         let h = render(&base);
-        assert_eq!(fg_before(&h, "@").as_deref(), Some("246"), "@ 用 meta 色");
+        assert_eq!(
+            fg_before(&h, "@").as_deref(),
+            Some("246"),
+            "@ should use the meta color"
+        );
         assert_eq!(
             fg_before(&h, "aa2fdd09").as_deref(),
             Some("76"),
-            "hash 用 clean 色"
+            "hash should use the clean color"
         );
-        assert!(h.contains("aa2fdd09"), "hash 取前 8 位,实际 {h:?}");
-        assert!(!h.contains("deadbeef"), "不应超过 8 位,实际 {h:?}");
+        assert!(
+            h.contains("aa2fdd09"),
+            "hash should take the first 8 chars, got {h:?}"
+        );
+        assert!(
+            !h.contains("deadbeef"),
+            "should not exceed 8 chars, got {h:?}"
+        );
         // 有标签 → 显示 #tag,不再显示 hash。
         let tagged = GitStatus {
             tag: "v1.2.3".into(),
             ..base
         };
         let h2 = render(&tagged);
-        assert_eq!(fg_before(&h2, "#").as_deref(), Some("246"), "# 用 meta 色");
+        assert_eq!(
+            fg_before(&h2, "#").as_deref(),
+            Some("246"),
+            "# should use the meta color"
+        );
         assert_eq!(
             fg_before(&h2, "v1.2.3").as_deref(),
             Some("76"),
-            "标签名用 clean 色"
+            "tag name should use the clean color"
         );
-        assert!(!h2.contains("aa2fdd09"), "有标签时不显示 hash,实际 {h2:?}");
+        assert!(
+            !h2.contains("aa2fdd09"),
+            "a tag present should not show the hash, got {h2:?}"
+        );
     }
 
     #[test]
@@ -3073,11 +3113,11 @@ mod tests {
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 120).join("\n");
         let plain = strip_sgr(&h);
-        let i = plain.find("main").expect("应含分支名");
+        let i = plain.find("main").expect("should contain the branch name");
         assert_eq!(
             plain[i + "main".len()..].trim(),
             "⇣1⇡2 *3 merge ~1 +2 !3 ?4",
-            "计数顺序/符号应与 p10k 一致,实际 {plain:?}"
+            "count order/symbols should match p10k, got {plain:?}"
         );
     }
 
@@ -3117,18 +3157,22 @@ mod tests {
         }
         // p10k classic:`~N`(conflicted)用 %196F,`!N`(unstaged)用 %178F。
         let h = render(&v, Some(196));
-        assert_eq!(fg_before(&h, "~2").as_deref(), Some("196"), "冲突应用 196");
+        assert_eq!(
+            fg_before(&h, "~2").as_deref(),
+            Some("196"),
+            "conflicted should use 196"
+        );
         assert_eq!(
             fg_before(&h, "!1").as_deref(),
             Some("178"),
-            "未暂存仍用 178"
+            "unstaged should still use 178"
         );
         // 没配 conflicted-foreground → 回退 modified,保持旧行为。
         let h2 = render(&v, None);
         assert_eq!(
             fg_before(&h2, "~2").as_deref(),
             Some("178"),
-            "缺省应回退 178"
+            "the default should fall back to 178"
         );
     }
 
@@ -3158,11 +3202,11 @@ mod tests {
         let s24 = time_text(&crate::config::Segment::default());
         let s12 = time_text(seg);
         // 24h 是 HH:MM:SS;12h 是 HH:MM:SS AM/PM。
-        assert_eq!(s24.len(), 8, "24h 应为 8 字符,实际 {s24:?}");
-        assert_eq!(s12.len(), 11, "12h 应为 11 字符,实际 {s12:?}");
+        assert_eq!(s24.len(), 8, "24h should be 8 chars, got {s24:?}");
+        assert_eq!(s12.len(), 11, "12h should be 11 chars, got {s12:?}");
         assert!(
             s12.ends_with(" AM") || s12.ends_with(" PM"),
-            "12h 应以 AM/PM 结尾,实际 {s12:?}"
+            "12h should end with AM/PM, got {s12:?}"
         );
     }
 
@@ -3179,7 +3223,10 @@ mod tests {
         cfg.separators.right_tail = "\u{e0b0}".into();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         // 左栏首段前有 left_tail(),其后接目录内容。
-        assert!(h.contains("\u{e0b2}"), "应画左 tail,实际 {h:?}");
+        assert!(
+            h.contains("\u{e0b2}"),
+            "should draw the left tail, got {h:?}"
+        );
     }
 
     #[test]
@@ -3187,13 +3234,16 @@ mod tests {
         let cfg = Config::default_lean().unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
         // header 只一行行:含目录 + 状态图标(nerdfont 默认 );prompt_char(❯)不在 header。
-        assert!(h.contains("tmp"), "header 应含目录,实际：{h:?}");
+        assert!(
+            h.contains("tmp"),
+            "header should contain the dir, got: {h:?}"
+        );
         assert!(h.contains("\u{f00c}"));
         assert!(
             !h.contains('❯'),
-            "输入行前缀 ❯ 由 render_prompt 画，不应在 header"
+            "input line prefix ❯ is drawn by render_prompt and should not be in the header"
         );
-        assert_eq!(h.split("\r\n").count(), 1, "lean header 一行");
+        assert_eq!(h.split("\r\n").count(), 1, "lean header should be one line");
     }
 
     #[test]
@@ -3202,11 +3252,14 @@ mod tests {
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
         // 右段状态图标右对齐:gap 填充使整行显示宽度 = cols。右栏还要按
         // `right-indent`（默认 1，同 zsh `ZLE_RPROMPT_INDENT`）离右边界留一格。
-        assert!(h.contains("\u{f00c}"), "右段应存在,实际:{h:?}");
+        assert!(
+            h.contains("\u{f00c}"),
+            "right segment should exist, got: {h:?}"
+        );
         assert_eq!(
             display_width(&h),
             80 - cfg.layout.right_indent,
-            "右对齐后行宽应为 cols - right-indent"
+            "right-aligned row width should be cols - right-indent"
         );
     }
 
@@ -3220,7 +3273,7 @@ mod tests {
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(
             h.contains("some text"),
-            "line 里的 text 静态文本应渲染，实际：{h:?}"
+            "static text in line should render, got: {h:?}"
         );
     }
 
@@ -3232,7 +3285,7 @@ mod tests {
             Config::parse("layout {\n  left {\n    line { text \"home=${HOME} $USER\" }\n  }\n}")
                 .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(h.contains(&home), "text 应展开环境变量，实际：{h:?}");
+        assert!(h.contains(&home), "text should expand env vars, got: {h:?}");
     }
 
     #[test]
@@ -3242,8 +3295,14 @@ mod tests {
         )
         .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(h.contains("╭─"), "首行应有 first-prefix 帧，实际：{h:?}");
-        assert!(h.contains("─╮"), "首行应有 first-suffix 帧");
+        assert!(
+            h.contains("╭─"),
+            "first line should have the first-prefix frame, got: {h:?}"
+        );
+        assert!(
+            h.contains("─╮"),
+            "first line should have the first-suffix frame"
+        );
     }
 
     #[test]
@@ -3256,12 +3315,15 @@ mod tests {
         let p = input_prefix(&cfg, None);
         assert_eq!(
             p.width, 4,
-            "╰─❯ 空格 应宽4, 实际 width={} text={:?}",
+            "╰─❯ plus space should be width 4, got width={} text={:?}",
             p.width, p.text
         );
-        assert!(p.text.contains('╰'), "前缀应含帧 last-prefix");
-        assert!(p.text.contains('❯'), "前缀应含 prompt_char");
-        assert!(p.text.ends_with(' '), "前缀应以空格收尾");
+        assert!(
+            p.text.contains('╰'),
+            "prefix should contain the frame last-prefix"
+        );
+        assert!(p.text.contains('❯'), "prefix should contain prompt_char");
+        assert!(p.text.ends_with(' '), "prefix should end with a space");
     }
 
     #[test]
@@ -3292,18 +3354,21 @@ mod tests {
         // 两者都落在段底(238)上。
         assert!(
             h.contains("\u{1b}[38;5;76m\u{1b}[48;5;238m"),
-            "分支/图标应按 clean 上色且带段底,实际 {h:?}"
+            "branch/icon should be colored clean with the segment background, got {h:?}"
         );
         assert!(
             h.contains("\u{1b}[38;5;178m\u{1b}[48;5;238m!2"),
-            "unstaged 应按 modified 上色,实际 {h:?}"
+            "unstaged should be colored modified, got {h:?}"
         );
         // 分支与计数之间的空格必须带段背景(48;5;238),裸空格会露出黑缝。
-        let after_branch = h.split("main").nth(1).expect("应含分支名");
+        let after_branch = h
+            .split("main")
+            .nth(1)
+            .expect("should contain the branch name");
         let gap = after_branch.split('!').next().unwrap_or("");
         assert!(
             gap.contains("48;5;238"),
-            "vcs 内容之间的空格应带段背景,实际 {gap:?}"
+            "spaces between vcs content should carry the segment background, got {gap:?}"
         );
     }
 
@@ -3336,7 +3401,7 @@ mod tests {
         // ahead ⇡、behind ⇣、stashes *。
         assert!(h.contains("!2"));
         assert!(h.contains("?3"));
-        assert!(h.contains("⇡1"), "ahead 用 ⇡,实际 {h:?}");
+        assert!(h.contains("⇡1"), "ahead should use ⇡, got {h:?}");
     }
 
     #[test]
@@ -3384,11 +3449,17 @@ mod tests {
         // 设置异底段间用 powerline 箭头,末尾端符。
         cfg.separators.segment = "\u{e0b0}".into();
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
-        assert!(h.contains("\x1b[48;5;39m"), "dir 应有背景块 39");
-        assert!(h.contains("\x1b[48;5;76m"), "vcs 应有背景块 76");
+        assert!(
+            h.contains("\x1b[48;5;39m"),
+            "dir should have the background block 39"
+        );
+        assert!(
+            h.contains("\x1b[48;5;76m"),
+            "vcs should have the background block 76"
+        );
         assert!(
             h.contains('\u{e0b0}'),
-            "异底段间应画可配置的 segment 分隔符()"
+            "segments with different backgrounds should draw the configurable segment separator ()"
         );
     }
 
@@ -3403,16 +3474,19 @@ mod tests {
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(
             h.contains("\x1b[38;5;76m╭─"),
-            "首行前缀用帧级 fg,实际:{h:?}"
+            "first line prefix should use the frame-level fg, got: {h:?}"
         );
         // 输入行前缀:last-prefix 用子节点色(196),prompt_char ❯ 缺省无色。
         let p = input_prefix(&cfg, None);
         assert!(
             p.text.contains("\x1b[38;5;196m╰─"),
-            "last-prefix 子节点 fg 应覆盖帧级,实际:{:?}",
+            "last-prefix child fg should override the frame-level fg, got: {:?}",
             p.text
         );
-        assert!(p.text.contains('❯'), "输入行前缀仍含 prompt_char ❯");
+        assert!(
+            p.text.contains('❯'),
+            "input line prefix should still contain prompt_char ❯"
+        );
     }
 
     #[test]
@@ -3426,12 +3500,12 @@ mod tests {
         *CURRENT_VI_MODE.lock().unwrap() = "vicmd".to_string();
         assert!(
             input_prefix(&cfg, None).text.contains('C'),
-            "vicmd 应换到 VICMD 字符"
+            "vicmd should switch to the VICMD char"
         );
         *CURRENT_VI_MODE.lock().unwrap() = "viins".to_string();
         assert!(
             input_prefix(&cfg, None).text.contains('I'),
-            "viins 应换到 VIINS 字符"
+            "viins should switch to the VIINS char"
         );
         // 没配 vi state 的配置不受编辑模式影响，仍走 ❯/ERROR 那条路。
         *CURRENT_VI_MODE.lock().unwrap() = String::new();
@@ -3450,18 +3524,24 @@ mod tests {
         let ok = input_prefix(&cfg, Some(0));
         assert!(
             ok.text.contains("\x1b[38;5;76m>"),
-            "正常态应显示 char(>) 且用 fg=76,实际:{:?}",
+            "ok state should show char (>) with fg=76, got: {:?}",
             ok.text
         );
-        assert!(!ok.text.contains('❯'), "配了 char 就不该用默认 ❯");
+        assert!(
+            !ok.text.contains('❯'),
+            "with char configured the default ❯ should not be used"
+        );
         let err = input_prefix(&cfg, Some(1));
         assert!(
             err.text.contains("\x1b[38;5;196m✘"),
-            "错误态应显示 state ERROR 的 char/颜色,实际:{:?}",
+            "error state should show the state ERROR char/color, got: {:?}",
             err.text
         );
         let none = input_prefix(&cfg, None);
-        assert!(none.text.contains('>'), "无退出码(首 prompt)按正常态");
+        assert!(
+            none.text.contains('>'),
+            "no exit code (first prompt) should use the ok state"
+        );
     }
 
     #[test]
@@ -3475,7 +3555,7 @@ mod tests {
         let s = transient_prompt_zsh(&cfg);
         assert_eq!(
             s, "%(?\u{1}%F{76}❯ \u{1}%F{196}❯ )%f",
-            "transient 应生成 zsh 条件换色,实际:{s:?}"
+            "transient should generate the zsh conditional colors, got: {s:?}"
         );
     }
 
@@ -3486,7 +3566,7 @@ mod tests {
         let s = transient_prompt_zsh(&cfg);
         assert_eq!(
             s, "%(?\u{1}%f❯ \u{1}%f❯ )%f",
-            "fg 缺省应生成 %f 且无前导空格,实际:{s:?}"
+            "default fg should generate %f with no leading space, got: {s:?}"
         );
     }
 
@@ -3500,11 +3580,11 @@ mod tests {
         assert!(
             status_text(&info("/tmp", Some(0)), "\u{f00c}", "\u{f00d}", &seg, &style)
                 .contains("\u{f00c}"),
-            "OK 应显示 ok 图标"
+            "OK should show the ok icon"
         );
         assert!(
             status_text(&info("/tmp", Some(1)), "ok", "err", &seg, &style).contains("err 1"),
-            "ERROR 应显示 err 图标 + 退出码"
+            "ERROR should show the err icon + exit code"
         );
         // 图标名默认随 mode:folder 的 nf 有字形,compat/ascii 空;go 三档文本。
         let mk = |m: &str| {
@@ -3563,14 +3643,20 @@ mod tests {
              segments { prompt_char char=\"❯\" {\n  state ERROR char=\"✘\"\n} }",
         )
         .unwrap();
-        assert!(check_prompt_char_widths(&ok_cfg).is_ok(), "等宽应通过校验");
+        assert!(
+            check_prompt_char_widths(&ok_cfg).is_ok(),
+            "equal widths should pass validation"
+        );
         // 宽度不等(✘✘ 双宽)→ 校验报错。
         let bad_cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              segments { prompt_char char=\"❯\" {\n  state ERROR char=\"✘✘\"\n} }",
         )
         .unwrap();
-        assert!(check_prompt_char_widths(&bad_cfg).is_err(), "不等宽应报错");
+        assert!(
+            check_prompt_char_widths(&bad_cfg).is_err(),
+            "unequal widths should be rejected"
+        );
     }
 
     #[test]
@@ -3587,19 +3673,19 @@ mod tests {
         )
         .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
-        let li = h.find('L').expect("text-left 应渲染");
-        let ii = h.find("\u{f07c}").expect("folder 图标应渲染");
-        let mi = h.find('M').expect("text-middle 应渲染");
-        let ci = h.find("02:49:19").expect("内容应渲染");
-        let ri = h.find('R').expect("text-right 应渲染");
+        let li = h.find('L').expect("text-left should render");
+        let ii = h.find("\u{f07c}").expect("folder icon should render");
+        let mi = h.find('M').expect("text-middle should render");
+        let ci = h.find("02:49:19").expect("content should render");
+        let ri = h.find('R').expect("text-right should render");
         assert!(
             li < ii && ii < mi && mi < ci && ci < ri,
-            "顺序应为 左<icon<中<内容<右,实际:{h:?}"
+            "order should be left<icon<middle<content<right, got: {h:?}"
         );
         assert_eq!(
             fg_before(&h, "R").as_deref(),
             Some("196"),
-            "text-right 配 fg=196 应覆盖前景,实际:{h:?}"
+            "text-right with fg=196 should override the foreground, got: {h:?}"
         );
     }
 
@@ -3615,7 +3701,7 @@ mod tests {
         let h = render_header_lines(&only_icon, &info("/tmp", None), None, 80).join("\r\n");
         assert!(
             !h.contains('M'),
-            "仅 icon 无文字时 text-middle 应不渲染,实际:{h:?}"
+            "text-middle should not render with an icon but no text, got: {h:?}"
         );
         // 仅文字:history 段无默认图标,有文字(命令号)。
         let only_text = Config::parse(
@@ -3626,13 +3712,13 @@ mod tests {
         let h = render_header_lines(&only_text, &info("/tmp", None), None, 80).join("\r\n");
         assert!(
             !h.contains('M'),
-            "仅文字无 icon 时 text-middle 应不渲染,实际:{h:?}"
+            "text-middle should not render with text but no icon, got: {h:?}"
         );
     }
 
     #[test]
     fn display_width_counts_wide_chars() {
-        assert_eq!(display_width("🎂"), 2, "emoji 应宽 2 列");
+        assert_eq!(display_width("🎂"), 2, "emoji should be 2 columns wide");
         assert_eq!(display_width("a🎂b"), 4);
         assert_eq!(display_width("2026"), 4);
     }
@@ -3647,7 +3733,7 @@ mod tests {
         assert_eq!(
             display_width(&h),
             40 - cfg.layout.right_indent,
-            "行宽应仍对齐 cols - right-indent,实际:{h:?}"
+            "row width should still align to cols - right-indent, got: {h:?}"
         );
     }
 
@@ -3668,7 +3754,7 @@ mod tests {
             for (i, row) in rows.iter().enumerate() {
                 assert!(
                     display_width(row) <= cols,
-                    "cols={cols} 第 {i} 行宽 {} 超过 cols,内容={row:?}",
+                    "cols={cols} row {i} width {} exceeds cols, content={row:?}",
                     display_width(row)
                 );
             }
@@ -3690,11 +3776,11 @@ mod tests {
             let row = &render_header_lines(&cfg, &info_, None, cols)[0];
             assert!(
                 row.contains(&time_text(cfg.segment("time"))),
-                "宽行应有右栏,实际 {row:?}"
+                "wide row should have the right column, got {row:?}"
             );
             assert!(
                 display_width(row) <= cols,
-                "行宽不能超过 cols({cols}),实际 {}",
+                "row width must not exceed cols({cols}), got {}",
                 display_width(row)
             );
         }
@@ -3703,11 +3789,11 @@ mod tests {
         let time = time_text(cfg.segment("time"));
         assert!(
             !narrow.contains(&time),
-            "窄行不该有右栏时间,实际 {narrow:?}"
+            "narrow row should not have the right column time, got {narrow:?}"
         );
         assert!(
             !narrow.contains('·') && !narrow.contains("\u{e0b2}"),
-            "右栏去掉后也不该留 gap 和右栏起始分隔符,实际 {narrow:?}"
+            "dropping the right column should leave no gap or separator, got {narrow:?}"
         );
     }
 
@@ -3727,21 +3813,24 @@ mod tests {
         let home = std::env::var("HOME").unwrap();
         // 命中 WORK：自定义图标 + 196 色。
         let h = render(&format!("{home}/work/proj"), "");
-        assert!(h.contains('★'), "应命中 WORK 的图标,实际 {h:?}");
+        assert!(h.contains('★'), "should match the WORK icon, got {h:?}");
         assert!(
             h.contains("[38;5;196m"),
-            "应命中 WORK 的 state 色,实际 {h:?}"
+            "should match the WORK state color, got {h:?}"
         );
         // 只命中 HOME。
         let h = render(&format!("{home}/other"), "");
-        assert!(!h.contains('★'), "不该命中 WORK,实际 {h:?}");
+        assert!(!h.contains('★'), "should not match WORK, got {h:?}");
         assert!(
             h.contains("[38;5;39m"),
-            "应命中 HOME 的 state 色,实际 {h:?}"
+            "should match the HOME state color, got {h:?}"
         );
         // 不可写目录：图标换锁（p10k 的 _NOT_WRITABLE 后缀规则）。
         let h = render("/proc", "show-writable=v3");
-        assert!(h.contains("\u{f023}"), "不可写应显示锁,实际 {h:?}");
+        assert!(
+            h.contains("\u{f023}"),
+            "non-writable should show the lock, got {h:?}"
+        );
         // 都不命中 → 段默认色。
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
@@ -3750,8 +3839,11 @@ mod tests {
         )
         .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 120).join("\n");
-        assert!(h.contains("[38;5;31m"), "没命中应用段默认色,实际 {h:?}");
-        assert!(!h.contains("[38;5;196m"), "实际 {h:?}");
+        assert!(
+            h.contains("[38;5;31m"),
+            "no match should use default segment color, got {h:?}"
+        );
+        assert!(!h.contains("[38;5;196m"), "got {h:?}");
     }
 
     #[test]
@@ -3768,19 +3860,19 @@ mod tests {
         let locked = render("/proc", "show-writable=v3");
         assert!(
             locked.contains("\u{f023}"),
-            "不可写目录应显示锁图标,实际 {locked:?}"
+            "non-writable dir should show the lock icon, got {locked:?}"
         );
         assert!(
             !locked.contains("\u{f07c}"),
-            "不该同时显示文件夹图标,实际 {locked:?}"
+            "the folder icon should not be shown as well, got {locked:?}"
         );
         // 可写目录照常。
         let normal = render("/tmp", "show-writable=v3");
-        assert!(normal.contains("\u{f07c}"), "实际 {normal:?}");
-        assert!(!normal.contains("\u{f023}"), "实际 {normal:?}");
+        assert!(normal.contains("\u{f07c}"), "got {normal:?}");
+        assert!(!normal.contains("\u{f023}"), "got {normal:?}");
         // 不配就完全不检查。
         let off = render("/proc", "");
-        assert!(off.contains("\u{f07c}"), "实际 {off:?}");
+        assert!(off.contains("\u{f07c}"), "got {off:?}");
     }
 
     #[test]
@@ -3792,11 +3884,15 @@ mod tests {
         )
         .unwrap();
         let lines = render_header_lines(&cfg, &info("/tmp", None), None, 20);
-        assert_eq!(lines.len(), 2, "标尺行 + header 行");
-        assert_eq!(display_width(&lines[0]), 20, "标尺应铺满整行宽");
+        assert_eq!(lines.len(), 2, "ruler line + header line");
+        assert_eq!(
+            display_width(&lines[0]),
+            20,
+            "the ruler should span the full row width"
+        );
         assert!(
             lines[0].contains("\u{2500}") && lines[0].contains("[38;5;240m"),
-            "标尺字符与颜色不对,实际 {:?}",
+            "ruler char and color are wrong, got {:?}",
             lines[0]
         );
         // 关掉就没有标尺行。
@@ -3813,7 +3909,7 @@ mod tests {
         let l = render_header_lines(&asc, &info("/tmp", None), None, 10);
         assert!(
             l[0].contains('-') && !l[0].contains('\u{2500}'),
-            "实际 {:?}",
+            "got {:?}",
             l[0]
         );
     }
@@ -3852,8 +3948,11 @@ mod tests {
         let under_home = format!("{home}/probe");
         assert!(plain(&render(&under_home, "")).contains("~/probe"));
         let abs = plain(&render(&under_home, "path-absolute=#true"));
-        assert!(abs.contains(&under_home), "实际 {abs:?}");
-        assert!(!abs.contains('~'), "不应有 ~ 缩写,实际 {abs:?}");
+        assert!(abs.contains(&under_home), "got {abs:?}");
+        assert!(
+            !abs.contains('~'),
+            "should not have the ~ abbreviation, got {abs:?}"
+        );
         // p10k DIR_OMIT_FIRST_CHARACTER：绝对路径省掉起始 `/`；根目录仍显示 `/`。
         // 多级路径要配 shorten-dir-length=2,否则默认只留末一级。
         let two = "shorten-dir-length=2";
@@ -3862,8 +3961,11 @@ mod tests {
             "/tmp/x",
             &format!("{two} omit-first-character=#true"),
         ));
-        assert!(omitted.contains("tmp/x"), "实际 {omitted:?}");
-        assert!(!omitted.contains("/tmp/x"), "起始斜杠应被省掉");
+        assert!(omitted.contains("tmp/x"), "got {omitted:?}");
+        assert!(
+            !omitted.contains("/tmp/x"),
+            "the leading slash should be omitted"
+        );
         assert_eq!(
             plain(&render("/", "omit-first-character=#true")).trim(),
             "\u{f07c} /"
@@ -3873,21 +3975,32 @@ mod tests {
             "/a/b",
             "shorten-dir-length=2 path-highlight-foreground=196 path-highlight-bold=#true",
         );
-        let i = h.rfind("\u{1b}[38;5;196m").expect("末级应用 196");
-        assert!(h[i..].contains('b'), "末级应是 b,实际 {h:?}");
+        let i = h
+            .rfind("\u{1b}[38;5;196m")
+            .expect("the last component should use 196");
+        assert!(
+            h[i..].contains('b'),
+            "the last component should be b, got {h:?}"
+        );
         assert!(
             !h[..i].contains("196"),
-            "非末级不该用 highlight 色,实际 {h:?}"
+            "non-last components should not use the highlight color, got {h:?}"
         );
-        assert!(h[i..].contains("\u{1b}[1m"), "highlight-bold 应加粗");
+        assert!(
+            h[i..].contains("\u{1b}[1m"),
+            "highlight-bold should add bold"
+        );
         // p10k DIR_HYPERLINK：OSC 8 包住目录，路径做 URL 转义。
         let link = render("/a/b", "shorten-dir-length=2 hyperlink=#true");
         assert!(
             link.contains("\u{1b}]8;;file:///a/b\u{7}"),
-            "超链接头不对,实际 {link:?}"
+            "hyperlink head is wrong, got {link:?}"
         );
-        assert!(link.contains("\u{1b}]8;;\u{7}"), "超链接尾不对");
-        assert!(!render("/a/b", "").contains("]8;;"), "没开就不该有超链接");
+        assert!(link.contains("\u{1b}]8;;\u{7}"), "hyperlink tail is wrong");
+        assert!(
+            !render("/a/b", "").contains("]8;;"),
+            "hyperlinks should be absent when disabled"
+        );
     }
 
     #[test]
@@ -3933,19 +4046,25 @@ mod tests {
         let full = render_header_lines(&cfg, &info(&cwd, None), None, 200).join("\n");
         let full_w = display_width(&full);
         let wide = dir_text(200, &cwd);
-        assert!(wide.contains("Projects/"), "宽行不该折,实际 {wide:?}");
-        assert!(wide.contains("crates/"), "宽行不该折,实际 {wide:?}");
+        assert!(
+            wide.contains("Projects/"),
+            "wide row should not shorten, got {wide:?}"
+        );
+        assert!(
+            wide.contains("crates/"),
+            "wide row should not shorten, got {wide:?}"
+        );
         // 差 20 列:前三级(含 Projects)折掉,powerlevel11k/crates 还在。
         let mid = dir_text(full_w - 20, &cwd);
         assert!(
             !mid.contains("Projects") && mid.contains("crates"),
-            "中等宽度只该折到 Projects 为止,实际 {mid:?}"
+            "medium width should shorten only down to Projects, got {mid:?}"
         );
         // 差 40 列:连 crates 一起折。
         let narrow = dir_text(full_w - 40, &cwd);
         assert!(
             !narrow.contains("Projects") && !narrow.contains("crates"),
-            "很窄时两级都该折,实际 {narrow:?}"
+            "very narrow should shorten both levels, got {narrow:?}"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -3959,11 +4078,14 @@ mod tests {
         .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         let user = std::env::var("USER").unwrap_or_default();
-        assert!(h.contains(&user), "user 段应显示 $USER,实际:{h:?}");
+        assert!(
+            h.contains(&user),
+            "user segment should show $USER, got: {h:?}"
+        );
         let digits: Vec<char> = h.chars().filter(|c| c.is_ascii_digit()).collect();
         assert!(
             digits.len() >= 4,
-            "date 段 date-format=%Y 应输出四位年份,实际:{h:?}"
+            "date segment with date-format=%Y should output a four-digit year, got: {h:?}"
         );
     }
 
@@ -3972,7 +4094,10 @@ mod tests {
         // 非 SSH 时 context 不出现 user@host 形式(本地 root 只显示 user)。
         let cfg = Config::parse("layout { left { line { context #true } } }").unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(!h.contains('@'), "非 SSH 不应显示 user@host,实际:{h:?}");
+        assert!(
+            !h.contains('@'),
+            "non-SSH should not show user@host, got: {h:?}"
+        );
     }
 
     #[test]
@@ -3983,12 +4108,16 @@ mod tests {
             std::env::set_var("RANGER_LEVEL", "2");
         }
         let h = render_header_lines(&r, &info("/tmp", None), None, 80).join("\r\n");
-        assert!(h.contains('2'), "ranger 应显示层级,实际:{h:?}");
+        assert!(h.contains('2'), "ranger should show the level, got: {h:?}");
         unsafe {
             std::env::remove_var("RANGER_LEVEL");
         }
         let h2 = render_header_lines(&r, &info("/tmp", None), None, 80).join("\r\n");
-        assert_eq!(h2.trim(), "", "清除后 ranger 应隐藏,实际:{h2:?}");
+        assert_eq!(
+            h2.trim(),
+            "",
+            "ranger should be hidden after clearing, got: {h2:?}"
+        );
         // proxy:设 http_proxy 后显示其 host:port(清除不深究,机器可能自带代理 env)。
         let p = Config::parse("layout { left { line { proxy #true } } }").unwrap();
         unsafe {
@@ -3997,7 +4126,7 @@ mod tests {
         let hp = render_header_lines(&p, &info("/tmp", None), None, 80).join("\r\n");
         assert!(
             hp.contains("proxy.example:8080"),
-            "proxy 应显示 http_proxy 的 host:port,实际:{hp:?}"
+            "proxy should show the http_proxy host:port, got: {hp:?}"
         );
         unsafe {
             std::env::remove_var("http_proxy");
@@ -4009,7 +4138,7 @@ mod tests {
         // cpu_arch 从 /proc 或 uname 恒有;不存在的命令 → 段隐藏(None)。
         assert!(
             !cpu_arch().is_empty(),
-            "cpu_arch 应有值,实际:{:?}",
+            "cpu_arch should have a value, got: {:?}",
             cpu_arch()
         );
         assert_eq!(run_cmd("no-such-cmd-p11k-test", &["--version"]), None);
@@ -4017,8 +4146,11 @@ mod tests {
 
     #[test]
     fn system_resource_segments_resolve() {
-        assert!(!load().is_empty(), "load 应从 /proc/loadavg 读出");
-        assert!(!ram().is_empty(), "ram 应是 MemAvailable");
-        assert!(!disk_usage("/tmp").is_empty(), "disk_usage 应有 df 结果");
+        assert!(!load().is_empty(), "load should be read from /proc/loadavg");
+        assert!(!ram().is_empty(), "ram should be MemAvailable");
+        assert!(
+            !disk_usage("/tmp").is_empty(),
+            "disk_usage should have df output"
+        );
     }
 }

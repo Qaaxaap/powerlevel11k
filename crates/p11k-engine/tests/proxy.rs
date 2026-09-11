@@ -71,10 +71,11 @@ fn read_until(
             revents: 0,
         }];
         let rc = unsafe { libc::poll(fds.as_mut_ptr(), 1, 200) };
-        if rc > 0 && fds[0].revents & libc::POLLIN != 0 {
-            if let Ok(n) = reader.read(&mut buf) {
-                acc.push_str(&String::from_utf8_lossy(&buf[..n]));
-            }
+        if rc > 0
+            && fds[0].revents & libc::POLLIN != 0
+            && let Ok(n) = reader.read(&mut buf)
+        {
+            acc.push_str(&String::from_utf8_lossy(&buf[..n]));
         }
     }
     acc
@@ -92,13 +93,22 @@ fn initial_prompt_shows_header_and_input_line() {
     let out = wait_ready(&*eng.master, &mut *eng.reader);
     assert!(
         out.contains('/') || out.contains('~'),
-        "header 应含目录(~ 缩写或路径)，实际输出：{out:?}"
+        "header should contain the directory (~ abbreviation or path), got {out:?}"
     );
-    assert!(out.contains('\u{f00c}'), "真正 header 应含 ✔ 退出码状态");
+    assert!(
+        out.contains('\u{f00c}'),
+        "real header should contain the ✔ exit-code status"
+    );
     // instant header 已含输入行前缀 ❯;真 prompt 的前缀覆盖由
     // placeholder_overwritten_by_prefix 单独验证(❯ 在占位符 __ 之后)。
-    assert!(out.contains('❯'), "输入行应含 ❯，实际输出：{out:?}");
-    assert!(out.contains('\x1b'), "header 应含 ANSI 颜色/定位序列");
+    assert!(
+        out.contains('❯'),
+        "input line should contain ❯, got {out:?}"
+    );
+    assert!(
+        out.contains('\x1b'),
+        "header should contain ANSI color/positioning sequences"
+    );
 }
 
 /// 占位协议：占位符 `aa` 原样透传，引擎随后 `\r` + 前缀顶掉（输入行延后
@@ -109,16 +119,19 @@ fn placeholder_overwritten_by_prefix() {
     let mut full = wait_ready(&*eng.master, &mut *eng.reader);
     // 占位协议：shell 渲染的多行占位(换行 + 占位符 __)先透传,引擎随后 \r + 前缀
     // (❯)回行首顶掉。instant 的 ❯ 在 __ 之前,不算;真 prompt 的 ❯ 一定在 __ 之后。
-    assert!(full.contains("__"), "占位符应原样透传，实际输出：{full:?}");
+    assert!(
+        full.contains("__"),
+        "placeholder should pass through verbatim, got {full:?}"
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let ph = full.find("__").expect("占位符存在");
+        let ph = full.find("__").expect("placeholder present");
         if full[ph..].contains('❯') {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "占位符 __ 之后应出现前缀 ❯，实际输出：{full:?}"
+            "prefix ❯ should appear after the __ placeholder, got {full:?}"
         );
         full.push_str(&read_until(
             &*eng.master,
@@ -143,7 +156,10 @@ fn command_output_passthrough_and_next_prompt() {
         "hello-from-shell",
         Duration::from_secs(5),
     );
-    assert!(out.contains("hello-from-shell"), "命令输出应透传");
+    assert!(
+        out.contains("hello-from-shell"),
+        "command output should pass through"
+    );
 
     // 下一个 prompt 也该出现（命令执行完 → precmd → header 重画带 ✔）。
     let out2 = read_until(
@@ -154,7 +170,7 @@ fn command_output_passthrough_and_next_prompt() {
     );
     assert!(
         out2.contains('\u{f00c}'),
-        "命令后应出新 prompt，实际：{out2:?}"
+        "a new prompt should appear after the command, got {out2:?}"
     );
 }
 
@@ -174,7 +190,7 @@ fn exit_code_shows_in_status() {
     );
     assert!(
         out.contains('\u{f00d}'),
-        "退出码状态应显示 ✘，实际：{out:?}"
+        "exit-code status should show ✘, got {out:?}"
     );
 }
 
@@ -195,7 +211,7 @@ fn prompt_char_turns_error_color_on_failure() {
     );
     assert!(
         out.contains("\x1b[38;5;196m❯"),
-        "失败后 prompt_char 应进 ERROR state 变红(196)，实际：{out:?}"
+        "after a failure prompt_char should turn red in the ERROR state (196), got {out:?}"
     );
 }
 
@@ -211,5 +227,8 @@ fn ctrl_c_interrupts_running_command() {
     eng.writer.write_all(b"\x03").unwrap();
     eng.writer.flush().unwrap();
     let out = read_until(&*eng.master, &mut *eng.reader, "❯", Duration::from_secs(5));
-    assert!(out.contains('❯'), "Ctrl-C 后应出新 prompt，实际：{out:?}");
+    assert!(
+        out.contains('❯'),
+        "a new prompt should appear after Ctrl-C, got {out:?}"
+    );
 }
