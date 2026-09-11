@@ -286,10 +286,7 @@ fn render_segment(
     // 段有效背景：段自己写的 → 全局 `defaults.bg`（p10k 的
     // `POWERLEVEL9K_BACKGROUND`）→ 都没有则透明（终端自己的底色）。
     // 此处曾强制黑底，会在非黑终端上画出黑块，也让右栏分隔符误判成"异底"
-    // 而画成箭头。下面"段首空白"用的是**继承之后**的有效背景。
-    if style.bg == Color::Default && config.defaults.bg != Color::Default {
-        style.bg = config.defaults.bg.clone();
-    }
+    // 而画成箭头。这层继承 `effective_style` 已经做过，这里的 bg 就是结果。
     let has_real_bg = style.bg != Color::Default;
     let text = match name {
         "dir" => dir_seg_text(config, info, seg, &style, dir_budget),
