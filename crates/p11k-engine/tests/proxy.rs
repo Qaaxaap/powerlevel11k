@@ -32,6 +32,10 @@ fn spawn_engine() -> Engine {
         })
         .unwrap();
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_p11k"));
+    // 显式指定 shell：不写的话引擎回退到 $SHELL，而 CI 上是 /bin/bash，
+    // 下面这些断言却是照着 zsh 的输出写的。
+    cmd.arg("--shell");
+    cmd.arg("zsh");
     // 隔离：不依赖测试机上的真实 ~/.zshrc（有 oh-my-zsh/p10k，慢且干扰断言）。
     // 指向空文件，让内部 shell 只跑引擎协议层。
     cmd.env("P11K_USER_ZSHRC", "/dev/null");

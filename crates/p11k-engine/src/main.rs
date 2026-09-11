@@ -134,16 +134,14 @@ fn load_config() -> Config {
 }
 
 /// 未指定 shell 时，回退到 $SHELL。
+///
+/// 只认 `$SHELL`。曾经想用 `PSModulePath`/`PSHOME` 认 PowerShell（pwsh 不改
+/// `$SHELL`，从 zsh 里起 pwsh 时它还是 /bin/zsh），结果 CI 的 runner 环境里
+/// 恰好带着这类变量，于是所有默认 shell 的调用都被判成 pwsh、起不来。安装行
+/// 里始终显式写 `--shell <name>`，这里只是没写时的兜底。
 fn detect_shell() -> Shell {
     if let Some(s) = shell_from_args() {
         return s;
-    }
-    // pwsh 不动 $SHELL（从 zsh 里起 pwsh，$SHELL 仍是 /bin/zsh），所以 $SHELL
-    // 认不出 PowerShell；PSModulePath/PSHOME 是 PowerShell 必设的，用它认。
-    // 反过来，在 pwsh 里再起 bash 再 exec p11k 会被错认成 pwsh —— 想避免歧义
-    // 就显式写 `--shell <name>`（安装行里就是这么给用户的）。
-    if std::env::var_os("PSModulePath").is_some() || std::env::var_os("PSHOME").is_some() {
-        return Shell::Pwsh;
     }
     let she = std::env::var("SHELL").unwrap_or_default();
     match she.rsplit('/').next().unwrap_or("") {
