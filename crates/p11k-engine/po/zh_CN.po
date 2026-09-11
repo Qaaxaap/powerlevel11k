@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k\n"
 "Report-Msgid-Bugs-To: https://github.com/powerlevel11k/p11k/issues\n"
-"POT-Creation-Date: 2026-09-11 02:37+0800\n"
+"POT-Creation-Date: 2026-09-12 01:48+0800\n"
 "PO-Revision-Date: 2025-01-01 00:00+0000\n"
 "Last-Translator: p11k\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -20,46 +20,46 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 
 # ---- 配置解析 ----
-#: crates/p11k-engine/src/config.rs:398
+#: crates/p11k-engine/src/config.rs:397
 msgid "KDL parse error: "
 msgstr "KDL 解析失败: "
 
-#: crates/p11k-engine/src/config.rs:1143
+#: crates/p11k-engine/src/config.rs:1142
 msgid "`state` needs a name (a positional string)"
 msgstr "`state` 需要一个名字（位置字符串）"
 
-#: crates/p11k-engine/src/config.rs:1162
+#: crates/p11k-engine/src/config.rs:1161
 msgid " needs text (a positional string)"
 msgstr " 需要文本（位置字符串）"
 
-#: crates/p11k-engine/src/main.rs:115
+#: crates/p11k-engine/src/main.rs:118
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr "读取配置失败，回退内置 lean 主题: "
 
-#: crates/p11k-engine/src/main.rs:126
+#: crates/p11k-engine/src/main.rs:129
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr "未知预设，回退内置 lean 主题（可选 lean/classic/rainbow/pure）: "
 
 # ---- 引擎本体 ----
-#: crates/p11k-engine/src/main.rs:377
+#: crates/p11k-engine/src/main.rs:443
 msgid "recursive launch detected (p11k started inside a p11k session)"
 msgstr "检测到递归加载（已在 p11k 会话内又启动了 p11k）"
 
-#: crates/p11k-engine/src/main.rs:378
+#: crates/p11k-engine/src/main.rs:444
 msgid "make sure the bootstrap line in ~/.zshrc is guarded, e.g.:"
 msgstr "请确认 ~/.zshrc 里的引导行带判断，例如："
 
-#: crates/p11k-engine/src/main.rs:382
+#: crates/p11k-engine/src/main.rs:448
 msgid "cannot exec zsh -f: "
 msgstr "exec zsh -f 失败: "
 
-#: crates/p11k-engine/src/main.rs:392
+#: crates/p11k-engine/src/main.rs:458
 msgid "config error: "
 msgstr "配置错误: "
 
-#: crates/p11k-engine/src/main.rs:396
+#: crates/p11k-engine/src/main.rs:462
 msgid ""
 "every prompt_char state must be the same width (the prompt width is fixed at "
 "startup). Fix the config and start p11k again."
@@ -67,9 +67,13 @@ msgstr ""
 "prompt_char 各态提示符必须等宽（prompt 宽度在启动期固定）。请修改配置后重新启"
 "动 p11k。"
 
-#: crates/p11k-engine/src/main.rs:407
+#: crates/p11k-engine/src/main.rs:476
 msgid "cannot exec a clean shell: "
 msgstr "exec 干净 shell 失败: "
+
+#: crates/p11k-engine/src/main.rs:580
+msgid "the inner shell failed to start"
+msgstr "内部 shell 没能启动"
 
 # ---- wizard：选项 ----
 #: crates/p11k-engine/src/presets.rs:427
@@ -364,7 +368,7 @@ msgstr "新配置:"
 msgid "Add the engine to your shell rc (pick yours):"
 msgstr "安装到 shell rc（选你用的那个）:"
 
-#: crates/p11k-engine/src/wizard.rs:883
+#: crates/p11k-engine/src/wizard.rs:890
 msgid ""
 "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise "
 "they will stack."

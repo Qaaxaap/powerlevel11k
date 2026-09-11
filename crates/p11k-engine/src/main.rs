@@ -563,6 +563,8 @@ fn main() -> anyhow::Result<()> {
     }
     if mid == 0 {
         // 中间进程：spawn 内部 shell（父 = 本进程），随即退出使其孤儿化。
+        // 这里只能做 async-signal-safe 的事：引擎是多线程的，fork 之后碰
+        // malloc（println/gettext 都会）有死锁风险。错误码丢回父进程打印。
         let status = match pair.slave.spawn_command(cmd) {
             Ok(_) => 0,
             Err(_) => 1,
@@ -572,6 +574,11 @@ fn main() -> anyhow::Result<()> {
     // 引擎：回收中间进程，丢弃 slave 引用（slave 已被内部 shell 接管）。
     let mut _st = 0;
     unsafe { libc::waitpid(mid, &mut _st, 0) };
+    // 中间进程非 0 = 内部 shell 根本没起来。以前这里是静默的，结果上层只看到
+    // "shell 没输出"，无从判断是 spawn 失败还是别的。
+    if _st != 0 {
+        eprintln!("p11k: {}", t("the inner shell failed to start"));
+    }
     drop(pair.slave);
 
     let mut reader = pair.master.try_clone_reader()?;

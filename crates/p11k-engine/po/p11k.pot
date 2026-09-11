@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/powerlevel11k/p11k/issues\n"
-"POT-Creation-Date: 2026-09-11 02:37+0800\n"
+"POT-Creation-Date: 2026-09-12 01:48+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,52 +17,56 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/p11k-engine/src/config.rs:398
+#: crates/p11k-engine/src/config.rs:397
 msgid "KDL parse error: "
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1143
+#: crates/p11k-engine/src/config.rs:1142
 msgid "`state` needs a name (a positional string)"
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1162
+#: crates/p11k-engine/src/config.rs:1161
 msgid " needs text (a positional string)"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:115
+#: crates/p11k-engine/src/main.rs:118
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:126
+#: crates/p11k-engine/src/main.rs:129
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:377
+#: crates/p11k-engine/src/main.rs:443
 msgid "recursive launch detected (p11k started inside a p11k session)"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:378
+#: crates/p11k-engine/src/main.rs:444
 msgid "make sure the bootstrap line in ~/.zshrc is guarded, e.g.:"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:382
+#: crates/p11k-engine/src/main.rs:448
 msgid "cannot exec zsh -f: "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:392
+#: crates/p11k-engine/src/main.rs:458
 msgid "config error: "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:396
+#: crates/p11k-engine/src/main.rs:462
 msgid ""
 "every prompt_char state must be the same width (the prompt width is fixed at "
 "startup). Fix the config and start p11k again."
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:407
+#: crates/p11k-engine/src/main.rs:476
 msgid "cannot exec a clean shell: "
+msgstr ""
+
+#: crates/p11k-engine/src/main.rs:580
+msgid "the inner shell failed to start"
 msgstr ""
 
 #: crates/p11k-engine/src/presets.rs:427
@@ -354,7 +358,7 @@ msgstr ""
 msgid "Add the engine to your shell rc (pick yours):"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:883
+#: crates/p11k-engine/src/wizard.rs:890
 msgid ""
 "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise "
 "they will stack."

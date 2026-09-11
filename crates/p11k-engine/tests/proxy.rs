@@ -84,7 +84,19 @@ fn read_until(
 /// 等真正的第一个 prompt 就绪：instant header 没有退出码状态（无 ✔），只有
 /// 内部 shell 加载完、第一次 precmd 后清屏重画的真 header 才带 ✔。
 fn wait_ready(master: &dyn MasterPty, reader: &mut dyn Read) -> String {
-    read_until(master, reader, "\u{f00c}", Duration::from_secs(10))
+    let out = read_until(master, reader, "\u{f00c}", Duration::from_secs(10));
+    if !out.contains('\u{f00c}') {
+        // 超时只表现为"拿到半截输出"。把引擎日志尾巴带出来，否则没法判断是
+        // spawn 失败、卡在 ack，还是内部 shell 压根没跑起来。
+        match std::fs::read_to_string("/tmp/p11k-engine.log") {
+            Ok(log) => {
+                let tail: Vec<&str> = log.lines().rev().take(15).collect();
+                eprintln!("engine log tail (newest first): {tail:#?}");
+            }
+            Err(e) => eprintln!("no engine log at /tmp/p11k-engine.log: {e}"),
+        }
+    }
+    out
 }
 
 #[test]
