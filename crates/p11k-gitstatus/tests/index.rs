@@ -1,7 +1,10 @@
-//! 性能内核测试：建树、单条目脏检测、扫描端到端。
+//! Performance-core tests: tree building, single-entry dirty detection, scan
+//! end to end.
 //!
-//! 对拍基准：与官方 gitstatusd 在相同 fixture 上的候选集合一致
-//! （tests/compat.rs 的差分测试将来覆盖；这里先锚定算法语义）。
+//! Reference baseline: the candidate set matches official gitstatusd on the
+//! same fixture
+//! (differential tests in tests/compat.rs will cover it later; here we anchor
+//! the algorithm semantics first).
 
 use p11k_gitstatus::index::{Index, IndexEntry, RepoCaps, is_modified};
 use p11k_gitstatus::scan::ScanOpts;
@@ -25,7 +28,7 @@ fn opts() -> ScanOpts {
     }
 }
 
-/// 构造 index 条目：path 加 NUL，stat 字段取自真实文件。
+/// Build an index entry: path gets a NUL, stat fields come from a real file.
 fn entry(path: &str, st: &libc::stat) -> IndexEntry {
     let mut p = path.as_bytes().to_vec();
     p.push(0);
@@ -46,7 +49,7 @@ fn lstat(path: &Path) -> libc::stat {
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     let mut bytes = path.as_os_str().as_bytes().to_vec();
     bytes.push(0);
-    // SAFETY: 路径 NUL 结尾，st 合法缓冲。
+    // SAFETY: the path is NUL-terminated, st is a valid buffer.
     let r = unsafe { libc::lstat(bytes.as_ptr().cast(), &mut st) };
     assert_eq!(r, 0, "lstat {path:?}");
     st
@@ -55,7 +58,7 @@ fn lstat(path: &Path) -> libc::stat {
 fn open_root(path: &Path) -> RawFd {
     let mut bytes = path.as_os_str().as_bytes().to_vec();
     bytes.push(0);
-    // SAFETY: 路径 NUL 结尾。
+    // SAFETY: the path is NUL-terminated.
     let fd = unsafe { libc::open(bytes.as_ptr().cast(), libc::O_RDONLY | libc::O_DIRECTORY) };
     assert!(fd >= 0);
     fd
@@ -63,7 +66,7 @@ fn open_root(path: &Path) -> RawFd {
 
 #[test]
 fn from_entries_builds_tree() {
-    // 用假 stat（建树不读 stat 字段）
+    // Use a fake stat (tree building does not read stat fields)
     let fake = |path: &str| {
         let mut p = path.as_bytes().to_vec();
         p.push(0);
@@ -108,7 +111,7 @@ fn is_modified_clean_is_false() {
     assert!(!is_modified(&e, &st, &caps()));
 }
 
-/// fixture：文件写 1 字节，index 记录 fsize=0。
+/// fixture: the file holds 1 byte, the index records fsize=0.
 #[test]
 fn is_modified_detects_size_change() {
     let tmp = tempfile::tempdir().unwrap();
@@ -131,7 +134,7 @@ fn is_modified_detects_ino_change() {
     assert!(is_modified(&e, &st, &caps()));
 }
 
-/// ZERO_NSEC 特例：index 记录 nsec==0 时不比 nsec（对齐 GITSTATUS_ZERO_NSEC）。
+/// ZERO_NSEC special case: an index nsec of 0 skips nsec comparison (mirrors GITSTATUS_ZERO_NSEC).
 #[test]
 fn is_modified_zero_nsec_ignores_nsec_mismatch() {
     let tmp = tempfile::tempdir().unwrap();
@@ -141,7 +144,7 @@ fn is_modified_zero_nsec_ignores_nsec_mismatch() {
     let mut e = entry("f", &st);
     e.mtime_nsec = 0;
     assert!(!is_modified(&e, &st, &caps()));
-    // 秒不同仍脏
+    // A different second is still dirty
     let mut e2 = entry("f", &st);
     e2.mtime_nsec = 0;
     e2.mtime_sec += 1;
@@ -159,7 +162,7 @@ fn is_modified_conflict_stage_is_dirty() {
     assert!(is_modified(&e, &st, &caps()));
 }
 
-/// mode 规范化：仅可执行位参与比较（磁盘 0644、index 记录 0755 → 脏）。
+/// mode normalization: only the executable bit takes part in the comparison (disk 0644, index 0755 → dirty).
 #[test]
 fn is_modified_exec_bit_only_differs() {
     let tmp = tempfile::tempdir().unwrap();
@@ -173,23 +176,23 @@ fn is_modified_exec_bit_only_differs() {
     assert!(!is_modified(&e2, &st, &caps()));
 }
 
-/// 扫描端到端：a 修改、b 删除、c 干净、d untracked → 候选 {a,b,d}。
+/// Scan end to end: a modified, b deleted, c clean, d untracked → candidates {a,b,d}.
 #[test]
 fn scan_detects_modified_deleted_untracked() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    // a：磁盘存在且写 1 字节，但 index 记录 fsize=0（视为修改）
+    // a: exists on disk with 1 byte written, but the index records fsize=0 (counts as modified)
     std::fs::write(root.join("a"), b"x").unwrap();
     let st_a = lstat(&root.join("a"));
     let mut e_a = entry("a", &st_a);
     e_a.fsize = 0;
-    // b：磁盘不存在（删除）——用 a 的 stat 伪造（比较只发生在磁盘存在时）
+    // b: missing on disk (deleted) — reuse a's stat (comparison only happens when the file is on disk)
     let mut e_b = entry("b", &st_a);
     e_b.path = b"b\0".to_vec();
     File::create(root.join("c")).unwrap();
     let st_c = lstat(&root.join("c"));
     let e_c = entry("c", &st_c);
-    // d：untracked（无 index 条目）
+    // d: untracked (no index entry)
     File::create(root.join("d")).unwrap();
 
     let entries = vec![e_a, e_b, e_c];
@@ -229,13 +232,13 @@ fn splits_are_monotonic() {
     }
 }
 
-/// 探针：真实文件系统上应通过（ext4/btrfs/tmpfs 都满足 mtime 行为）。
-/// 后台线程 sleep 1s，测试等待结论。
+/// Probe: should pass on a real filesystem (ext4/btrfs/tmpfs all satisfy the mtime behavior).
+/// The background thread sleeps 1s, the test waits for the verdict.
 #[test]
 fn untracked_cache_probe_passes_on_local_fs() {
     let tmp = tempfile::tempdir().unwrap();
     let cache = p11k_gitstatus::untracked_cache::UntrackedCache::start_probe(tmp.path());
-    // 结论未出时乐观 true
+    // Optimistically true until the verdict arrives
     assert!(cache.enabled());
     let start = std::time::Instant::now();
     while start.elapsed().as_secs() < 5 && cache.enabled() {
@@ -244,9 +247,9 @@ fn untracked_cache_probe_passes_on_local_fs() {
     assert!(cache.enabled());
 }
 
-/// 多目录 + 多分片回归：600 文件分 10 个目录，1 线程触发 16 片，
-/// 片边界会切断目录树——每个目录的脏文件都必须被检出。
-/// （回归背景：分片内起点目录的父链断裂导致整片漏扫。）
+/// Multi-dir + multi-shard regression: 600 files across 10 dirs, 1 thread triggers 16 shards,
+/// shard boundaries cut through the directory tree — every dir's dirty files must still be found.
+/// (Regression background: a broken parent chain at a shard's first dir made the whole shard miss.)
 #[test]
 fn scan_multi_dir_shards_find_all_dirty() {
     let tmp = tempfile::tempdir().unwrap();
@@ -262,19 +265,19 @@ fn scan_multi_dir_shards_find_all_dirty() {
             let st = lstat(&f);
             let mut e = entry(&format!("dir{d:02}/{name}"), &st);
             if d == 9 && i == 0 {
-                // 最后一个目录里的修改（保证落在靠后的分片）
+                // Modification in the last directory (to land in a later shard)
                 e.fsize = 0;
             }
             entries.push(e);
         }
     }
-    // untracked 文件放在中间目录
+    // untracked file in a middle directory
     std::fs::write(root.join("dir05/u"), b"x").unwrap();
 
-    // git index 保证字节序（"file10" < "file2"），测试数据需同样排序
+    // git index guarantees byte order ("file10" < "file2"), so the test data must be sorted the same way
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     let mut index = Index::from_entries(entries);
-    index.init_splits(1); // 16 片
+    index.init_splits(1); // 16 shards
     assert!(
         index.splits.len() > 2,
         "expected multiple shards: {:?}",
@@ -286,8 +289,8 @@ fn scan_multi_dir_shards_find_all_dirty() {
     assert_eq!(out, vec![b"dir05/u".to_vec(), b"dir09/file0".to_vec()]);
 }
 
-/// gitlink（submodule, mode 160000）在磁盘上是目录：stat 字段/mode 与 gitlink
-/// 条目不可比。目录仍在 → 不算 dirty（对齐原版 GIT_SUBMODULE_IGNORE_DIRTY）。
+/// A gitlink (submodule, mode 160000) is a directory on disk: its stat fields/mode are not comparable
+/// with the gitlink entry. A directory still present → not dirty (mirrors the original GIT_SUBMODULE_IGNORE_DIRTY).
 #[test]
 fn gitlink_dir_stat_is_not_modified() {
     let mut st: libc::stat = unsafe { std::mem::zeroed() };

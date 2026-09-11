@@ -1,11 +1,13 @@
-//! 渲染器：把 KDL 配置驱动成多行 header 文本。
+//! Renderer: drives a KDL config into multi-line header text.
 //!
-//! - 几何：按 [`Config::layout`] 的行结构，逐行「左段串 + 右段右对齐」。
-//! - 段：内置段（dir/vcs/status/time/command_execution_time/background_jobs/
-//!   prompt_char/os/text）按配置渲染，可叠加左/中/右附加文字。
-//! - 色：配置的 `fg`/`bg`（三段回退）+ 段间 powerline 分隔符与背景块。
+//! - Geometry: rows follow [`Config::layout`], each line being left segments + right-aligned
+//!   right segments.
+//! - Segments: built-ins (dir/vcs/status/time/command_execution_time/background_jobs/
+//!   prompt_char/os/text) render from config, with optional left/middle/right attach text.
+//! - Color: configured `fg`/`bg` (three-level fallback) plus inter-segment powerline
+//!   separators and background blocks.
 //!
-//! 输入：配置 + 当前状态。输出：header 的 ANSI 字符串。
+//! Input: config plus the current state. Output: the header ANSI string.
 
 use std::fmt::Write as _;
 
@@ -16,17 +18,18 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthChar;
 
-/// 当前 zsh 编辑模式(由 zle hook 上报,引擎实时更新);非 zsh 或未上报为空。
+/// Current zsh edit mode (reported by the zle hook, updated live by the engine); empty when
+/// not zsh or unreported.
 pub static CURRENT_VI_MODE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
-/// 输入行前缀:`frame.last_prefix` + `prompt_char` 内容;`width` 是它的显示宽度,
-/// 引擎据此生成等宽占位符。
+/// Input line prefix: `frame.last_prefix` + `prompt_char` content; `width` is its display
+/// width, from which the engine generates equal-width placeholders.
 pub struct InputPrefix {
     pub text: String,
     pub width: usize,
 }
 
-/// 当前 zsh 编辑模式对应的 vi state（p10k 的 `VIINS`/`VICMD`/`VIVIS`/`VIOWR`）。
+/// vi state for the current zsh edit mode (p10k's `VIINS`/`VICMD`/`VIVIS`/`VIOWR`).
 fn vi_state() -> Option<&'static str> {
     let mode = CURRENT_VI_MODE
         .lock()
@@ -41,9 +44,9 @@ fn vi_state() -> Option<&'static str> {
     }
 }
 
-/// prompt_char 的 state。优先 vi 模式（p10k
-/// `PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,VIVIS,VIOWR}`）——但只在用户确实配了
-/// 该 state 的字符时生效；否则按退出码：非 0 → ERROR，其余正常态。
+/// prompt_char state. vi mode wins (p10k
+/// `PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,VIVIS,VIOWR}`)—but only when a char is really
+/// configured for that state; otherwise the exit code decides: non-zero → ERROR, else normal.
 fn prompt_state(config: &Config, exit_code: Option<i32>) -> Option<&'static str> {
     if let Some(st) = vi_state() {
         let configured = config
@@ -62,7 +65,7 @@ fn prompt_state(config: &Config, exit_code: Option<i32>) -> Option<&'static str>
     }
 }
 
-/// 某 state 下的输入行前缀文本(帧 last_prefix + prompt_char 字符 + 空格)。
+/// Input line prefix text for a state (frame last_prefix + prompt_char char + space).
 fn prefix_text(config: &Config, state: Option<&str>) -> String {
     let mut text = String::new();
     if !config.frame.last_prefix.text.is_empty() {
@@ -72,7 +75,7 @@ fn prefix_text(config: &Config, state: Option<&str>) -> String {
     let pc = config.segment("prompt_char");
     let st = pc.effective_style(state, &config.defaults);
     text.push_str(&paint(pc.char_for(state, "❯"), &st));
-    text.push(' '); // 前缀后空格(无色),对齐原 `❯ ` 几何
+    text.push(' '); // space after the prefix (uncolored), matching the original `❯ ` geometry
     text
 }
 
@@ -80,8 +83,9 @@ fn prefix_width(config: &Config, state: Option<&str>) -> usize {
     display_width(&prefix_text(config, state))
 }
 
-/// 计算输入行前缀(如 `╰─❯`)。`last_prefix`(帧样式)/提示符字符(prompt_char 样式,
-/// 可按 `exit_code` 进 ERROR state)已上色;`width` 为去 ANSI 显示宽。
+/// Computes the input line prefix (e.g. `╰─❯`). `last_prefix` (frame style) and the prompt
+/// char (prompt_char style, entering ERROR state from `exit_code`) are colored; `width` is
+/// the ANSI-stripped display width.
 pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
     let state = prompt_state(config, exit_code);
     let text = prefix_text(config, state);
@@ -89,11 +93,11 @@ pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
     InputPrefix { text, width }
 }
 
-/// transient 折叠时的单行提示符(zsh 格式)。引擎预计算 zsh 的 prompt 转义,
-/// zsh 在 zle-line-finish 里换 PROMPT + reset-prompt 同步折叠。
-/// 目前无法简单迁移到 bash/fish，故采用 zsh 独占做法。
-/// 用 `%F{...}` 原生转义，
-/// 条件表达式 `%(?\x01OK\x01ERR)` 按上一条命令退出码选色。
+/// Single-line prompt for transient folding (zsh format). The engine precomputes the zsh
+/// prompt escapes; zsh swaps PROMPT in zle-line-finish and folds in sync via reset-prompt.
+/// Not easily portable to bash/fish, hence the zsh-only approach.
+/// Uses native `%F{...}` escapes;
+/// the conditional `%(?\x01OK\x01ERR)` picks a color from the last command's exit code.
 pub fn transient_prompt_zsh(config: &Config) -> String {
     let pc = config.segment("prompt_char");
     let ch = pc.char_for(None, "❯");
@@ -104,7 +108,7 @@ pub fn transient_prompt_zsh(config: &Config) -> String {
     format!("%(?\u{1}{}\u{1}{})%f", ok_prompt, err_prompt)
 }
 
-/// Color → zsh 的 `%F{...}` 前景色转义(transient prompt 用)。
+/// Color → zsh `%F{...}` foreground escape (for the transient prompt).
 fn zsh_fg(c: &Color) -> String {
     match c {
         Color::Default => "%f".into(),
@@ -114,9 +118,9 @@ fn zsh_fg(c: &Color) -> String {
     }
 }
 
-/// 校验 prompt_char:凡配了 char 的 state(如 ERROR)必须与正常态等宽。
-/// 提示符宽度必须在启动期确定(占位符协议按它生成),不等宽会破坏几何,
-/// 由引擎启动期报错处理。
+/// Validates prompt_char: every state with a char (e.g. ERROR) must be as wide as the normal
+/// one. The prompt width must be fixed at startup (the placeholder protocol is generated from
+/// it), so a mismatch breaks the geometry and is reported as a startup error.
 pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
     let pc = config.segment("prompt_char");
     let base = prefix_width(config, None);
@@ -139,12 +143,14 @@ pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
 struct SegmentText {
     text: String,
     style: Style,
-    /// 文本是否已带段尾空白（段的 padding）；无背景段之间不再补空格。
+    /// Whether the text already carries the segment's trailing padding; segments without a
+    /// background get no extra space between them.
     padded: bool,
 }
 
-/// 渲染 header 为逐行内容(每行=左段串+右段右对齐,不含光标/清屏/换行)。
-/// 供 theme 层逐行 `\r\e[K` + 内容 + `\r\n` 画到终端。
+/// Renders the header as per-line content (each line = left segments + right-aligned right
+/// segments, without cursor/clear/newline). The theme layer draws it line by line as
+/// `\r\e[K` + content + `\r\n`.
 pub fn render_header_lines(
     config: &Config,
     info: &HeaderInfo,
@@ -157,7 +163,7 @@ pub fn render_header_lines(
     let lines = left.len().max(right.len());
     let frame = &config.frame;
     let mut out: Vec<String> = Vec::with_capacity(lines + 1);
-    // p10k `SHOW_RULER`：header 之上先铺一整行标尺字符。
+    // p10k `SHOW_RULER`: lay a full row of ruler chars above the header.
     if layout.show_ruler {
         let ch = icon_str(config, "ruler").unwrap_or_else(|| "\u{2500}".to_string());
         let style = config
@@ -192,35 +198,40 @@ pub fn render_header_lines(
                 if !prefix.text.is_empty() {
                     row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
                 }
-                // 右对齐预算 = cols - 前缀宽 - 后缀宽(否则帧把行撑宽、后缀挤到下一行)。
+                // Right-align budget = cols - prefix width - suffix width, or the frame widens
+                // the row and pushes the suffix to the next line.
                 let body_budget = cols.saturating_sub(pre_w + suf_w);
                 let seps = &config.separators;
                 let indent = config.layout.right_indent;
-                // 左右两栏各自的宽度（右栏含它的起始分隔符），用于判断"整行放不放得下"。
-                // p10k 的判据比"刚好塞满"更严：内容 + indent + 1 必须塞进宽度里
-                // （实测同一内容 33 列隐藏、34 列才显示，而内容只占 32 列）。
-                // 计算右栏单独宽度时 cols 传 0：跳过 gap 计算，只取右栏本身。
+                // Width of each column (the right one including its start separator), used to
+                // decide whether the whole row fits. p10k's test is stricter than "just
+                // fits": content + indent + 1 must fit (measured: the same content is hidden
+                // at 33 cols and shown at 34, while the content is only 32 cols wide).
+                // Passing cols 0 for the right column alone skips the gap calculation.
                 let left_w =
                     |l: &[SegmentText]| display_width(&assemble_row(l, &[], body_budget, seps, 0));
                 let right_w = |r: &[SegmentText]| display_width(&assemble_row(&[], r, 0, seps, 0));
                 let fits = |lw: usize, rw: usize| lw + rw + indent < body_budget;
-                // 第一遍:完全不折(p10k 放得下时就是原样)。折叠预算一律按**未折**
-                // 宽度算,否则用折过的宽度再折会比所需的折得少。
+                // Pass 1: no shortening at all (p10k leaves it as-is when it fits). Shortening
+                // budgets always use the **unshortened** width, otherwise shortening from an
+                // already shortened width would shorten less than needed.
                 let (l0, r0) = render_side(None);
                 let (lw0, rw0) = (left_w(&l0), right_w(&r0));
                 let body = if fits(lw0, rw0) {
                     assemble_row(&l0, &r0, body_budget, seps, indent)
                 } else {
-                    // 第二遍:按放不下多少列折 dir(窄终端折、宽终端不折)。
+                    // Pass 2: shorten dir by the number of overflowing columns (narrow
+                    // terminals shorten, wide terminals do not).
                     let overflow = (lw0 + rw0 + indent + 1).saturating_sub(body_budget);
                     let (l1, r1) = render_side(Some(overflow));
                     let (lw1, rw1) = (left_w(&l1), right_w(&r1));
                     if fits(lw1, rw1) {
                         assemble_row(&l1, &r1, body_budget, seps, indent)
                     } else {
-                        // 第三遍:折完还是放不下 → 整条右栏舍弃(含 gap)。p10k 在
-                        // 宽度不够时就是不画右栏,而不是让它溢出换行。左栏按它
-                        // 相对未折宽度的超出量再折一轮。
+                        // Pass 3: still does not fit after shortening → drop the whole right
+                        // column (gap included). p10k omits the right column when the width is
+                        // insufficient instead of letting it overflow. The left column is
+                        // shortened again by its overflow over the unshortened width.
                         let (l2, _) = render_side(Some(lw0.saturating_sub(body_budget)));
                         assemble_row(&l2, &[], body_budget, seps, indent)
                     }
@@ -270,7 +281,8 @@ fn render_row(
         .collect()
 }
 
-/// 渲染单个段。返回的 `text` 已是上色后的 ANSI;`style` 供段间分隔符/块背景。
+/// Renders one segment. The returned `text` is already colored ANSI; `style` feeds
+/// inter-segment separators and block backgrounds.
 fn render_segment(
     config: &Config,
     name: &str,
@@ -281,12 +293,13 @@ fn render_segment(
 ) -> SegmentText {
     let seg = config.segment(name);
     let mut style = seg.effective_style(None, &config.defaults);
-    // 加段首空白的判据是有效背景非透明（继承链见下）；透明段不加——对齐 p10k lean
-    // 行首不留空。
-    // 段有效背景：段自己写的 → 全局 `defaults.bg`（p10k 的
-    // `POWERLEVEL9K_BACKGROUND`）→ 都没有则透明（终端自己的底色）。
-    // 此处曾强制黑底，会在非黑终端上画出黑块，也让右栏分隔符误判成"异底"
-    // 而画成箭头。这层继承 `effective_style` 已经做过，这里的 bg 就是结果。
+    // Leading space is added when the effective background is non-transparent (inheritance
+    // chain below); transparent segments get none—matching p10k lean, no space at line start.
+    // Effective segment background: the segment's own → global `defaults.bg` (p10k's
+    // `POWERLEVEL9K_BACKGROUND`) → transparent when neither (the terminal's own color).
+    // A forced black background used to draw black blocks on non-black terminals and made the
+    // right-column separators misread as "different background" and draw arrows. The
+    // `effective_style` inheritance already does this layer; the bg here is the result.
     let has_real_bg = style.bg != Color::Default;
     let text = match name {
         "dir" => dir_seg_text(config, info, seg, &style, dir_budget),
@@ -316,7 +329,8 @@ fn render_segment(
                 _ => 3.0,
             };
             if info.exec_seconds >= threshold {
-                // p10k 的 PRECISION 缺省 2 位小数、FORMAT 缺省多级(带空格)。
+                // p10k's PRECISION defaults to 2 decimals and FORMAT to multi-level (with
+                // spaces).
                 let precision = match seg.prop("precision") {
                     Some(crate::config::Prop::Int(n)) => (*n).clamp(0, 6) as usize,
                     _ => 2,
@@ -343,8 +357,8 @@ fn render_segment(
         "root_indicator" => paint(&root_indicator_text(), &style),
         "date" => paint(&date_text(seg), &style),
         "symfony2_version" => paint(&symfony2_version_text(&info.cwd), &style),
-        // p10k symfony2_tests：测试占比，按比例切 GOOD/AVG/BAD 三个 state
-        // （p10k 的内部默认色 cyan/yellow/red = 6/3/1）。
+        // p10k symfony2_tests: the test ratio selects the GOOD/AVG/BAD state
+        // (p10k's internal default colors cyan/yellow/red = 6/3/1).
         "symfony2_tests" => {
             let text = symfony2_tests_text(&info.cwd);
             if text.is_empty() {
@@ -373,7 +387,8 @@ fn render_segment(
                 paint(&text, &st)
             }
         }
-        // 工具链版本段:执行 `cmd --version` 解析版本,有命令才显示。
+        // Toolchain version segments: run `cmd --version` and parse the version; shown only
+        // when the command exists.
         "go_version" => paint(&go_version(), &style),
         "rust_version" => paint(&rust_version(), &style),
         "node_version" => paint(&node_version(), &style),
@@ -383,7 +398,8 @@ fn render_segment(
         "swift_version" => paint(&swift_version(), &style),
         "terraform_version" => paint(&terraform_version(), &style),
         "cpu_arch" => paint(&cpu_arch(), &style),
-        // 环境管理器/*env 家族:读环境变量或祖先版本文件,激活才显示。
+        // Environment managers and the *env family: read env vars or ancestor version files;
+        // shown only when active.
         "virtualenv" => paint(&virtualenv_text(&info.cwd), &style),
         "anaconda" => paint(&anaconda_text(&info.cwd), &style),
         "pyenv" => paint(&pyenv_text(&info.cwd), &style),
@@ -400,24 +416,27 @@ fn render_segment(
         "plenv" => paint(&plenv_text(&info.cwd), &style),
         "scalaenv" => paint(&scalaenv_text(&info.cwd), &style),
         "perlbrew" => paint(&perlbrew_text(&info.cwd), &style),
-        // 系统资源段:读 /proc /sys 或 df,数据源缺失则隐藏。
+        // System resource segments: read /proc, /sys or df; hidden when the data source is
+        // missing.
         "load" => paint(&load(), &style),
         "ram" => paint(&ram(), &style),
         "swap" => paint(&swap(), &style),
         "disk_usage" => paint(&disk_usage(&info.cwd), &style),
         "battery" => paint(&battery(), &style),
-        // 云/k8s 段:读云配置或环境变量,配置缺失则隐藏。
+        // Cloud/k8s segments: read cloud config or env vars; hidden when the config is
+        // missing.
         "aws" => paint(&aws_text(), &style),
         "azure" => paint(&azure_text(), &style),
         "gcloud" => paint(&gcloud_text(), &style),
         "kubecontext" => paint(&kubecontext_text(&info.cwd), &style),
         "terraform" => paint(&terraform_text(&info.cwd), &style),
-        // 网络段:本机 IP/VPN/WiFi(同步),公网 IP(异步查询缓存)。
+        // Network segments: local IP/VPN/WiFi (synchronous), public IP (async query cache).
         "ip" => paint(&ip_text(), &style),
         "vpn_ip" => paint(&vpn_ip_text(), &style),
         "wifi" => paint(&wifi_text(), &style),
         "public_ip" => paint(&public_ip_text(), &style),
-        // 补齐:虚拟化/容器/目录权限/history 作用域/语言栈/包管理器。
+        // Remaining: virtualization / container / dir permissions / history scope / language
+        // stacks / package managers.
         "detect_virt" => paint(&detect_virt(), &style),
         "toolbox" => paint(&toolbox_text(), &style),
         "dir_writable" => paint(&dir_writable_text(&info.cwd), &style),
@@ -426,7 +445,8 @@ fn render_segment(
         "package" => paint(&package_text(&info.cwd), &style),
         "asdf" => paint(&asdf_text(&info.cwd), &style),
         "fvm" => paint(&fvm_text(&info.cwd), &style),
-        // 云子类/框架/待办:命令存在或文件命中才显示。
+        // Cloud sub-segments / frameworks / todos: shown only when the command exists or a
+        // file matches.
         "google_app_cred" => paint(&google_app_cred_text(), &style),
         "aws_eb_env" => paint(&aws_eb_env_text(), &style),
         "laravel_version" => paint(&laravel_version_text(&info.cwd), &style),
@@ -434,8 +454,9 @@ fn render_segment(
         "todo" => paint(&todo_text(), &style),
         "taskwarrior" => paint(&taskwarrior_text(), &style),
         "dropbox" => paint(&dropbox_text(), &style),
-        // 环境指示段:内容来自环境变量,条件不满足 → 空文本 + 空图标(default_icon 按条件给),
-        // 整段隐藏。
+        // Environment indicator segments: content comes from env vars; an unmet condition →
+        // empty text + no icon (the default is given per condition) and the whole segment is
+        // hidden.
         "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
             paint("", &style)
         }
@@ -451,15 +472,19 @@ fn render_segment(
         "vi_mode" => paint(&vi_mode_text(seg), &style),
         _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
     };
-    // 段图标:config `icon`(按字符类别自动覆盖适用的 mode)→ 否则内置默认表。
-    // 图标后的空白（p10k `LEFT_MIDDLE_WHITESPACE`）只在段同时有图标与内容时
-    // 才加——只有图标的段（如 os_icon）不留空，否则会与段尾空白叠成两个空格。
-    // 文本为空的段：只有"图标即内容"的段（env 指示、os 徽标）才画图标，
-    // 其余整段隐藏——对齐 p10k：非 git 仓库不显示 vcs 图标、jobs=0 不显示齿轮。
+    // Segment icon: config `icon` (auto-overrides the applicable mode by char class) →
+    // otherwise the built-in default table.
+    // The space after the icon (p10k `LEFT_MIDDLE_WHITESPACE`) is added only when the segment
+    // has both an icon and content—an icon-only segment (e.g. os_icon) gets none, or it would
+    // stack with the trailing padding into two spaces.
+    // Segments with empty text: only "icon is content" segments (env indicators, os badges)
+    // draw the icon; the rest hide entirely—matching p10k: no vcs icon outside a git repo, no
+    // gear when jobs=0.
     let icon = resolve_icon(config, name, vcs, &info.cwd);
-    // 图标色：`visual-identifier-color`（p10k `SEG_VISUAL_IDENTIFIER_COLOR`）优先；
-    // vcs 段没配则回退 `clean-foreground`——图标是仓库指示，p10k 默认同为绿色
-    // （图标不继承段默认色，否则默认主题下会变成终端默认色）。
+    // Icon color: `visual-identifier-color` (p10k `SEG_VISUAL_IDENTIFIER_COLOR`) wins; the vcs
+    // segment falls back to `clean-foreground` when unset—the icon indicates the repo and p10k
+    // also defaults it to green (icons do not inherit the segment default, or the default
+    // theme would render them in the terminal default color).
     let icon_style = if seg.prop("visual-identifier-color").is_some() {
         prop_style(seg, &style, "visual-identifier-color")
     } else if name == "vcs" {
@@ -475,22 +500,26 @@ fn render_segment(
                 String::new()
             }
         }
-        // 图标与内容之间的空格（p10k `LEFT_MIDDLE_WHITESPACE` /
-        // `RIGHT_MIDDLE_WHITESPACE`）落在两者之间：左列图标在前 → 图标 + 空格；
-        // 右列图标在后 → 空格 + 图标。反过来会让右段变成"内容图标 "。
+        // The space between icon and content (p10k `LEFT_MIDDLE_WHITESPACE` /
+        // `RIGHT_MIDDLE_WHITESPACE`) sits between them: left column has the icon first →
+        // icon + space; right column has it last → space + icon. The reverse would give
+        // "content icon " on the right.
         Some(ic) if right => paint(&format!(" {ic}"), &icon_style),
         Some(ic) => paint(&format!("{ic} "), &icon_style),
         None => String::new(),
     };
-    // 附加文字槽:左(icon 前)/中(icon 与内容之间,须二者都有)/右(内容后)。
-    // 仅拼接显示、不独立成块;fg 缺省继承段样式。text-middle 始终紧随 icon 与内容
-    // 之间:左列 icon 在前 → middle 在 icon 后;右列 icon 后置 → middle 在内容与 icon 之间。
-    // 段前缀/后缀(p10k `SEG_PREFIX`/`SEG_SUFFIX`,如 vcs 的 `on `、exec 的
-    // `took `):画在整段最前/最后,用段样式上色。
-    // p10k 的段空白（`LEFT_LEFT_WHITESPACE` / `LEFT_RIGHT_WHITESPACE`，默认各
-    // 一个空格）：段内容前后留一空格，使段间分隔符（subsep/箭头）两侧都有
-    // 空白、不再紧贴。无背景的段不加段首空白——对齐 p10k lean，行首不留空。
-    // 段主体（不含两侧空白）。
+    // Attach text slots: left (before the icon) / middle (between icon and content, requires
+    // both) / right (after the content). Concatenated only, never separate blocks; fg defaults
+    // to the segment style. text-middle always sits right between icon and content: with the
+    // left column's icon first → middle after the icon; with the right column's icon last →
+    // middle between content and icon.
+    // Segment prefix/suffix (p10k `SEG_PREFIX`/`SEG_SUFFIX`, e.g. vcs `on `, exec `took `):
+    // drawn at the very start/end of the segment, colored with the segment style.
+    // p10k segment whitespace (`LEFT_LEFT_WHITESPACE` / `LEFT_RIGHT_WHITESPACE`, one space each
+    // by default): a space around the segment content so both sides of a separator
+    // (subsep/arrow) have whitespace instead of touching. Segments without a background get no
+    // leading space—matching p10k lean, nothing at line start.
+    // The segment body (without the surrounding whitespace).
     let mut body = String::new();
     if let Some(p) = &seg.prefix {
         body.push_str(&paint(p, &style));
@@ -521,7 +550,8 @@ fn render_segment(
     if let Some(s) = &seg.suffix {
         body.push_str(&paint(s, &style));
     }
-    // 条件段未满足时无可显示内容 → 整段隐藏，不留两侧空白。
+    // A conditional segment with an unmet condition has nothing to show → hide it entirely,
+    // leaving no side whitespace.
     if body.is_empty() {
         return SegmentText {
             text: String::new(),
@@ -530,8 +560,9 @@ fn render_segment(
         };
     }
     let mut out = String::new();
-    // 段首空白：有底色的段必加；右列段无条件加（它前面总是分隔符，
-    // p10k 的分隔符后跟一个 left_space）。左列行首的透明段不加。
+    // Leading space: always for segments with a background; unconditional for right-column
+    // segments, which are always preceded by a separator, and p10k's separator is followed by
+    // a left_space. Transparent segments at the start of the left column get none.
     if has_real_bg || right {
         out.push_str(&paint(" ", &style));
     }
@@ -544,7 +575,8 @@ fn render_segment(
     }
 }
 
-/// 附加文字上色:fg 缺省沿用段样式,配了则覆盖前景(bg/bold 仍继承段样式)。
+/// Colors attach text: fg defaults to the segment style, when set it overrides the foreground
+/// (bg/bold still inherit the segment style).
 fn paint_attach(style: &Style, a: &AttachText) -> String {
     let mut st = style.clone();
     if let Some(fg) = &a.fg {
@@ -553,10 +585,11 @@ fn paint_attach(style: &Style, a: &AttachText) -> String {
     paint(&a.text, &st)
 }
 
-/// 一个段的内置图标在三种字体档位下的字符。`nerdfont-complete` 与
-/// `nerdfont-fontconfig` 在 p10k 源码(`internal/icons.zsh`)里是同一 case 分支、
-/// 字形完全相同,故合并为一档 `nerdfont`;`compatible` 用标准 Unicode + Powerline
-/// 字体,`ascii` 纯 ASCII。图标数据集中在 [`icon_default`] 一张表里。
+/// The built-in icon chars of a segment across the three font tiers.
+/// `nerdfont-complete` and `nerdfont-fontconfig` are the same case branch with identical
+/// glyphs in p10k's source (`internal/icons.zsh`), so they merge into one `nerdfont` tier;
+/// `compatible` uses standard Unicode + Powerline fonts and `ascii` is plain ASCII.
+/// The icon data lives in the single [`icon_default`] table.
 #[derive(Clone, Copy)]
 struct IconEntry {
     nerdfont: &'static str,
@@ -575,7 +608,7 @@ fn icon_by_mode(e: &IconEntry, mode: &crate::config::IconMode) -> String {
     .to_string()
 }
 
-/// 图标表构造辅助:三档字符 → [`IconEntry`]。
+/// Icon table construction helper: three-tier chars → [`IconEntry`].
 const fn icon(n: &'static str, c: &'static str, a: &'static str) -> IconEntry {
     IconEntry {
         nerdfont: n,
@@ -584,22 +617,22 @@ const fn icon(n: &'static str, c: &'static str, a: &'static str) -> IconEntry {
     }
 }
 
-/// 图标名 → 三种字体档位的默认字符。
-/// 段渲染经 [`segment_icon_key`] 引用图标名,
-/// 用户可在顶层 `icon{}` 里按图标名覆盖。
+/// Icon name → default chars for the three font tiers.
+/// Segment rendering resolves icon names via [`segment_icon_key`];
+/// users can override them by icon name in the top-level `icon{}`.
 fn icon_default(key: &str) -> Option<IconEntry> {
     match key {
         "folder" => Some(icon("\u{f07c}", "", "")), // 
         "git" => Some(icon("\u{f1d3}", "", "")),
         "commit" => Some(icon("\u{e821}", "", "")), // p10k VCS_COMMIT_ICON    // 
-        "time" => Some(icon("\u{f017}", "", "")),   // 时钟
-        "date" => Some(icon("\u{f073}", "", "")),   // 日历
-        // p10k EXECUTION_TIME_ICON:nerdfont 档 U+F252(沙漏),
-        // compatible/ascii 档 p10k 本身就是空。
+        "time" => Some(icon("\u{f017}", "", "")),   // clock
+        "date" => Some(icon("\u{f073}", "", "")),   // calendar
+        // p10k EXECUTION_TIME_ICON: U+F252 (hourglass) in the nerdfont tier,
+        // empty in compatible/ascii since p10k itself has none.
         "execution-time" => Some(icon("\u{f252}", "", "")),
-        // p10k RULER_CHAR:nerdfont/compatible 档 `─`,ascii 档 `-`。
+        // p10k RULER_CHAR: `─` in the nerdfont/compatible tiers, `-` in ascii.
         "ruler" => Some(icon("\u{2500}", "\u{2500}", "-")),
-        "background-jobs" => Some(icon("\u{f013}", "\u{2699}", "%%")), // 齿轮 ⚙ %%
+        "background-jobs" => Some(icon("\u{f013}", "\u{2699}", "%%")), // gear ⚙ %%
         "go" => Some(icon("\u{e626}", "Go", "go")),
         "rust" => Some(icon("\u{e7a8}", "R", "rust")),
         "node" => Some(icon("\u{e617}", "Node", "node")),
@@ -635,7 +668,7 @@ fn icon_default(key: &str) -> Option<IconEntry> {
         "aws-eb" => Some(icon("\u{f1bd}", "\u{1F331}", "eb")), // 🌱
         "laravel" => Some(icon("\u{e73f}", "", "")),
         "test" => Some(icon("\u{f188}", "", "")),
-        // p10k SYMFONY_ICON：nerdfont 档 U+E757，其余档 `SF`。
+        // p10k SYMFONY_ICON: U+E757 in the nerdfont tier, `SF` in the others.
         "symfony" => Some(icon("\u{e757}", "SF", "SF")),
         "todo" => Some(icon("\u{2611}", "\u{2206}", "todo")), // ☑ ∆
         "taskwarrior" => Some(icon("\u{f4a0}", "task", "task")),
@@ -653,7 +686,7 @@ fn icon_default(key: &str) -> Option<IconEntry> {
         "vim" => Some(icon("\u{e62b}", "vim", "vim")),
         "direnv" => Some(icon("\u{25bc}", "\u{25bc}", "direnv")), // ▼
         "chezmoi" => Some(icon("\u{f015}", "Chez", "chezmoi")),
-        // status OK/ERROR 与 vcs 分支(p10k OK_ICON/FAIL_ICON/VCS_BRANCH_ICON)。
+        // status OK/ERROR and the vcs branch (p10k OK_ICON/FAIL_ICON/VCS_BRANCH_ICON).
         "ok" => Some(icon("\u{f00c}", "\u{2714}", "ok")),
         "error" => Some(icon("\u{f00d}", "\u{2718}", "err")),
         "branch" => Some(icon("\u{f126}", "@", "")),
@@ -661,8 +694,9 @@ fn icon_default(key: &str) -> Option<IconEntry> {
     }
 }
 
-/// 段 → 它默认引用的图标名。条件段(环境不满足才显示)在这里判条件,不满足
-/// → None(无图标,配合空文本整段隐藏)。
+/// Segment → the icon name it references by default. Conditional segments (shown only when
+/// the environment allows) evaluate their condition here; unmet → None (no icon, which hides
+/// the segment together with its empty text).
 fn segment_icon_key(name: &str) -> Option<&'static str> {
     match name {
         "dir" => Some("folder"),
@@ -713,7 +747,7 @@ fn segment_icon_key(name: &str) -> Option<&'static str> {
         "todo" => (!todo_text().is_empty()).then_some("todo"),
         "taskwarrior" => (!taskwarrior_text().is_empty()).then_some("taskwarrior"),
         "dropbox" => (!dropbox_text().is_empty()).then_some("dropbox"),
-        // 环境指示段:图标同样按条件给,条件不满足 → None。
+        // Environment indicator segments: the icon is conditional too; unmet → None.
         "ssh" => env().ssh.then_some("ssh"),
         "proxy" => env_has_proxy().then_some("proxy"),
         "docker_machine" => env_var("DOCKER_MACHINE_NAME").is_some().then_some("server"),
@@ -735,8 +769,8 @@ fn segment_icon_key(name: &str) -> Option<&'static str> {
     }
 }
 
-/// 解析一个图标名:顶层 `icon{}` 覆盖(all 自动识别类别 + nf/compat/ascii 精确档)
-/// → 否则内置默认表(随 mode)。
+/// Resolves an icon name: top-level `icon{}` overrides (auto-detected category via all plus
+/// exact nf/compat/ascii tiers) → otherwise the built-in default table (per mode).
 fn icon_str(config: &Config, key: &str) -> Option<String> {
     if let Some(ov) = config.icon_overrides.get(key) {
         let exact = match config.mode {
@@ -758,8 +792,8 @@ fn icon_str(config: &Config, key: &str) -> Option<String> {
     Some(icon_by_mode(&e, &config.mode))
 }
 
-/// `all` 字段的字符自动识别:NF 私有区字符只落 nf 档,标准落
-/// nf+compat,纯 ASCII 三档全落。
+/// Auto-detection for the `all` field: NF Private Use chars land in the nf tier only,
+/// standard ones in nf+compat, plain ASCII in all three.
 fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
     match mode {
         crate::config::IconMode::NerdfontComplete | crate::config::IconMode::NerdfontFontconfig => {
@@ -772,7 +806,8 @@ fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
     }
 }
 
-/// 段渲染的默认图标解析:os 动态、vcs remote 优先,其余按段 → 图标名 → 查表。
+/// Default icon resolution for segment rendering: os is dynamic, vcs remote takes priority,
+/// the rest go segment → icon name → table lookup.
 fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>, cwd: &str) -> Option<String> {
     if name == "os" || name == "os_icon" {
         return Some(os_icon(&config.mode));
@@ -787,13 +822,15 @@ fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>, cwd: &str)
         }
         return icon_str(config, "git");
     }
-    // p10k `DIR_SHOW_WRITABLE`：不可写（v3 下还包括不存在）时 dir 的图标换成锁。
+    // p10k `DIR_SHOW_WRITABLE`: when not writable (under v3 also non-existent) the dir icon
+    // becomes a lock.
     if name == "dir" {
         if dir_writable_state(config.segment("dir"), cwd).is_some() {
             return icon_str(config, "lock");
         }
-        // p10k `DIR_CLASSES`：命中规则的图标；p10k 里空图标 = 明确不要图标，
-        // 不是回退默认文件夹图标（实测 HOME 类 icon='' 时 p10k 不画任何图标）。
+        // p10k `DIR_CLASSES`: the matched rule's icon; an empty icon in p10k means no icon at
+        // all, not a fallback to the default folder icon (measured: with HOME's icon='', p10k
+        // draws nothing).
         if let Some(c) = dir_class_match(config, cwd) {
             return if c.icon.is_empty() {
                 None
@@ -806,7 +843,7 @@ fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>, cwd: &str)
     icon_str(config, key)
 }
 
-/// 按 `dir-classes` 顺序匹配 cwd，返回第一条命中的规则（p10k `DIR_CLASSES`）。
+/// Matches cwd against `dir-classes` in order and returns the first hit (p10k `DIR_CLASSES`).
 fn dir_class_match<'a>(config: &'a Config, cwd: &str) -> Option<&'a crate::config::DirClass> {
     let home = std::env::var("HOME").unwrap_or_default();
     config
@@ -815,9 +852,9 @@ fn dir_class_match<'a>(config: &'a Config, cwd: &str) -> Option<&'a crate::confi
         .find(|c| glob_match_path(&c.pattern, cwd, &home))
 }
 
-/// p10k 的 `DIR_CLASSES` 用 zsh 扩展 glob 匹配 `$PWD`；p11k 用简化 glob：
-/// `~` 展开为 $HOME、`*` / `?` / `[…]` 不跨 `/`、`**` 跨目录，其余字面比较。
-/// 以 `/` 结尾的模式（`~/work/`）额外匹配其下所有子目录。
+/// p10k's `DIR_CLASSES` matches `$PWD` with zsh extended globs; p11k uses a simplified glob:
+/// `~` expands to $HOME, `*` / `?` / `[…]` do not cross `/`, `**` crosses directories, and
+/// everything else is literal. A pattern ending in `/` (`~/work/`) also matches all subdirs.
 fn glob_match_path(pattern: &str, path: &str, home: &str) -> bool {
     let pat = match pattern.strip_prefix('~') {
         Some(rest) => format!("{home}{rest}"),
@@ -829,7 +866,7 @@ fn glob_match_path(pattern: &str, path: &str, home: &str) -> bool {
     glob_match(&pat, path)
 }
 
-/// 简化 glob：`**` 跨 `/`，`*` / `?` / `[…]` 不跨。
+/// Simplified glob: `**` crosses `/`, `*` / `?` / `[…]` do not.
 fn glob_match(pat: &str, text: &str) -> bool {
     fn go(p: &[char], t: &[char]) -> bool {
         match p.first() {
@@ -872,8 +909,8 @@ fn glob_match(pat: &str, text: &str) -> bool {
     go(&p, &t)
 }
 
-/// p10k `DIR_SHOW_WRITABLE` 的取值：`#true`=1、`"v2"`=2、`"v3"`=3（与 p10k 一样，
-/// 只有这几种有效；p11k 额外接受整数写法）。返回 0 表示不检查。
+/// p10k `DIR_SHOW_WRITABLE` values: `#true`=1, `"v2"`=2, `"v3"`=3 (as in p10k only these are
+/// valid; p11k additionally accepts an integer). Returns 0 for no check.
 fn dir_show_writable(seg: &crate::config::Segment) -> i64 {
     match seg.prop("show-writable") {
         Some(crate::config::Prop::Bool(true)) => 1,
@@ -888,8 +925,8 @@ fn dir_show_writable(seg: &crate::config::Segment) -> i64 {
     }
 }
 
-/// 目录不可写（或 v3 下不存在）时返回对应的 state 名，否则 None。
-/// p10k 的判据是 `[[ -w $PWD ]]`，这里用 access(2) 对齐。
+/// Returns the matching state name when the directory is not writable (or missing under v3),
+/// otherwise None. p10k tests `[[ -w $PWD ]]`; access(2) matches that here.
 fn dir_writable_state(seg: &crate::config::Segment, cwd: &str) -> Option<&'static str> {
     let mode = dir_show_writable(seg);
     if mode <= 0 {
@@ -907,8 +944,9 @@ fn dir_writable_state(seg: &crate::config::Segment, cwd: &str) -> Option<&'stati
     }
 }
 
-/// 图标本身就是内容的段：文本为空时也画图标（env 指示段、os 徽标）。
-/// 其余段的图标只是装饰，文本为空时整段隐藏。
+/// Segments whose icon is the content: the icon is drawn even with empty text (env
+/// indicators, os badges). For every other segment the icon is decoration, and empty text
+/// hides the whole segment.
 fn icon_is_content(name: &str) -> bool {
     matches!(
         name,
@@ -927,8 +965,8 @@ thread_local! {
     static OS_ICON: RefCell<Option<IconEntry>> = const { RefCell::new(None) };
 }
 
-/// os 图标:uname 大类 + /etc/os-release ID 匹配发行版(对齐 p10k `_p9k_set_os`),
-/// 按 mode 三档返回。
+/// os icon: uname family + /etc/os-release ID to match the distro (matching p10k
+/// `_p9k_set_os`), returned per font tier by mode.
 fn os_icon(mode: &crate::config::IconMode) -> String {
     OS_ICON.with(|c| {
         let e = *c.borrow_mut().get_or_insert_with(detect_os_icon);
@@ -982,7 +1020,7 @@ fn user_name() -> String {
     env().user
 }
 
-/// context：SSH → `user@host`；本地 root → `user`；本地普通用户 → 空（隐藏）。
+/// context: SSH → `user@host`; local root → `user`; local regular user → empty (hidden).
 fn context_text() -> String {
     let e = env();
     if e.ssh {
@@ -1011,12 +1049,12 @@ fn root_indicator_text() -> String {
     }
 }
 
-/// 读环境变量,缺失或空 → None。
+/// Reads an env var; missing or empty → None.
 fn env_var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
 }
 
-/// 层级段(ranger/nnf/lf/yazi):值为 0 或空 → 空(不在该程序里)。
+/// Level segments (ranger/nnf/lf/yazi): value 0 or empty → empty (not inside that program).
 fn level_text(name: &str) -> String {
     env_var(name).filter(|v| v != "0").unwrap_or_default()
 }
@@ -1032,7 +1070,7 @@ fn env_has_proxy() -> bool {
         .any(|k| env_var(k).is_some())
 }
 
-/// proxy 段:取第一个非空代理的 host:port(去 scheme/user@/路径)。
+/// proxy segment: host:port of the first non-empty proxy (scheme/user@/path stripped).
 fn proxy_text() -> String {
     for key in ["all_proxy", "http_proxy", "https_proxy", "ftp_proxy"]
         .iter()
@@ -1049,14 +1087,14 @@ fn proxy_text() -> String {
     String::new()
 }
 
-/// openfoam 段:p10k 显示 `OF: <版本>`。
+/// openfoam segment: p10k shows `OF: <version>`.
 fn openfoam_text() -> String {
     env_var("WM_PROJECT_VERSION")
         .map(|v| format!("OF: {v}"))
         .unwrap_or_default()
 }
 
-// nix_shell:对齐 p10k,只认 `IN_NIX_SHELL` 的 pure/impure,其它值视为未激活。
+// nix_shell: as in p10k only pure/impure in `IN_NIX_SHELL` count; any other value is inactive.
 fn nix_shell_text() -> String {
     env_var("IN_NIX_SHELL")
         .filter(|v| v == "pure" || v == "impure")
@@ -1067,7 +1105,8 @@ fn in_nix_shell() -> bool {
     env_var("IN_NIX_SHELL").is_some_and(|v| v == "pure" || v == "impure")
 }
 
-// 系统资源段:读 /proc 与 /sys(battery),或执行 `df`。数据源缺失则隐藏。
+// System resource segments: read /proc and /sys (battery), or run `df`; hidden when the data
+// source is missing.
 fn human_bytes(bytes: u64) -> String {
     let mut val = bytes as f64;
     let mut i = 0;
@@ -1083,7 +1122,7 @@ fn human_bytes(bytes: u64) -> String {
     }
 }
 
-/// 读 /proc/meminfo 某字段(KiB)。
+/// Reads one field of /proc/meminfo (KiB).
 fn meminfo_kb(name: &str) -> Option<u64> {
     std::fs::read_to_string("/proc/meminfo")
         .ok()?
@@ -1094,7 +1133,7 @@ fn meminfo_kb(name: &str) -> Option<u64> {
         })
 }
 
-/// 负载:当前系统负载(/proc/loadavg 第一个值)。
+/// Load: current system load (the first value of /proc/loadavg).
 fn load() -> String {
     std::fs::read_to_string("/proc/loadavg")
         .ok()
@@ -1102,14 +1141,14 @@ fn load() -> String {
         .unwrap_or_default()
 }
 
-/// 空闲内存(MemAvailable,人类可读)。
+/// Free memory (MemAvailable, human readable).
 fn ram() -> String {
     meminfo_kb("MemAvailable")
         .map(|kb| human_bytes(kb * 1024))
         .unwrap_or_default()
 }
 
-/// 已用 swap。
+/// Used swap.
 fn swap() -> String {
     let total = meminfo_kb("SwapTotal").unwrap_or(0);
     let free = meminfo_kb("SwapFree").unwrap_or(0);
@@ -1121,7 +1160,7 @@ fn swap() -> String {
     }
 }
 
-/// 当前目录所在分区的已用百分比。
+/// Used percentage of the partition holding the current directory.
 fn disk_usage(cwd: &str) -> String {
     run_cmd("df", &["-P", cwd])
         .and_then(|s| {
@@ -1133,7 +1172,7 @@ fn disk_usage(cwd: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 电池:电量百分比 + 状态(如 `Charging 87%`),无电池文件则隐藏。
+/// Battery: percentage + status (e.g. `Charging 87%`); hidden when no battery file exists.
 fn battery() -> String {
     let bat = std::fs::read_dir("/sys/class/power_supply")
         .ok()
@@ -1166,14 +1205,14 @@ fn current_dir() -> String {
         .unwrap_or_default()
 }
 
-/// AWS 段:当前 profile(env `AWS_PROFILE`/`AWS_DEFAULT_PROFILE`)。
+/// AWS segment: current profile (env `AWS_PROFILE`/`AWS_DEFAULT_PROFILE`).
 fn aws_text() -> String {
     env_var("AWS_PROFILE")
         .or_else(|| env_var("AWS_DEFAULT_PROFILE"))
         .unwrap_or_default()
 }
 
-/// gcloud 段:当前配置名(active_config 文件内容)。
+/// gcloud segment: current configuration name (contents of the active_config file).
 fn gcloud_text() -> String {
     let dir = env_var("CLOUDSDK_CONFIG").unwrap_or_else(|| format!("{}/.config/gcloud", home()));
     std::fs::read_to_string(format!("{dir}/active_config"))
@@ -1182,7 +1221,8 @@ fn gcloud_text() -> String {
         .unwrap_or_default()
 }
 
-/// azure 段:默认订阅名(azureProfile.json 中 `isDefault: true` 的 name)。
+/// azure segment: default subscription name (the name with `isDefault: true` in
+/// azureProfile.json).
 fn azure_text() -> String {
     let dir = env_var("AZURE_CONFIG_DIR").unwrap_or_else(|| format!("{}/.azure", home()));
     let Some(s) = std::fs::read_to_string(format!("{dir}/azureProfile.json")).ok() else {
@@ -1190,7 +1230,7 @@ fn azure_text() -> String {
     };
     let mut rest = s.as_str();
     while let Some(pos) = rest.find("\"isDefault\":") {
-        // `isDefault` 后允许空白,再判断是否为 true。
+        // Whitespace is allowed after `isDefault`, then check for true.
         if rest[pos + "\"isDefault\":".len()..]
             .trim_start()
             .starts_with("true")
@@ -1208,7 +1248,7 @@ fn azure_text() -> String {
     String::new()
 }
 
-/// kubecontext 段:当前 context(读 `$KUBECONFIG` 或 `~/.kube/config`)。
+/// kubecontext segment: current context (from `$KUBECONFIG` or `~/.kube/config`).
 fn kubecontext_text(_cwd: &str) -> String {
     let path = env_var("KUBECONFIG").unwrap_or_else(|| format!("{}/.kube/config", home()));
     std::fs::read_to_string(&path)
@@ -1223,7 +1263,7 @@ fn kubecontext_text(_cwd: &str) -> String {
         .unwrap_or_default()
 }
 
-/// terraform 段:当前 workspace(读 `$TF_DATA_DIR`/`.terraform/environment`)。
+/// terraform segment: current workspace (from `$TF_DATA_DIR`/`.terraform/environment`).
 fn terraform_text(cwd: &str) -> String {
     let dir = env_var("TF_DATA_DIR").unwrap_or_else(|| ".terraform".into());
     std::fs::read_to_string(std::path::Path::new(cwd).join(dir).join("environment"))
@@ -1232,7 +1272,7 @@ fn terraform_text(cwd: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 本机第一个非回环 IPv4(执行 `ip -4 addr show`,跳过 127.0.0.1)。
+/// First non-loopback local IPv4 (`ip -4 addr show`, skipping 127.0.0.1).
 fn ip_text() -> String {
     run_cmd("ip", &["-4", "addr", "show"])
         .unwrap_or_default()
@@ -1243,7 +1283,7 @@ fn ip_text() -> String {
         .to_string()
 }
 
-/// VPN 接口 IP(匹配 tailscale/wg/tun/zt 的 IPv4)。
+/// VPN interface IP (the IPv4 of tailscale/wg/tun/zt).
 fn vpn_ip_text() -> String {
     let out = run_cmd("ip", &["addr", "show"]).unwrap_or_default();
     let mut ifname = String::new();
@@ -1268,13 +1308,13 @@ fn is_vpn_if(name: &str) -> bool {
         .any(|p| name.starts_with(p))
 }
 
-/// WiFi:读 /proc/net/wireless 的接口名 + 信号质量。
+/// WiFi: interface name + link quality from /proc/net/wireless.
 fn wifi_text() -> String {
     std::fs::read_to_string("/proc/net/wireless")
         .ok()
         .and_then(|s| {
             s.lines()
-                .find(|l| l.contains(':')) // 数据行(`接口名: ...`)
+                .find(|l| l.contains(':')) // data line (`iface: ...`)
                 .map(|l| l.to_string())
         })
         .and_then(|l| {
@@ -1287,7 +1327,7 @@ fn wifi_text() -> String {
         .unwrap_or_default()
 }
 
-/// 公网 IP:curl 查询(经 run_cmd 缓存;首次同步,后续直接用缓存)。
+/// Public IP: curl query (cached by run_cmd; synchronous on the first call, cached afterwards).
 fn public_ip_text() -> String {
     run_cmd("curl", &["-s", "--max-time", "4", "https://v4.ident.me/"]).unwrap_or_default()
 }
@@ -1337,7 +1377,7 @@ fn haskell_stack_text() -> String {
         .unwrap_or_default()
 }
 
-/// 从 cwd 祖先找 `filename`,返回其完整内容。
+/// Finds `filename` in the cwd's ancestors and returns its full contents.
 fn find_up_content(cwd: &str, filename: &str) -> Option<String> {
     let mut dir = std::path::Path::new(cwd);
     loop {
@@ -1349,7 +1389,7 @@ fn find_up_content(cwd: &str, filename: &str) -> Option<String> {
     }
 }
 
-/// package 段:package.json 的 `name`/`version`。
+/// package segment: `name`/`version` from package.json.
 fn package_text(cwd: &str) -> String {
     let Some(content) = find_up_content(cwd, "package.json") else {
         return String::new();
@@ -1363,7 +1403,7 @@ fn package_text(cwd: &str) -> String {
     }
 }
 
-/// 从 JSON 字符串里取某字段 `"key": "value"` 的 value。
+/// Extracts the value of a `"key": "value"` field from a JSON string.
 fn json_str_field(content: &str, key: &str) -> Option<String> {
     let pos = content.find(key)?;
     let rest = &content[pos + key.len()..];
@@ -1375,9 +1415,9 @@ fn json_str_field(content: &str, key: &str) -> Option<String> {
     Some(rest.strip_prefix('"')?.split('"').next()?.to_string())
 }
 
-/// vi_mode 段:当前 zsh 编辑模式 → 名称;非 zsh(未上报)为空。
+/// vi_mode segment: current zsh edit mode → name; empty when not zsh (unreported).
 fn vi_mode_text(seg: &Segment) -> String {
-    // 文本可配（p10k `VI_INSERT/COMMAND/VISUAL/OVERWRITE_MODE_STRING`）。
+    // The text is configurable (p10k `VI_INSERT/COMMAND/VISUAL/OVERWRITE_MODE_STRING`).
     let sym = |name: &str, default: &str| -> String {
         match seg.prop(name) {
             Some(crate::config::Prop::Str(s)) => s.clone(),
@@ -1393,23 +1433,23 @@ fn vi_mode_text(seg: &Segment) -> String {
         "viins" => sym("insert", "INSERT"),
         "vis" | "viopp" => sym("visual", "VISUAL"),
         "viowr" => sym("overwrite", "OVERWRITE"),
-        "" | "main" => String::new(), // 未上报或 emacs(main)不显示
+        "" | "main" => String::new(), // unreported or emacs (main): hidden
         other => other.to_string(),
     }
 }
 
-/// asdf 段:.tool-versions 第一个插件版本行(简化,显示首行)。
+/// asdf segment: first plugin version line of .tool-versions (simplified, first line only).
 fn asdf_text(cwd: &str) -> String {
     find_up_version(cwd, ".tool-versions").unwrap_or_default()
 }
 
-/// fvm 段:.fvm/flutter_sdk(或其父目录)检测到 Flutter 版本。
+/// fvm segment: Flutter version detected from .fvm/flutter_sdk (or its parent dir).
 fn fvm_text(cwd: &str) -> String {
     let mut dir = std::path::Path::new(cwd);
     loop {
         let sdk = dir.join(".fvm").join("flutter_sdk");
         if sdk.exists() {
-            // 从版本路径推导(如 …/versions/3.22.0)。
+            // Derived from the version path (e.g. …/versions/3.22.0).
             let real = std::fs::canonicalize(&sdk).unwrap_or(sdk);
             if let Some(v) = real.to_string_lossy().split("/versions/").nth(1) {
                 return v.split('/').next().unwrap_or("").to_string();
@@ -1424,7 +1464,7 @@ fn fvm_text(cwd: &str) -> String {
     String::new()
 }
 
-/// 找 cwd 祖先含 `filename` 的目录。
+/// Finds the cwd ancestor directory containing `filename`.
 fn find_up_dir(cwd: &str, filename: &str) -> Option<String> {
     let mut dir = std::path::Path::new(cwd);
     loop {
@@ -1435,7 +1475,7 @@ fn find_up_dir(cwd: &str, filename: &str) -> Option<String> {
     }
 }
 
-/// GCP 服务账号 JSON 的 project_id。
+/// project_id of the GCP service account JSON.
 fn google_app_cred_text() -> String {
     let Some(path) = env_var("GOOGLE_APPLICATION_CREDENTIALS") else {
         return String::new();
@@ -1446,7 +1486,7 @@ fn google_app_cred_text() -> String {
     json_str_field(&content, "\"project_id\"").unwrap_or_default()
 }
 
-/// Elastic Beanstalk 环境名(eb list 中带 `* ` 的当前环境行)。
+/// Elastic Beanstalk environment name (the `* `-prefixed current line of eb list).
 fn aws_eb_env_text() -> String {
     run_cmd("eb", &["list"])
         .unwrap_or_default()
@@ -1456,7 +1496,7 @@ fn aws_eb_env_text() -> String {
         .unwrap_or_default()
 }
 
-/// Laravel 版本:祖先含 artisan 时执行 `php artisan --version`。
+/// Laravel version: runs `php artisan --version` when an ancestor contains artisan.
 fn laravel_version_text(cwd: &str) -> String {
     let Some(dir) = find_up_dir(cwd, "artisan") else {
         return String::new();
@@ -1481,7 +1521,7 @@ fn count_rs(dir: &std::path::Path) -> usize {
     n
 }
 
-/// RSpec 完成度:app 与 spec 里 .rb 的比例。
+/// RSpec coverage: ratio of .rb files in app to those in spec.
 fn rspec_stats_text(cwd: &str) -> String {
     let app = count_rs(&std::path::Path::new(cwd).join("app"));
     let spec = count_rs(&std::path::Path::new(cwd).join("spec"));
@@ -1508,7 +1548,8 @@ fn dropbox_text() -> String {
         .unwrap_or_default()
 }
 
-/// date 段：按 `date-format`(strftime)格式化当前日期，默认对齐 p10k `%d.%m.%y`。
+/// date segment: formats the current date per `date-format` (strftime), defaulting to p10k's
+/// `%d.%m.%y`.
 fn date_text(seg: &crate::config::Segment) -> String {
     let fmt = match seg.prop("date-format") {
         Some(crate::config::Prop::Str(s)) => s.as_str(),
@@ -1541,7 +1582,8 @@ fn strftime_now(fmt: &str) -> String {
     }
 }
 
-// 工具链版本段:执行 `cmd --version` 缓存输出并解析版本号,有命令才显示。
+// Toolchain version segments: run `cmd --version`, cache the output and parse the version;
+// shown only when the command exists.
 thread_local! {
     static CMD_CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
 }
@@ -1558,7 +1600,8 @@ fn run_cmd(cmd: &str, args: &[&str]) -> Option<String> {
             .ok()
             .filter(|o| o.status.success())
             .map(|o| {
-                // 部分命令(如 java)把版本信息写到 stderr,stdout 为空时回退。
+                // Some commands (e.g. java) write the version to stderr; fall back when stdout
+                // is empty.
                 let s = String::from_utf8_lossy(&o.stdout);
                 if s.trim().is_empty() {
                     String::from_utf8_lossy(&o.stderr).trim().to_string()
@@ -1609,7 +1652,7 @@ fn php_version() -> String {
 }
 
 fn java_version() -> String {
-    // '"17.0.9" ...' → "17.0.9"(截到首个 `-`)
+    // '"17.0.9" ...' → "17.0.9" (cut at the first `-`)
     run_cmd("java", &["-fullversion"])
         .and_then(|s| {
             let s = s.split('"').nth(1)?;
@@ -1623,7 +1666,7 @@ fn dotnet_version() -> String {
 }
 
 fn swift_version() -> String {
-    // "Apple Swift version 5.9 (…)" → 取首个数字开头词
+    // "Apple Swift version 5.9 (…)" → take the first word starting with a digit
     run_cmd("swift", &["--version"])
         .and_then(|s| {
             Some(
@@ -1642,7 +1685,7 @@ fn swift_version() -> String {
 }
 
 fn terraform_version() -> String {
-    // "Terraform v1.15.9\non linux_amd64…" → "1.15.9"(只取首行)
+    // "Terraform v1.15.9\non linux_amd64…" → "1.15.9" (first line only)
     run_cmd("terraform", &["--version"])
         .and_then(|s| {
             Some(
@@ -1663,14 +1706,14 @@ fn cpu_arch() -> String {
         .unwrap_or_default()
 }
 
-// 环境管理器/*env 家族段:从环境变量或 cwd 祖先的 `.X-version` 文件取当前版本,
-// 激活才显示。
+// Environment manager and *env family segments: current version from an env var or an
+// ancestor `.X-version` file; shown only when active.
 
 fn basename(p: &str) -> String {
     p.rsplit('/').next().unwrap_or(p).to_string()
 }
 
-/// 从 cwd 祖先目录找 `filename`,返回其首个非空行(版本文件)。
+/// Finds `filename` in cwd ancestors and returns its first non-empty line (version file).
 fn find_up_version(cwd: &str, filename: &str) -> Option<String> {
     let mut dir = std::path::Path::new(cwd);
     loop {
@@ -1702,8 +1745,8 @@ fn anaconda_text(_cwd: &str) -> String {
         .unwrap_or_default()
 }
 
-/// p10k `prompt_symfony2_version`：读 `app/bootstrap.php.cache` 里带 ` VERSION `
-/// 的那行，只留数字和点。
+/// p10k `prompt_symfony2_version`: reads the `app/bootstrap.php.cache` line containing
+/// ` VERSION ` and keeps digits and dots only.
 fn symfony2_version_text(cwd: &str) -> String {
     let path = std::path::Path::new(cwd).join("app/bootstrap.php.cache");
     let Ok(src) = std::fs::read_to_string(&path) else {
@@ -1721,9 +1764,9 @@ fn symfony2_version_text(cwd: &str) -> String {
     String::new()
 }
 
-/// p10k `prompt_symfony2_tests`：`src` 与 `app` + `app/AppKernel.php` 存在时，
-/// 统计 `src/**/*.php` 里带 `Tests` 的占比（p10k 的 SF2 测试比例）。
-/// 返回 (比例百分比, 文本)，比例带两位小数、文本形如 `SF2: 12.34%`。
+/// p10k `prompt_symfony2_tests`: when `src`, `app` and `app/AppKernel.php` exist, computes
+/// the share of `src/**/*.php` paths containing `Tests` (p10k's SF2 test ratio).
+/// Returns the ratio as text with two decimals, shaped like `SF2: 12.34%`.
 fn symfony2_tests_text(cwd: &str) -> String {
     let root = std::path::Path::new(cwd);
     if !root.join("src").is_dir()
@@ -1779,7 +1822,7 @@ fn nodenv_text(cwd: &str) -> String {
 }
 
 fn nvm_text(_cwd: &str) -> String {
-    // 简化:NVM_DIR 存在即显示当前 node 版本。
+    // Simplified: an existing NVM_DIR is enough to show the current node version.
     env_var("NVM_DIR")
         .map(|_| node_version())
         .unwrap_or_default()
@@ -1840,10 +1883,11 @@ fn detect_os_icon() -> IconEntry {
         return match uname {
             "macos" => icon("\u{f179}", "OSX", "mac"),   // 
             "windows" => icon("\u{f17a}", "WIN", "win"), // 
-            _ => icon("\u{f17c}", "Lx", "linux"),        // 默认 linux 图标
+            _ => icon("\u{f17c}", "Lx", "linux"),        // default linux icon
         };
     }
-    // Linux:读 /etc/os-release 的 ID(子串匹配,对齐 p10k case *arch* 等)。
+    // Linux: read the ID from /etc/os-release (substring match, matching p10k case *arch*
+    // etc.).
     let id = std::fs::read_to_string("/etc/os-release")
         .ok()
         .and_then(|s| {
@@ -1855,7 +1899,7 @@ fn detect_os_icon() -> IconEntry {
             })
         })
         .unwrap_or_default();
-    // 三档文本缩写对齐 p10k compatible/ascii 分支。
+    // The three-tier text abbreviations match p10k's compatible/ascii branches.
     if id.contains("arch") {
         icon("\u{f303}", "Arc", "arch")
     } else if id.contains("ubuntu") {
@@ -1885,7 +1929,8 @@ fn detect_os_icon() -> IconEntry {
     }
 }
 
-/// `time` 段文本:读 `time-format` 属性,`"12h"` → `HH:MM:SS AM/PM`,缺省 24h。
+/// `time` segment text: reads the `time-format` prop; `"12h"` → `HH:MM:SS AM/PM`, 24h by
+/// default.
 fn time_text(seg: &crate::config::Segment) -> String {
     match seg.prop("time-format") {
         Some(crate::config::Prop::Str(s)) if s == "12h" => now_hhmmss_12h(),
@@ -1893,13 +1938,13 @@ fn time_text(seg: &crate::config::Segment) -> String {
     }
 }
 
-/// 当前时间 HH:MM:SS(libc localtime)。
+/// Current time HH:MM:SS (libc localtime).
 fn now_hhmmss() -> String {
     let tm = local_time();
     format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
-/// 12 小时制 `HH:MM:SS AM/PM`(对齐 p10k `%I:%M:%S %p`,01–12 计时)。
+/// 12-hour `HH:MM:SS AM/PM` (matching p10k `%I:%M:%S %p`, hours 01–12).
 fn now_hhmmss_12h() -> String {
     let tm = local_time();
     let hour12 = tm.tm_hour % 12;
@@ -1915,10 +1960,10 @@ fn local_time() -> libc::tm {
     tm
 }
 
-/// 命令时长格式（对齐 p10k `prompt_command_execution_time`）：
-/// - `<60s`：`precision` 为 0 → 四舍五入整数 `Ns`；>0 → `N.NNs`（p10k 默认 2）。
-/// - `>=60s`：`Xs` / `Xm Ys` / `Xh Ym Zs` / `Xd Xh Ym Zs`（**带空格**，同 p10k）；
-///   `format` 为 `H:M:S` 时改用 `MM:SS` / `0H:MM:SS` / `H:MM:SS`。
+/// Command duration formatting (matching p10k `prompt_command_execution_time`):
+/// - `<60s`: `precision` 0 → rounded integer `Ns`; >0 → `N.NNs` (p10k default 2).
+/// - `>=60s`: `Xs` / `Xm Ys` / `Xh Ym Zs` / `Xd Xh Ym Zs` (**with spaces**, as in p10k);
+///   with `format` set to `H:M:S` instead `MM:SS` / `0H:MM:SS` / `H:MM:SS`.
 fn format_duration(secs: f64, precision: usize, hms: bool) -> String {
     if secs < 60.0 {
         if precision == 0 {
@@ -1953,10 +1998,10 @@ fn format_duration(secs: f64, precision: usize, hms: bool) -> String {
     }
 }
 
-/// `dir` 段文本:折叠(truncate_to_unique)+ 逐部件按类别上色。
-/// - 锚(`~`/当前目录/marker 祖先):`ANCHOR` state
-/// - 缩短: `SHORTENED` state
-/// - 普通:段默认;`/` 分隔符本色(不随部件)。
+/// `dir` segment text: shortening (truncate_to_unique) plus per-component coloring by class.
+/// - Anchor (`~`/current dir/marker ancestor): `ANCHOR` state
+/// - Shortened: `SHORTENED` state
+/// - Normal: segment default; the `/` separator keeps its own color (not the component's).
 fn dir_seg_text(
     config: &Config,
     info: &HeaderInfo,
@@ -1969,8 +2014,8 @@ fn dir_seg_text(
     let home = std::env::var("HOME").ok();
     let home = home.as_deref().map(std::path::Path::new);
     let bool_prop = |name: &str| matches!(seg.prop(name), Some(crate::config::Prop::Bool(true)));
-    // p10k `DIR_PATH_ABSOLUTE`：不看 $HOME，直接显示绝对路径；相应地拆分时也
-    // 不能用 home 当前缀（否则无法还原完整路径）。
+    // p10k `DIR_PATH_ABSOLUTE`: ignore $HOME and show the absolute path; accordingly, home
+    // cannot be used as a prefix when splitting, or the full path could not be reconstructed.
     let absolute = bool_prop("path-absolute");
     let parts = crate::dir_shorten::shorten(
         cwd,
@@ -1979,21 +2024,23 @@ fn dir_seg_text(
     );
     let mut s = String::new();
     let is_home = !absolute && home.map(|h| cwd.starts_with(h)).unwrap_or(false);
-    // p10k `DIR_OMIT_FIRST_CHARACTER`：绝对路径省掉开头那个 `/`（cwd=`/` 时仍显示 `/`）。
+    // p10k `DIR_OMIT_FIRST_CHARACTER`: drop the leading `/` of an absolute path (still `/`
+    // when cwd=`/`).
     let omit_first = bool_prop("omit-first-character");
-    // home 前缀缩写（p10k `HOME_FOLDER_ABBREVIATION`，缺省 `~`）。
+    // Home prefix abbreviation (p10k `HOME_FOLDER_ABBREVIATION`, default `~`).
     let abbrev = match seg.prop("home-abbreviation") {
         Some(crate::config::Prop::Str(a)) => a.clone(),
         _ => "~".to_string(),
     };
-    // 路径分隔符自己的颜色（p10k `DIR_PATH_SEPARATOR_FOREGROUND`），缺省段样式。
+    // The path separator's own color (p10k `DIR_PATH_SEPARATOR_FOREGROUND`), segment style by
+    // default.
     let sep_style = prop_style(seg, default, "path-separator-foreground");
-    // p10k `DIR_SHOW_WRITABLE`：不可写/不存在时整段的 state 换成
-    // NOT_WRITABLE / NON_EXISTENT（用户可在 `state` 里给这两个上色）。
+    // p10k `DIR_SHOW_WRITABLE`: when not writable / non-existent the whole segment's state
+    // becomes NOT_WRITABLE / NON_EXISTENT (users can color both via `state`).
     let writable_state = dir_writable_state(seg, &info.cwd);
     let is_root = info.cwd == "/";
     if is_root {
-        // 根目录没有部件，p10k 此时显示的就是一个 `/`。
+        // The root directory has no components; p10k shows a single `/` here.
         s.push_str(&paint("/", &sep_style));
     } else if is_home {
         let st = seg.effective_style(Some("ANCHOR"), &config.defaults);
@@ -2002,24 +2049,26 @@ fn dir_seg_text(
             s.push_str(&paint("/", &sep_style));
         }
     } else if !parts.is_empty() && (!omit_first || is_root) {
-        // 绝对路径起始 `/`。
+        // Leading `/` of an absolute path.
         s.push_str(&paint("/", &sep_style));
     }
-    // p10k `DIR_PATH_HIGHLIGHT_{FOREGROUND,BOLD}`：末级组件（当前目录）单独配色。
+    // p10k `DIR_PATH_HIGHLIGHT_{FOREGROUND,BOLD}`: the last component (the current directory)
+    // is colored on its own.
     let highlight_bold = bool_prop("path-highlight-bold");
     let last = parts.len().saturating_sub(1);
     for (i, part) in parts.iter().enumerate() {
         if i > 0 {
-            s.push_str(&paint("/", &sep_style)); // 分隔符
+            s.push_str(&paint("/", &sep_style)); // separator
         }
         let state = match part.class {
             crate::dir_shorten::Class::Anchor => Some("ANCHOR"),
             crate::dir_shorten::Class::Shortened => Some("SHORTENED"),
             crate::dir_shorten::Class::Normal => None,
         };
-        // 不可写/不存在优先于 ANCHOR/SHORTENED（p10k 也是先定 state 再取色）；
-        // 配了 `dir-classes` 时先套上命中类的 state 名，再拼不可写后缀
-        // （p10k：WORK → WORK_NOT_WRITABLE / WORK_NON_EXISTENT）。
+        // Not-writable/non-existent takes precedence over ANCHOR/SHORTENED (p10k also fixes
+        // the state before picking a color); with `dir-classes` the matched class state name is
+        // applied first and the not-writable suffix appended
+        // (p10k: WORK → WORK_NOT_WRITABLE / WORK_NON_EXISTENT).
         let mut st = match writable_state {
             Some(s) => {
                 let named = dir_class_match(config, &info.cwd)
@@ -2048,7 +2097,7 @@ fn dir_seg_text(
     } else {
         s
     };
-    // p10k `DIR_HYPERLINK`：把目录包成 OSC 8 超链接（仅绝对路径）。
+    // p10k `DIR_HYPERLINK`: wrap the directory in an OSC 8 hyperlink (absolute paths only).
     if bool_prop("hyperlink") && info.cwd.starts_with('/') {
         format!(
             "\u{1b}]8;;file://{}\u{7}{}\u{1b}]8;;\u{7}",
@@ -2060,7 +2109,7 @@ fn dir_seg_text(
     }
 }
 
-/// p10k `_p9k_url_escape`：`[a-zA-Z0-9"/:_.-!'()~]` 之外按 `%XX` 转义。
+/// p10k `_p9k_url_escape`: everything outside `[a-zA-Z0-9"/:_.-!'()~]` is escaped as `%XX`.
 fn url_escape(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -2078,7 +2127,7 @@ fn url_escape(s: &str) -> String {
     out
 }
 
-/// 读 dir 段的 `shorten-dir-length`(保留末 N 级,默认 1=p10k)。
+/// Reads the dir segment's `shorten-dir-length` (keep the last N levels, default 1 as in p10k).
 fn shorten_len(seg: &crate::config::Segment) -> usize {
     if let Some(crate::config::Prop::Int(n)) = seg.prop("shorten-dir-length") {
         (*n).clamp(1, 20) as usize
@@ -2087,8 +2136,8 @@ fn shorten_len(seg: &crate::config::Segment) -> usize {
     }
 }
 
-/// dir 段的折叠选项:`shorten-strategy` / `shorten-delimiter` /
-/// `shorten-folder-marker`(对齐 p10k 的 `SHORTEN_*`)。
+/// dir segment shortening options: `shorten-strategy` / `shorten-delimiter` /
+/// `shorten-folder-marker` (matching p10k's `SHORTEN_*`).
 fn dir_shorten_opts(
     seg: &crate::config::Segment,
     length: usize,
@@ -2103,15 +2152,15 @@ fn dir_shorten_opts(
     crate::dir_shorten::Opts {
         strategy: crate::dir_shorten::Strategy::parse(&str_prop("shorten-strategy", "")),
         length,
-        // p10k 引擎的缺省省略符是 `…`；`truncate_to_unique` 不输出它
-        // （与 p10k 默认配置的 `SHORTEN_DELIMITER=` 一致）。
+        // The p10k engine's default ellipsis is `…`; `truncate_to_unique` does not emit it
+        // (consistent with `SHORTEN_DELIMITER=` in p10k's default config).
         delimiter: str_prop("shorten-delimiter", "\u{2026}"),
         marker: str_prop("shorten-folder-marker", ""),
         budget,
     }
 }
 
-/// 展开环境变量:`${VAR}` 或 `$VAR` → 环境变量值;未定义 → 空串。
+/// Expands env vars: `${VAR}` or `$VAR` → the value; undefined → empty string.
 fn expand_env(s: &str) -> String {
     let b: Vec<char> = s.chars().collect();
     let mut out = String::new();
@@ -2142,7 +2191,7 @@ fn expand_env(s: &str) -> String {
     out
 }
 
-/// 段上一个"前景色"行为属性 → 样式（缺省沿用段样式）。
+/// A foreground-color style prop on a segment → style (segment style by default).
 fn prop_style(seg: &Segment, style: &Style, prop: &str) -> Style {
     match seg.prop(prop) {
         Some(crate::config::Prop::Int(n)) => Style {
@@ -2153,10 +2202,10 @@ fn prop_style(seg: &Segment, style: &Style, prop: &str) -> Style {
     }
 }
 
-/// vcs 段文本。按 p10k 的配色分段上色：分支名/分支图标/ahead/behind/stash 用
-/// `clean-foreground`，staged/unstaged 计数用 `modified-foreground`，冲突计数用
-/// `conflicted-foreground`（缺省回退 modified），未跟踪用 `untracked-foreground`
-/// （缺省回退段样式）。返回的字符串已上色。
+/// vcs segment text, colored piecewise as p10k does: branch name/branch icon/ahead/behind/
+/// stash use `clean-foreground`, staged/unstaged counts use `modified-foreground`, the
+/// conflict count uses `conflicted-foreground` (falling back to modified), untracked uses
+/// `untracked-foreground` (falling back to the segment style). The returned string is colored.
 fn vcs_text(
     vcs: Option<&GitStatus>,
     branch_icon: &str,
@@ -2169,12 +2218,13 @@ fn vcs_text(
     let modified = prop_style(seg, style, "modified-foreground");
     let conflicted = prop_style(seg, &modified, "conflicted-foreground");
     let untracked = prop_style(seg, style, "untracked-foreground");
-    // p10k 的 `meta`（%246F 灰）：`@hash` 的 `@`、`#tag` 的 `#`、远端分支名。
+    // p10k's `meta` (%246F gray): the `@` of `@hash`, the `#` of `#tag`, and the remote branch
+    // name.
     let meta = prop_style(seg, style, "meta-foreground");
     let mut s = String::new();
-    // p10k `SHOW_CHANGESET`：显式开启、或没有本地分支（detached HEAD）时，
-    // 显示 commit 的前 `changeset-hash-length` 位（默认 8）。
-    // p10k 的 `SHOW_CHANGESET`（显式开启、走分段路径时）画 `图标 + hash`。
+    // p10k `SHOW_CHANGESET`: when explicitly enabled, or when there is no local branch
+    // (detached HEAD), show the first `changeset-hash-length` chars of the commit (default 8).
+    // p10k's `SHOW_CHANGESET` (explicitly enabled, on the piecewise path) draws `icon + hash`.
     let show_changeset = matches!(
         seg.prop("show-changeset"),
         Some(crate::config::Prop::Bool(true))
@@ -2207,23 +2257,24 @@ fn vcs_text(
         b.push_str(&shorten_branch(&v.branch, seg));
         s.push_str(&paint(&b, &clean));
     } else if !v.tag.is_empty() {
-        // p10k:`${meta}#${clean}${tag}`,标签名与分支名同样 >32 折叠。
+        // p10k: `${meta}#${clean}${tag}`; tag names over 32 chars shorten like branch names.
         s.push_str(&paint("#", &meta));
         s.push_str(&paint(&shorten_branch(&v.tag, seg), &clean));
     } else if !v.commit.is_empty() {
-        // p10k:`${meta}@${clean}${VCS_STATUS_COMMIT[1,8]}`(detached HEAD)。
+        // p10k: `${meta}@${clean}${VCS_STATUS_COMMIT[1,8]}` (detached HEAD).
         let hash: String = v.commit.chars().take(hash_len).collect();
         s.push_str(&paint("@", &meta));
         s.push_str(&paint(&hash, &clean));
     }
     // p10k:`if [[ -n ${VCS_STATUS_REMOTE_BRANCH:#$VCS_STATUS_LOCAL_BRANCH} ]]`
-    // → `${meta}:${clean}${remote_branch}`,紧跟在分支名后面(不加空格)。
+    // → `${meta}:${clean}${remote_branch}`, directly after the branch name (no space).
     if !v.remote_branch.is_empty() && v.remote_branch != v.branch {
         s.push_str(&paint(":", &meta));
         s.push_str(&paint(&v.remote_branch, &clean));
     }
-    // 计数符号可被 props 覆盖（p10k 里这些字符写死在 config 的格式化函数里，
-    // 这里给出来让用户不用改引擎就能换）。
+    // Count symbols can be overridden via props (in p10k these chars are hardcoded in the
+    // config's formatting functions; exposing them lets users swap them without touching the
+    // engine).
     let sym = |name: &str, default: &str| -> String {
         match seg.prop(name) {
             Some(crate::config::Prop::Str(s)) => s.clone(),
@@ -2231,11 +2282,11 @@ fn vcs_text(
         }
     };
     let mut parts: Vec<(String, &Style)> = Vec::new();
-    // 顺序与符号均对齐 p10k 生成配置里的 vcs 格式化函数:
+    // Order and symbols match the vcs formatting function in p10k's generated config:
     //   wip → ⇣behind⇡ahead → ⇠push_behind⇢push_ahead → *stashes → <action>
     //   → ~conflicted → +staged → !unstaged → ?untracked → ─
-    // ahead/behind(以及 push 的那对)之间不加空格(p10k 是 `⇣42⇡42`)。
-    // p10k:提交标题里出现独立单词 wip/WIP 时插一个 `wip`(modified 色)。
+    // No space between ahead/behind, nor between the push pair (p10k has `⇣42⇡42`).
+    // p10k: a standalone word wip/WIP in the commit summary inserts a `wip` (modified color).
     if has_wip_word(&v.commit_summary) {
         parts.push(("wip".to_string(), &modified));
     }
@@ -2249,7 +2300,7 @@ fn vcs_text(
         }
         parts.push((ab, &clean));
     }
-    // p10k:`${clean}⇠N` / `${clean}⇢N`(push remote 的落后/领先)。
+    // p10k: `${clean}⇠N` / `${clean}⇢N` (behind/ahead of the push remote).
     if v.push_ahead > 0 || v.push_behind > 0 {
         let mut pb = String::new();
         if v.push_behind > 0 {
@@ -2271,8 +2322,9 @@ fn vcs_text(
     if v.stashes > 0 {
         parts.push((format!("{}{}", sym("stash-symbol", "*"), v.stashes), &clean));
     }
-    // p10k:`[[ -n $VCS_STATUS_ACTION ]] && res+=" ${conflicted}${VCS_STATUS_ACTION}"`
-    // —— merge/rebase 之类的进行中操作按 conflicted 色画在冲突计数之前。
+    // p10k: `[[ -n $VCS_STATUS_ACTION ]] && res+=" ${conflicted}${VCS_STATUS_ACTION}"`
+    // — an in-progress operation such as merge/rebase is drawn in the conflicted color before
+    // the conflict count.
     if !v.action.is_empty() {
         parts.push((v.action.clone(), &conflicted));
     }
@@ -2300,9 +2352,10 @@ fn vcs_text(
             &untracked,
         ));
     }
-    // p10k:`(( VCS_STATUS_HAS_UNSTAGED == -1 )) && res+=" ${modified}─"`：
-    // 配了 `max-index-size-dirty` 且索引比它大 → dirty 扫描被跳过,unstaged 数
-    // 未知(gitstatus 插件就是在客户端按这条规则把 HAS_UNSTAGED 置 -1 的)。
+    // p10k: `(( VCS_STATUS_HAS_UNSTAGED == -1 )) && res+=" ${modified}─"`:
+    // with `max-index-size-dirty` set and the index larger than it the dirty scan is skipped
+    // and the unstaged count is unknown (this is the rule the gitstatus plugin uses to set
+    // HAS_UNSTAGED to -1).
     let dirty_cap = match seg.prop("max-index-size-dirty") {
         Some(crate::config::Prop::Int(n)) => Some(*n),
         _ => None,
@@ -2314,8 +2367,9 @@ fn vcs_text(
         parts.push(("─".to_string(), &modified));
     }
     if !parts.is_empty() {
-        // 空格用段样式上色：裸空格会被终端按默认背景画，在带底色的段里
-        // （classic 等）会露出一条黑缝。
+        // Spaces are colored with the segment style: a bare space is drawn with the terminal
+        // default background and would show a black seam in a backgrounded segment (classic
+        // etc.).
         let sep = paint(" ", style);
         s.push_str(&sep);
         let joined: Vec<String> = parts.iter().map(|(t, st)| paint(t, st)).collect();
@@ -2324,8 +2378,8 @@ fn vcs_text(
     s
 }
 
-/// p10k 的 `[[ $VCS_STATUS_COMMIT_SUMMARY == (|*[^[:alnum:]])(wip|WIP)(|[^[:alnum:]]*) ]]`：
-/// 提交标题里出现被非字母数字（或串首尾）界定的 `wip` / `WIP`。
+/// p10k's `[[ $VCS_STATUS_COMMIT_SUMMARY == (|*[^[:alnum:]])(wip|WIP)(|[^[:alnum:]]*) ]]`:
+/// `wip` / `WIP` in the commit summary delimited by non-alphanumerics (or the string ends).
 fn has_wip_word(summary: &str) -> bool {
     let bytes: Vec<char> = summary.chars().collect();
     let is_word = |c: char| c.is_alphanumeric();
@@ -2344,9 +2398,10 @@ fn has_wip_word(summary: &str) -> bool {
     false
 }
 
-/// 分支名折叠（p10k `VCS_SHORTEN_*`）：`shorten-length` 与 `shorten-min-length`
-/// 都配了、且名字长于两者时才折叠；`shorten-strategy` 取 `truncate_middle`
-/// （前 N + 省略符 + 后 N）或 `truncate_from_right`（前 N + 省略符，默认）。
+/// Branch name shortening (p10k `VCS_SHORTEN_*`): only when both `shorten-length` and
+/// `shorten-min-length` are set and the name is longer than both; `shorten-strategy` picks
+/// `truncate_middle` (first N + ellipsis + last N) or `truncate_from_right` (first N +
+/// ellipsis, default).
 fn shorten_branch(branch: &str, seg: &Segment) -> String {
     let num = |name: &str| -> Option<usize> {
         match seg.prop(name) {
@@ -2378,9 +2433,10 @@ fn shorten_branch(branch: &str, seg: &Segment) -> String {
     }
 }
 
-/// 退出码状态。OK/ERROR 图标字符由调用方从图标名 `ok`/`error` 解析传入
-/// (用户可在顶层 `icon{}` 覆盖)；颜色取 `ok-foreground`/`error-foreground`。
-/// `verbose #false` 时成功不显示（对齐 p10k 的 `STATUS_OK`）。
+/// Exit code status. The OK/ERROR icon chars are passed in by the caller, resolved from the
+/// `ok`/`error` icon names (users can override them in the top-level `icon{}`); colors come
+/// from `ok-foreground`/`error-foreground`. With `verbose #false` success is not shown
+/// (matching p10k's `STATUS_OK`).
 fn status_text(info: &HeaderInfo, ok: &str, err: &str, seg: &Segment, style: &Style) -> String {
     match info.exit_code {
         None => String::new(),
@@ -2407,7 +2463,8 @@ fn value_of(content: Option<&str>, default: impl Into<String>) -> String {
     content.map(String::from).unwrap_or(default.into())
 }
 
-/// 把一行拼成 ANSI:左段串(段间 `sub`/`segment` 分隔、末段 `end` 端符)+ 右段右对齐。
+/// Assembles one line as ANSI: left segments (joined by `sub`/`segment`, closed by `end`) +
+/// right-aligned right segments.
 fn assemble_row(
     left: &[SegmentText],
     right: &[SegmentText],
@@ -2416,7 +2473,8 @@ fn assemble_row(
     right_indent: usize,
 ) -> String {
     let mut out = String::new();
-    // 左栏首段起始端符(左三角,画在最左段之前)。
+    // Start cap of the left column's first segment (left triangle, drawn before the leftmost
+    // segment).
     if !seps.left_tail.is_empty()
         && let Some(first) = left.iter().find(|s| !s.text.is_empty())
         && first.style.bg != Color::Default
@@ -2434,9 +2492,10 @@ fn assemble_row(
         if s.text.is_empty() {
             continue;
         }
-        // 段间分隔(p10k 决策):前段有背景 → 画分隔符(同底 → sub,异色/当前无底 → segment);
-        // 前段无背景 → 空格。段自带段尾空白(见 render_segment 的 padding),
-        // 已有空白时不再补,避免双空格(p10k 无背景段之间就是一个空格)。
+        // Inter-segment separation (p10k's rule): previous segment has a background → draw a
+        // separator (same bg → sub, different color / current has none → segment); previous
+        // has none → a space. Segments carry their trailing padding (see render_segment), so no
+        // extra space is added, avoiding doubles (p10k uses one space between them).
         if has_left {
             let prev_has = prev_bg != Color::Default;
             if prev_has {
@@ -2444,8 +2503,8 @@ fn assemble_row(
                 let ch = if same { &seps.sub } else { &seps.segment };
                 if !ch.is_empty() {
                     if same {
-                        // 同底细线：配了 `sub-foreground` 就用它（p10k 的
-                        // sep_color，统一灰），否则沿用后段前景色。
+                        // Same-background fine line: use `sub-foreground` when set (p10k's
+                        // sep_color, a uniform gray), otherwise the next segment's foreground.
                         let st = match &seps.sub_foreground {
                             Some(fg) => Style {
                                 fg: fg.clone(),
@@ -2464,19 +2523,20 @@ fn assemble_row(
                 out.push(' ');
             }
         }
-        out.push_str(&s.text); // text 已上色,不再二次上色
+        out.push_str(&s.text); // text is already colored, do not recolor
         prev_bg = s.style.bg.clone();
         prev_padded = s.padded;
         has_left = true;
     }
-    // 左栏末尾端符(最后一段后,用它自己的背景指向行尾)。
+    // End cap of the left column (after the last segment, its own background pointing to the
+    // line end).
     if has_left && !seps.end.is_empty() && prev_bg != Color::Default {
         out.push_str(&arrow(&seps.end, prev_bg.clone(), Color::Default));
     }
     let mut right_str = String::new();
     let parts: Vec<&SegmentText> = right.iter().filter(|s| !s.text.is_empty()).collect();
     if !parts.is_empty() {
-        // 右段行首端符(左三角 ):前景=右段**背景色**(指向右段);画在 gap 上。
+        // Start cap of the right column (left triangle ): foreground = the right segment's **background** color (pointing at it); drawn over the gap.
         if !seps.right_start.is_empty() {
             right_str.push_str(&arrow(
                 &seps.right_start,
@@ -2486,9 +2546,11 @@ fn assemble_row(
         }
         for (i, s) in parts.iter().enumerate() {
             if i > 0 {
-                // 右段间分隔:同色 → right_sub(段前景画在段背景),异色 → right_segment
-                // (左三角,前景(三角块)=当前段(右)背景色,背景=前段(左)背景色;
-                // 与左段 ``(fg=前段bg、bg=当前段bg)镜像)。
+                // Inter-segment separation on the right: same color → right_sub (the segment
+                // foreground drawn on the segment background), different → right_segment
+                // (left triangle, foreground (the triangle block) = the current (right)
+                // segment's bg, background = the previous (left) segment's bg;
+                // mirroring the left segment `` (fg = previous bg, bg = current bg)).
                 let prev_bg = parts[i - 1].style.bg.clone();
                 if prev_bg != Color::Default {
                     let same = s.style.bg != Color::Default && s.style.bg == prev_bg;
@@ -2514,7 +2576,8 @@ fn assemble_row(
             }
             right_str.push_str(&s.text);
         }
-        // 右栏末段结束端符(右三角,画在最右段之后)。
+        // Closing cap of the right column's last segment (right triangle, drawn after the
+        // rightmost segment).
         if !seps.right_tail.is_empty()
             && let Some(last) = parts.last()
             && last.style.bg != Color::Default
@@ -2527,18 +2590,19 @@ fn assemble_row(
         }
         let lw = display_width(&out);
         let rw = display_width(&right_str);
-        // 右对齐:gap 字符填满左段到右段起点之间。右段距右边界留 `right_indent`
-        // 列——zsh 的 `ZLE_RPROMPT_INDENT` 默认 1，p10k 的右栏因此与窗口边界之间
-        // 永远隔一格；贴边画会让右栏比 p10k 早一列"放得下"，也会顶到最后一格
-        // （很多终端在最后一列会触发自动换行）。
+        // Right alignment: gap chars fill the span from the left segments to the right
+        // column's start. The right column keeps `right_indent` columns from the right edge—
+        // zsh's `ZLE_RPROMPT_INDENT` defaults to 1, so p10k's right column always has one cell
+        // before the window border; drawing flush would make it "fit" one column earlier than
+        // p10k and reach the last cell (many terminals wrap there).
         let edge = cols.saturating_sub(right_indent);
         if edge > rw {
-            let start = edge - rw; // 右段起点(0-based)
+            let start = edge - rw; // right column start (0-based)
             if start > lw {
                 let gap_char = if seps.gap.is_empty() { " " } else { &seps.gap };
                 let gap_str = gap_char.repeat(start - lw);
-                // gap 前景色(p10k MULTILINE_FIRST_PROMPT_GAP_FOREGROUND);
-                // 未配则原样输出(终端默认色)。
+                // gap foreground (p10k MULTILINE_FIRST_PROMPT_GAP_FOREGROUND);
+                // unset → emitted as-is (terminal default color).
                 match &seps.gap_foreground {
                     Some(fg) => out.push_str(&paint(
                         &gap_str,
@@ -2556,7 +2620,8 @@ fn assemble_row(
     out
 }
 
-/// 画一个分隔符箭头:`fg` 为它的前景色(连接前一片背景),`bg` 为背景色。
+/// Draws a separator arrow: `fg` is its foreground (joining the previous background), `bg` the
+/// background.
 fn arrow(ch: &str, fg: Color, bg: Color) -> String {
     let mut s = String::new();
     match fg {
@@ -2576,7 +2641,7 @@ fn arrow(ch: &str, fg: Color, bg: Color) -> String {
     s
 }
 
-/// 用样式上色(前景 + 背景块 + 粗体;纯文本,无分隔符）。
+/// Colors text with a style (foreground + background block + bold; plain text, no separators).
 fn paint(text: &str, style: &Style) -> String {
     if text.is_empty() {
         return String::new();
@@ -2602,7 +2667,7 @@ fn paint(text: &str, style: &Style) -> String {
     s
 }
 
-/// 标准 16 色名映射到 256 色索引。
+/// Maps the standard 16 color names to 256-color indexes.
 fn named_256(name: &str) -> u8 {
     match name {
         "black" => 0,
@@ -2625,8 +2690,9 @@ fn named_256(name: &str) -> u8 {
     }
 }
 
-/// 显示宽度(去 ANSI,按 Unicode 显示宽度:emoji/CJK 宽字符算 2,组合/零宽算 0)。
-/// 供 theme 计算"内容比 cols 宽时终端会折成几行"。
+/// Display width (ANSI stripped, per Unicode width: emoji/CJK wide chars count 2, combining/
+/// zero-width count 0). Used by theme to compute how many rows the terminal wraps content
+/// wider than cols into.
 pub fn display_width_of(s: &str) -> usize {
     display_width(s)
 }
@@ -2664,8 +2730,8 @@ mod tests {
         }
     }
 
-    /// 取 `needle` 之前最后一个 `38;5;N` 前景色号：断言某段文字用了哪个颜色，
-    /// 不受中间夹着的背景色/bold 转义影响。
+    /// Last `38;5;N` foreground code before `needle`: asserts which color some text used,
+    /// unaffected by background/bold escapes in between.
     fn fg_before(hay: &str, needle: &str) -> Option<String> {
         let i = hay.find(needle)?;
         let head = &hay[..i];
@@ -2676,8 +2742,8 @@ mod tests {
 
     #[test]
     fn segment_prefix_and_suffix_render() {
-        // p10k 的 SEG_PREFIX/SEG_SUFFIX（vcs 的 `on `、exec 的 `took `）：
-        // 画在整段最前/最后。
+        // p10k's SEG_PREFIX/SEG_SUFFIX (vcs `on `, exec `took `):
+        // drawn at the very start/end of the segment.
         let mut cfg = Config::default();
         cfg.layout.left = vec![vec![Element::Seg("custom".into())]];
         let s = crate::config::Segment {
@@ -2729,17 +2795,17 @@ mod tests {
             };
             render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n")
         };
-        // 无本地分支（detached HEAD）→ 自动显示前 8 位。
+        // No local branch (detached HEAD) → the first 8 chars show automatically.
         assert!(
             mk("", false).contains("aa2fdd09"),
             "detached should show the hash"
         );
-        // 有分支且未开启 → 不显示。
+        // Branch present and not enabled → hidden.
         assert!(
             !mk("main", false).contains("aa2fdd09"),
             "branch present hides it by default"
         );
-        // 显式开启 → 显示。
+        // Explicitly enabled → shown.
         assert!(
             mk("main", true).contains("aa2fdd09"),
             "show-changeset should show it"
@@ -2748,7 +2814,8 @@ mod tests {
 
     #[test]
     fn vcs_branch_shortening_and_symbols() {
-        // p10k VCS_SHORTEN_*：length/min-length 都配了才折叠；符号可换。
+        // p10k VCS_SHORTEN_*: shortening needs both length and min-length; symbols are
+        // configurable.
         let v = GitStatus {
             branch: "feature/long-branch".into(),
             commit: String::new(),
@@ -2792,7 +2859,7 @@ mod tests {
             "staged symbol should be configurable, got {h:?}"
         );
 
-        // 只配 length、缺 min-length → 不折叠（p10k 要求两个都设）。
+        // Only length set, min-length missing → no shortening (p10k requires both).
         let mut cfg2 = Config::default();
         cfg2.layout.left = vec![vec![Element::Seg("vcs".into())]];
         let mut s2 = crate::config::Segment::default();
@@ -2808,8 +2875,8 @@ mod tests {
 
     #[test]
     fn exec_segment_shows_p10k_hourglass_icon() {
-        // p10k `EXECUTION_TIME_ICON`:nerdfont 档 U+F252,compatible/ascii 档 p10k
-        // 本身就是空,所以只有 nerdfont 两档画图标。
+        // p10k `EXECUTION_TIME_ICON`: U+F252 in the nerdfont tier; p10k itself has nothing
+        // in compatible/ascii, so only the two nerdfont tiers draw the icon.
         fn render(mode: crate::config::IconMode) -> String {
             let mut cfg = Config {
                 mode,
@@ -2860,7 +2927,7 @@ mod tests {
 
     #[test]
     fn vcs_wip_remote_branch_push_counts_and_dash() {
-        /// 去 SGR 只留可见文字。
+        /// Strips SGR, leaving visible text only.
         fn plain(h: &str) -> String {
             let mut out = String::new();
             let mut it = h.chars().peekable();
@@ -2907,7 +2974,8 @@ mod tests {
             index_size: 0,
             remote_url: String::new(),
         };
-        // 分支名后面直接跟 `:远端名`(p10k 不加空格);与本地同名时不显示。
+        // The branch name is directly followed by `:remote-name` (p10k adds no space); hidden
+        // when identical to the local name.
         let same = GitStatus {
             remote_branch: "main".into(),
             ..base.clone()
@@ -2922,7 +2990,8 @@ mod tests {
             ..base.clone()
         };
         assert!(render(&diff).contains("main:origin/main"));
-        // wip:提交标题里独立的 wip/WIP 才算(被字母数字包围的不算)。
+        // wip: only a standalone wip/WIP in the commit summary counts (not one surrounded by
+        // alphanumerics).
         for (summary, want) in [
             ("wip", true),
             ("WIP: fix", true),
@@ -2938,7 +3007,7 @@ mod tests {
             let got = render(&v).contains("main wip");
             assert_eq!(got, want, "wip detection is wrong for summary={summary:?}");
         }
-        // push remote 的 ⇠/⇢ 紧跟 ahead/behind 之后。
+        // The push remote's ⇠/⇢ follow directly after ahead/behind.
         let push = GitStatus {
             ahead: 1,
             push_behind: 2,
@@ -2951,7 +3020,8 @@ mod tests {
             out.contains("main ⇡1 ⇠2⇢3 *4"),
             "push count position/symbols are wrong, got {out:?}"
         );
-        // 配了 max-index-size-dirty 且索引更大 → 末尾画 `─`；没配就不画。
+        // With max-index-size-dirty set and a larger index → draw `─` at the end; without it,
+        // nothing.
         let dash = GitStatus {
             index_size: 500,
             ..base.clone()
@@ -2986,8 +3056,8 @@ mod tests {
 
     #[test]
     fn vcs_detached_and_tag_match_p10k() {
-        // p10k 的格式化函数:无分支有标签 → `${meta}#${clean}tag`,
-        // 无分支无标签 → `${meta}@${clean}commit[1,8]`。
+        // p10k's formatting function: no branch with a tag → `${meta}#${clean}tag`,
+        // no branch and no tag → `${meta}@${clean}commit[1,8]`.
         fn render(v: &GitStatus) -> String {
             let mut cfg = Config::default();
             cfg.layout.left = vec![vec![Element::Seg("vcs".into())]];
@@ -3037,7 +3107,7 @@ mod tests {
             !h.contains("deadbeef"),
             "should not exceed 8 chars, got {h:?}"
         );
-        // 有标签 → 显示 #tag,不再显示 hash。
+        // A tag present → show #tag and no hash.
         let tagged = GitStatus {
             tag: "v1.2.3".into(),
             ..base
@@ -3061,7 +3131,7 @@ mod tests {
 
     #[test]
     fn vcs_count_order_matches_p10k_formatter() {
-        /// 去掉 SGR 序列,只留可见字符,便于断言计数顺序。
+        /// Strips SGR sequences, leaving visible chars, to assert the count order.
         fn strip_sgr(s: &str) -> String {
             let mut out = String::new();
             let mut it = s.chars().peekable();
@@ -3078,8 +3148,8 @@ mod tests {
             }
             out
         }
-        // p10k 的 vcs 格式化函数顺序:⇣behind⇡ahead → *stashes → action →
-        // ~conflicted → +staged → !unstaged → ?untracked;ahead/behind 之间不加空格。
+        // p10k's vcs formatting function order: ⇣behind⇡ahead → *stashes → action →
+        // ~conflicted → +staged → !unstaged → ?untracked; no space between ahead/behind.
         let cfg = Config::default_lean().unwrap();
         let v = GitStatus {
             branch: "main".into(),
@@ -3144,7 +3214,7 @@ mod tests {
             cfg.segments.insert("vcs".into(), s);
             render_header_lines(&cfg, &info("/tmp", None), Some(v), 80).join("\n")
         }
-        // p10k classic:`~N`(conflicted)用 %196F,`!N`(unstaged)用 %178F。
+        // p10k classic: `~N` (conflicted) uses %196F, `!N` (unstaged) uses %178F.
         let h = render(&v, Some(196));
         assert_eq!(
             fg_before(&h, "~2").as_deref(),
@@ -3156,7 +3226,7 @@ mod tests {
             Some("178"),
             "unstaged should still use 178"
         );
-        // 没配 conflicted-foreground → 回退 modified,保持旧行为。
+        // conflicted-foreground unset → fall back to modified, keeping the old behavior.
         let h2 = render(&v, None);
         assert_eq!(
             fg_before(&h2, "~2").as_deref(),
@@ -3167,14 +3237,14 @@ mod tests {
 
     #[test]
     fn exec_duration_formats_match_p10k() {
-        // <60s：precision=0 取整、>0 带小数（p10k 缺省 2）。
+        // <60s: precision=0 rounds, >0 keeps decimals (p10k default 2).
         assert_eq!(format_duration(3.4, 0, false), "3s");
         assert_eq!(format_duration(3.44, 2, false), "3.44s");
-        // >=60s：多级带空格，可到天。
+        // >=60s: multi-level with spaces, up to days.
         assert_eq!(format_duration(65.0, 0, false), "1m 5s");
         assert_eq!(format_duration(3723.0, 0, false), "1h 2m 3s");
         assert_eq!(format_duration(90065.0, 0, false), "1d 1h 1m 5s");
-        // H:M:S 变体。
+        // H:M:S variant.
         assert_eq!(format_duration(65.0, 0, true), "01:05");
         assert_eq!(format_duration(3723.0, 0, true), "01:02:03");
         assert_eq!(format_duration(36005.0, 0, true), "10:00:05");
@@ -3190,7 +3260,7 @@ mod tests {
         let seg = cfg.segment("time");
         let s24 = time_text(&crate::config::Segment::default());
         let s12 = time_text(seg);
-        // 24h 是 HH:MM:SS;12h 是 HH:MM:SS AM/PM。
+        // 24h is HH:MM:SS; 12h is HH:MM:SS AM/PM.
         assert_eq!(s24.len(), 8, "24h should be 8 chars, got {s24:?}");
         assert_eq!(s12.len(), 11, "12h should be 11 chars, got {s12:?}");
         assert!(
@@ -3211,7 +3281,7 @@ mod tests {
         cfg.separators.left_tail = "\u{e0b2}".into();
         cfg.separators.right_tail = "\u{e0b0}".into();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
-        // 左栏首段前有 left_tail(),其后接目录内容。
+        // The left column's first segment is preceded by left_tail (), followed by the directory content.
         assert!(
             h.contains("\u{e0b2}"),
             "should draw the left tail, got {h:?}"
@@ -3222,7 +3292,7 @@ mod tests {
     fn renders_pure_text_header_with_right_align() {
         let cfg = Config::default_lean().unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
-        // header 只有一行：含目录 + 状态图标(nerdfont 默认 );prompt_char(❯)不在 header。
+        // The header is a single line: dir + status icon (nerdfont default ); prompt_char (❯) is not in the header.
         assert!(
             h.contains("tmp"),
             "header should contain the dir, got: {h:?}"
@@ -3239,8 +3309,9 @@ mod tests {
     fn right_aligns_to_cols() {
         let cfg = Config::default_lean().unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
-        // 右段状态图标右对齐:gap 填充使整行显示宽度 = cols。右栏还要按
-        // `right-indent`（默认 1，同 zsh `ZLE_RPROMPT_INDENT`）离右边界留一格。
+        // The right status icon is right-aligned: gap filling makes the row's display width
+        // = cols. The right column also keeps `right-indent` (default 1, same as zsh
+        // `ZLE_RPROMPT_INDENT`) from the right edge.
         assert!(
             h.contains("\u{f00c}"),
             "right segment should exist, got: {h:?}"
@@ -3254,7 +3325,7 @@ mod tests {
 
     #[test]
     fn line_text_literal_renders() {
-        // line 里可穿插静态文本 text "some text"。
+        // A line can interleave static text text "some text".
         let cfg = Config::parse(
             "layout {\n  left {\n    line { dir #true; text \"some text\"; vcs #true }\n  }\n}",
         )
@@ -3268,7 +3339,7 @@ mod tests {
 
     #[test]
     fn line_text_expands_env() {
-        // text 里的 ${VAR}/$VAR 展开为环境变量。
+        // ${VAR}/$VAR in text expand to env vars.
         let home = std::env::var("HOME").unwrap_or_default();
         let cfg =
             Config::parse("layout {\n  left {\n    line { text \"home=${HOME} $USER\" }\n  }\n}")
@@ -3296,7 +3367,8 @@ mod tests {
 
     #[test]
     fn input_prefix_width_matches_visual() {
-        // 有帧 last-prefix ╰─ 时,前缀 = "╰─❯ " (宽4);占位符要按这个宽度生成。
+        // With the frame last-prefix ╰─, the prefix is "╰─❯ " (width 4); placeholders are
+        // generated at this width.
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\nframe {\n  last-prefix \"╰─\"\n}",
         )
@@ -3317,7 +3389,7 @@ mod tests {
 
     #[test]
     fn vcs_state_colors_and_inner_spaces() {
-        // classic(2) 段底 238、clean 76、modified 178。
+        // classic(2): segment background 238, clean 76, modified 178.
         let cfg = crate::presets::classic(2);
         let v = GitStatus {
             branch: "main".into(),
@@ -3339,8 +3411,8 @@ mod tests {
             remote_url: String::new(),
         };
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\n");
-        // 分支名/图标用 clean-foreground(76),`!2`(unstaged)用 modified-foreground(178),
-        // 两者都落在段底(238)上。
+        // Branch name/icon use clean-foreground (76), `!2` (unstaged) uses
+        // modified-foreground (178), both on the segment background (238).
         assert!(
             h.contains("\u{1b}[38;5;76m\u{1b}[48;5;238m"),
             "branch/icon should be colored clean with the segment background, got {h:?}"
@@ -3349,7 +3421,8 @@ mod tests {
             h.contains("\u{1b}[38;5;178m\u{1b}[48;5;238m!2"),
             "unstaged should be colored modified, got {h:?}"
         );
-        // 分支与计数之间的空格必须带段背景(48;5;238),裸空格会露出黑缝。
+        // The space between branch and counts must carry the segment background (48;5;238); a
+        // bare space would show a black seam.
         let after_branch = h
             .split("main")
             .nth(1)
@@ -3386,8 +3459,8 @@ mod tests {
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
         assert!(h.contains("master"));
         assert!(h.contains("+1"));
-        // p10k 的计数符号:staged +、unstaged !、conflicted ~、untracked ?、
-        // ahead ⇡、behind ⇣、stashes *。
+        // p10k's count symbols: staged +, unstaged !, conflicted ~, untracked ?,
+        // ahead ⇡, behind ⇣, stashes *.
         assert!(h.contains("!2"));
         assert!(h.contains("?3"));
         assert!(h.contains("⇡1"), "ahead should use ⇡, got {h:?}");
@@ -3395,7 +3468,7 @@ mod tests {
 
     #[test]
     fn background_blocks_and_powerline_arrow() {
-        // dir/vcs 都有背景,且不同 → 段间画 ``。
+        // dir/vcs both have backgrounds and they differ → draw the ``.
         let cfg = Config::parse(
             "layout { left { line { dir #true; vcs #true } } }\n\
              segments { dir { bg 39 } }\n",
@@ -3434,7 +3507,7 @@ mod tests {
             index_size: 0,
             remote_url: String::new(),
         };
-        // 设置异底段间用 powerline 箭头,末尾端符。
+        // Set a powerline arrow between segments with different backgrounds, plus the end cap.
         cfg.separators.segment = "\u{e0b0}".into();
         let h = render_header_lines(&cfg, &info("/tmp", None), Some(&v), 80).join("\r\n");
         assert!(
@@ -3453,7 +3526,7 @@ mod tests {
 
     #[test]
     fn frame_colors_pieces_with_override() {
-        // 帧级 fg 作用于所有块;子节点自己的 fg 覆盖帧级。
+        // The frame-level fg applies to all pieces; a child's own fg overrides it.
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              frame fg=76 {\n  first-prefix \"╭─\"\n  last-prefix \"╰─\" fg=196\n}",
@@ -3464,7 +3537,8 @@ mod tests {
             h.contains("\x1b[38;5;76m╭─"),
             "first line prefix should use the frame-level fg, got: {h:?}"
         );
-        // 输入行前缀:last-prefix 用子节点色(196),prompt_char ❯ 缺省无色。
+        // Input line prefix: last-prefix uses the child color (196), prompt_char ❯ is
+        // uncolored by default.
         let p = input_prefix(&cfg, None);
         assert!(
             p.text.contains("\x1b[38;5;196m╰─"),
@@ -3479,8 +3553,8 @@ mod tests {
 
     #[test]
     fn prompt_char_vi_states() {
-        // 配了 VIINS/VICMD 的字符后按编辑模式切换（p10k 的
-        // PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,...}）。
+        // With VIINS/VICMD chars configured the prompt switches with the edit mode
+        // (p10k's PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,...}).
         let cfg = Config::parse(
             "layout { left { line { dir } } }\nsegments { prompt_char fg=76 {\n  state VIINS char=\"I\"\n  state VICMD char=\"C\"\n} }",
         )
@@ -3495,7 +3569,7 @@ mod tests {
             input_prefix(&cfg, None).text.contains('I'),
             "viins should switch to the VIINS char"
         );
-        // 没配 vi state 的配置不受编辑模式影响，仍按 ❯/ERROR 处理。
+        // A config without vi states is unaffected by the edit mode and still uses ❯/ERROR.
         *CURRENT_VI_MODE.lock().unwrap() = String::new();
         let plain = Config::default_lean().unwrap();
         assert!(input_prefix(&plain, None).text.contains('❯'));
@@ -3503,7 +3577,8 @@ mod tests {
 
     #[test]
     fn prompt_char_configurable_with_error_state() {
-        // char 属性配提示符字符;state ERROR 覆盖错误态(退出码非 0)的字符与颜色。
+        // The char prop sets the prompt char; state ERROR overrides char and color for the
+        // error state (non-zero exit code).
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              segments { prompt_char char=\">\" fg=76 {\n  state ERROR char=\"✘\" fg=196\n} }",
@@ -3534,7 +3609,8 @@ mod tests {
 
     #[test]
     fn transient_prompt_zsh_conditional_colors() {
-        // transient 是 zsh 独占:引擎预计算 zsh 的 %F 转义 + 条件换色,❯ 后带空格。
+        // transient is zsh-only: the engine precomputes zsh %F escapes and the conditional
+        // color switch, with a space after ❯.
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              segments { prompt_char fg=76 {\n  state ERROR fg=196\n} }",
@@ -3560,7 +3636,8 @@ mod tests {
 
     #[test]
     fn icon_mode_switches_default_icons() {
-        // status_text 接收 ok/err 图标字符,默认字符本身来自 icon{} 表/内置默认。
+        // status_text takes the ok/err icon chars; the default chars themselves come from the
+        // icon{} table / built-in defaults.
         let mut seg = Segment::default();
         seg.props
             .insert("verbose".into(), crate::config::Prop::Bool(true));
@@ -3574,7 +3651,8 @@ mod tests {
             status_text(&info("/tmp", Some(1)), "ok", "err", &seg, &style).contains("err 1"),
             "ERROR should show the err icon + exit code"
         );
-        // 图标名默认随 mode:folder 的 nf 有字形,compat/ascii 空;go 三档文本。
+        // Icon defaults follow mode: folder has a glyph in nf and is empty in compat/ascii;
+        // go has text in all three tiers.
         let mk = |m: &str| {
             Config::parse(&format!(
                 "mode \"{m}\"\nlayout {{ left {{ line {{ dir #true }} }} }}"
@@ -3597,26 +3675,27 @@ mod tests {
 
     #[test]
     fn icon_overrides_per_mode() {
-        // 顶层 icon{}:精确档 ascii 只覆盖 ascii;all 自动识别字符类别。
+        // Top-level icon{}: an exact ascii tier overrides ascii only; all auto-detects the
+        // char class.
         let nf = |extra: &str| {
             Config::parse(&format!(
                 "{extra}\nlayout {{ left {{ line {{ dir #true }} }} }}"
             ))
             .unwrap()
         };
-        // error 配精确 ascii 档 → 仅 ascii 模式生效,nf 回默认 。
+        // error with an exact ascii tier → applies to ascii mode only, nf falls back to the default .
         let c = nf("icon { error { ascii \"X\" } }");
         assert_eq!(icon_str(&c, "error").unwrap(), "\u{f00d}");
         let c = nf("mode \"ascii\"\nicon { error { ascii \"X\" } }");
         assert_eq!(icon_str(&c, "error").unwrap(), "X");
-        // all "✔"(标准 Unicode)→ nf+compat 覆盖,ascii 档回默认 ok。
+        // all "✔" (standard Unicode) → overrides nf+compat; ascii falls back to the default ok.
         let c = nf("icon { ok { all \"\u{2714}\" } }");
         assert_eq!(icon_str(&c, "ok").unwrap(), "\u{2714}");
         let c = nf("mode \"compatible\"\nicon { ok { all \"\u{2714}\" } }");
         assert_eq!(icon_str(&c, "ok").unwrap(), "\u{2714}");
         let c = nf("mode \"ascii\"\nicon { ok { all \"\u{2714}\" } }");
         assert_eq!(icon_str(&c, "ok").unwrap(), "ok");
-        // all 纯 ASCII → 三档全落。
+        // all with plain ASCII → applies to all three tiers.
         let c = nf("icon { ok { all \"V\" } }");
         assert_eq!(icon_str(&c, "ok").unwrap(), "V");
         let c = nf("mode \"ascii\"\nicon { ok { all \"V\" } }");
@@ -3625,7 +3704,7 @@ mod tests {
 
     #[test]
     fn prompt_char_states_must_match_width() {
-        // 正常态与 ERROR 态 char 等宽(都单字符)→ 校验通过。
+        // Normal and ERROR chars are equal width (both single chars) → validation passes.
         let ok_cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              segments { prompt_char char=\"❯\" {\n  state ERROR char=\"✘\"\n} }",
@@ -3635,7 +3714,7 @@ mod tests {
             check_prompt_char_widths(&ok_cfg).is_ok(),
             "equal widths should pass validation"
         );
-        // 宽度不等(✘✘ 双宽)→ 校验报错。
+        // Unequal widths (✘✘ double width) → validation errors.
         let bad_cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              segments { prompt_char char=\"❯\" {\n  state ERROR char=\"✘✘\"\n} }",
@@ -3649,7 +3728,8 @@ mod tests {
 
     #[test]
     fn segment_attach_text_slots() {
-        // 用真实 dir 段:默认 folder 图标 + content 覆盖目录文本,attach 槽齐全。
+        // Uses the real dir segment: default folder icon + content overriding the dir text,
+        // with all attach slots.
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              segments { dir content=\"02:49:19\" {\n\
@@ -3678,8 +3758,8 @@ mod tests {
 
     #[test]
     fn segment_attach_middle_requires_icon_and_text() {
-        // text-middle 仅当段既有 icon 又有文字时才渲染。
-        // 仅 icon:dir + 空 content → text 空、folder 图标仍在。
+        // text-middle renders only when the segment has both an icon and text.
+        // Icon only: dir + empty content → empty text, the folder icon remains.
         let only_icon = Config::parse(
             "layout { left { line { dir #true } } }\n\
              segments { dir content=\"\" { text-middle \"M\" } }",
@@ -3690,7 +3770,7 @@ mod tests {
             !h.contains('M'),
             "text-middle should not render with an icon but no text, got: {h:?}"
         );
-        // 仅文字:history 段无默认图标,有文字(命令号)。
+        // Text only: the history segment has no default icon but has text (the history number).
         let only_text = Config::parse(
             "layout { left { line { history #true } } }\n\
              segments { history { text-middle \"M\" } }",
@@ -3712,7 +3792,8 @@ mod tests {
 
     #[test]
     fn attach_emoji_keeps_row_width_aligned() {
-        // 附加 emoji 占 2 列,右对齐预算必须按 Unicode 宽度算,否则末尾被折行。
+        // The attached emoji takes 2 columns; the right-align budget must use Unicode width,
+        // or the row wraps at the end.
         let src = "layout {\n  left { line { dir #true } }\n  right { line { dir #true } }\n}\n\
                    segments { dir content=\"12:34:56\" { text-right \"🎂\" } }";
         let cfg = Config::parse(src).unwrap_or_else(|e| panic!("parse: {e}\nsrc={src:?}"));
@@ -3726,8 +3807,9 @@ mod tests {
 
     #[test]
     fn row_never_exceeds_cols_at_any_width() {
-        // 行宽绝不能超过 cols：占位协议按"每行占一个终端行"算，溢出换行会让
-        // header 行数对不上（也会让 instant header 的擦除算错行）。
+        // The row width must never exceed cols: the placeholder protocol assumes one terminal
+        // row per line, and an overflow wrap would break the header row count (and mis-count
+        // the rows erased for the instant header).
         let cfg = Config::parse(
             "layout {\n  left { line { os_icon; dir; vcs } }\n  \
              right { line { status; command_execution_time; background_jobs; time } }\n}\n\
@@ -3735,7 +3817,8 @@ mod tests {
              status ok-foreground=70\n  time fg=66 }",
         )
         .unwrap();
-        // 从 20 起：比左栏自己还窄时（这里左栏 /tmp 约 10 列）无解，p10k 也会换行。
+        // Starts at 20: narrower than the left column itself (here /tmp is about 10 columns)
+        // has no solution; p10k wraps too.
         for cols in 20..120 {
             let rows = render_header_lines(&cfg, &info("/tmp", None), None, cols);
             for (i, row) in rows.iter().enumerate() {
@@ -3750,15 +3833,16 @@ mod tests {
 
     #[test]
     fn right_column_is_dropped_when_the_row_does_not_fit() {
-        // p10k：宽度不够时整条右栏（含 gap）不画，而不是让行溢出换行。
-        // 行溢出会破坏占位协议（header 行数 = shell 预留的行数）。
+        // p10k: when the width is insufficient the whole right column (gap included) is not
+        // drawn rather than overflowing. An overflowing row breaks the placeholder protocol
+        // (header rows = rows reserved by the shell).
         let cfg = Config::parse(
             "layout {\n  left { line { dir #true } }\n  right { line { time #true } }\n}\n\
              segments { dir fg=31\n  time fg=66 }",
         )
         .unwrap();
         let info_ = info("/tmp", None);
-        // 足够宽 → 右栏在，且行宽不超过 cols。
+        // Wide enough → the right column is present and the row width stays within cols.
         for cols in [40, 60, 100] {
             let row = &render_header_lines(&cfg, &info_, None, cols)[0];
             assert!(
@@ -3771,7 +3855,8 @@ mod tests {
                 display_width(row)
             );
         }
-        // 极窄（左栏自己就放不下右栏）→ 右栏消失，且行不再继续变宽。
+        // Very narrow (the left column alone cannot fit the right one) → the right column
+        // disappears and the row stops growing.
         let narrow = &render_header_lines(&cfg, &info_, None, 12)[0];
         let time = time_text(cfg.segment("time"));
         assert!(
@@ -3786,7 +3871,7 @@ mod tests {
 
     #[test]
     fn dir_classes_match_pattern_state_and_icon() {
-        // p10k DIR_CLASSES：第一条命中的规则决定 state 与图标。
+        // p10k DIR_CLASSES: the first matching rule decides state and icon.
         fn render(cwd: &str, extra: &str) -> String {
             let cfg = Config::parse(&format!(
                 "layout {{ left {{ line {{ dir #true }} }} }}\n\
@@ -3798,27 +3883,27 @@ mod tests {
             render_header_lines(&cfg, &info(cwd, None), None, 120).join("\n")
         }
         let home = std::env::var("HOME").unwrap();
-        // 命中 WORK：自定义图标 + 196 色。
+        // WORK matches: custom icon + 196 color.
         let h = render(&format!("{home}/work/proj"), "");
         assert!(h.contains('★'), "should match the WORK icon, got {h:?}");
         assert!(
             h.contains("[38;5;196m"),
             "should match the WORK state color, got {h:?}"
         );
-        // 只命中 HOME。
+        // Only HOME matches.
         let h = render(&format!("{home}/other"), "");
         assert!(!h.contains('★'), "should not match WORK, got {h:?}");
         assert!(
             h.contains("[38;5;39m"),
             "should match the HOME state color, got {h:?}"
         );
-        // 不可写目录：图标换锁（p10k 的 _NOT_WRITABLE 后缀规则）。
+        // Non-writable directory: the icon becomes a lock (p10k's _NOT_WRITABLE suffix rule).
         let h = render("/proc", "show-writable=v3");
         assert!(
             h.contains("\u{f023}"),
             "non-writable should show the lock, got {h:?}"
         );
-        // 都不命中 → 段默认色。
+        // No match → the segment default color.
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              dir-classes { class \"/nope/**\" state=\"X\" }\n\
@@ -3835,7 +3920,7 @@ mod tests {
 
     #[test]
     fn dir_show_writable_swaps_in_lock_icon() {
-        // p10k DIR_SHOW_WRITABLE：不可写目录的 dir 图标换成 LOCK_ICON。
+        // p10k DIR_SHOW_WRITABLE: the dir icon of a non-writable directory becomes LOCK_ICON.
         fn render(cwd: &str, props: &str) -> String {
             let cfg = Config::parse(&format!(
                 "layout {{ left {{ line {{ dir #true }} }} }}\nsegments {{ dir {props} }}"
@@ -3843,7 +3928,7 @@ mod tests {
             .unwrap();
             render_header_lines(&cfg, &info(cwd, None), None, 120).join("\n")
         }
-        // /proc 存在但不可写（root 之外都写不进去）。
+        // /proc exists but is not writable (nothing but root can write there).
         let locked = render("/proc", "show-writable=v3");
         assert!(
             locked.contains("\u{f023}"),
@@ -3853,18 +3938,18 @@ mod tests {
             !locked.contains("\u{f07c}"),
             "the folder icon should not be shown as well, got {locked:?}"
         );
-        // 可写目录照常。
+        // A writable directory behaves as usual.
         let normal = render("/tmp", "show-writable=v3");
         assert!(normal.contains("\u{f07c}"), "got {normal:?}");
         assert!(!normal.contains("\u{f023}"), "got {normal:?}");
-        // 不配就完全不检查。
+        // Unset means no check at all.
         let off = render("/proc", "");
         assert!(off.contains("\u{f07c}"), "got {off:?}");
     }
 
     #[test]
     fn ruler_line_renders_above_the_header() {
-        // p10k SHOW_RULER：header 之上铺一整行 RULER_CHAR（缺省 `─`）。
+        // p10k SHOW_RULER: lay a full row of RULER_CHAR above the header (default `─`).
         let cfg = Config::parse(
             "layout {\n  show-ruler #true\n  left { line { dir #true } }\n}\n\
              segments { ruler fg=240 }",
@@ -3882,13 +3967,13 @@ mod tests {
             "ruler char and color are wrong, got {:?}",
             lines[0]
         );
-        // 关掉就没有标尺行。
+        // Disabled means no ruler row.
         let off = Config::parse("layout { left { line { dir #true } } }").unwrap();
         assert_eq!(
             render_header_lines(&off, &info("/tmp", None), None, 20).len(),
             1
         );
-        // ascii 档用 `-`。
+        // The ascii tier uses `-`.
         let asc = Config::parse(
             "mode \"ascii\"\nlayout {\n  show-ruler #true\n  left { line { dir #true } }\n}",
         )
@@ -3903,7 +3988,7 @@ mod tests {
 
     #[test]
     fn dir_absolute_omit_first_highlight_and_hyperlink() {
-        /// 去 SGR 只留可见文字。
+        /// Strips SGR, leaving visible text only.
         fn plain(h: &str) -> String {
             let mut out = String::new();
             let mut it = h.chars().peekable();
@@ -3921,8 +4006,9 @@ mod tests {
             out
         }
         fn render(cwd: &str, props: &str) -> String {
-            // 显式给策略：p10k 的 SHORTEN_STRATEGY 声明缺省是空串，空串会进入它的
-            // 默认分支（只留末 N 级）；用户配置里都是 truncate_to_unique。
+            // Strategy given explicitly: p10k's SHORTEN_STRATEGY declaration defaults to an
+            // empty string, which takes its default branch (keep the last N levels); user
+            // configs all use truncate_to_unique.
             let cfg = Config::parse(&format!(
                 "layout {{ left {{ line {{ dir #true }} }} }}\n\
                  segments {{ dir shorten-strategy=\"truncate_to_unique\" {props} }}"
@@ -3930,7 +4016,7 @@ mod tests {
             .unwrap();
             render_header_lines(&cfg, &info(cwd, None), None, 200).join("\n")
         }
-        // p10k DIR_PATH_ABSOLUTE：$HOME 下也显示绝对路径（不缩写 ~）。
+        // p10k DIR_PATH_ABSOLUTE: show the absolute path even under $HOME (no ~ abbreviation).
         let home = std::env::var("HOME").unwrap();
         let under_home = format!("{home}/probe");
         assert!(plain(&render(&under_home, "")).contains("~/probe"));
@@ -3940,8 +4026,9 @@ mod tests {
             !abs.contains('~'),
             "should not have the ~ abbreviation, got {abs:?}"
         );
-        // p10k DIR_OMIT_FIRST_CHARACTER：绝对路径省掉起始 `/`；根目录仍显示 `/`。
-        // 多级路径要配 shorten-dir-length=2,否则默认只留末一级。
+        // p10k DIR_OMIT_FIRST_CHARACTER: drop the leading `/` of an absolute path; root still
+        // shows `/`.
+        // Multi-level paths need shorten-dir-length=2, otherwise only the last level is kept.
         let two = "shorten-dir-length=2";
         assert!(plain(&render("/tmp/x", two)).contains("/tmp/x"));
         let omitted = plain(&render(
@@ -3957,7 +4044,7 @@ mod tests {
             plain(&render("/", "omit-first-character=#true")).trim(),
             "\u{f07c} /"
         );
-        // p10k DIR_PATH_HIGHLIGHT_FOREGROUND/BOLD：只给末级组件换色/加粗。
+        // p10k DIR_PATH_HIGHLIGHT_FOREGROUND/BOLD: recolor/bold the last component only.
         let h = render(
             "/a/b",
             "shorten-dir-length=2 path-highlight-foreground=196 path-highlight-bold=#true",
@@ -3977,7 +4064,7 @@ mod tests {
             h[i..].contains("\u{1b}[1m"),
             "highlight-bold should add bold"
         );
-        // p10k DIR_HYPERLINK：OSC 8 包住目录，路径做 URL 转义。
+        // p10k DIR_HYPERLINK: wrap the directory in OSC 8 and URL-escape the path.
         let link = render("/a/b", "shorten-dir-length=2 hyperlink=#true");
         assert!(
             link.contains("\u{1b}]8;;file:///a/b\u{7}"),
@@ -3992,8 +4079,9 @@ mod tests {
 
     #[test]
     fn dir_unique_shortening_depends_on_row_width() {
-        // p10k 的 truncate_to_unique 是按行宽动态折的：宽终端原样，窄终端才折
-        // 到唯一前缀（实测同一路径 130/100 列不折、90 列折一级、80 列折两级）。
+        // p10k's truncate_to_unique shortens dynamically by row width: unchanged on a wide
+        // terminal, shortened to unique prefixes only when narrow (measured: one path is
+        // unshortened at 130/100 cols, one level at 90, two levels at 80).
         fn dir_text(cols: usize, cwd: &str) -> String {
             let cfg = Config::parse(
                 "layout { left { line { dir #true } } }\n\
@@ -4016,15 +4104,16 @@ mod tests {
             }
             out
         }
-        // 同级里只有 Projects/crates 唯一,够长才折。夹具目录名固定,这样各级
-        // 能省多少列是确定的:tmp 省 2、p11k-width-fixture 省 17、Projects 省 7、
-        // powerlevel11k 省 12、crates 省 5(累计 2/19/26/38/43)。
+        // Only Projects/crates are unique among their siblings, so only they shorten once long
+        // enough. The fixture dir names are fixed, making the columns saved per level
+        // deterministic: tmp saves 2, p11k-width-fixture 17, Projects 7, powerlevel11k 12,
+        // crates 5 (cumulative 2/19/26/38/43).
         let root = std::env::temp_dir().join("p11k-width-fixture");
         let deep = root.join("Projects/powerlevel11k/crates/p11k-engine");
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&deep).unwrap();
         let cwd = deep.to_str().unwrap().to_string();
-        // 先测出完全不折时这一行的宽度（200 列足够宽）。
+        // First measure the row width with no shortening at all (200 cols is wide enough).
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\n\
              segments { dir shorten-strategy=\"truncate_to_unique\" shorten-dir-length=1 }",
@@ -4041,13 +4130,14 @@ mod tests {
             wide.contains("crates/"),
             "wide row should not shorten, got {wide:?}"
         );
-        // 差 20 列:前三级(含 Projects)折掉,powerlevel11k/crates 还在。
+        // 20 cols short: the first three levels (including Projects) shorten, powerlevel11k and
+        // crates remain.
         let mid = dir_text(full_w - 20, &cwd);
         assert!(
             !mid.contains("Projects") && mid.contains("crates"),
             "medium width should shorten only down to Projects, got {mid:?}"
         );
-        // 差 40 列:连 crates 一起折。
+        // 40 cols short: crates shortens as well.
         let narrow = dir_text(full_w - 40, &cwd);
         assert!(
             !narrow.contains("Projects") && !narrow.contains("crates"),
@@ -4078,7 +4168,7 @@ mod tests {
 
     #[test]
     fn context_hidden_for_local_non_ssh() {
-        // 非 SSH 时 context 不出现 user@host 形式(本地 root 只显示 user)。
+        // Without SSH, context does not take the user@host form (local root shows user only).
         let cfg = Config::parse("layout { left { line { context #true } } }").unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(
@@ -4089,7 +4179,7 @@ mod tests {
 
     #[test]
     fn env_indicator_segments() {
-        // ranger:设 RANGER_LEVEL 显示层级,清除后隐藏。
+        // ranger: setting RANGER_LEVEL shows the level; clearing it hides the segment.
         let r = Config::parse("layout { left { line { ranger #true } } }").unwrap();
         unsafe {
             std::env::set_var("RANGER_LEVEL", "2");
@@ -4105,7 +4195,8 @@ mod tests {
             "",
             "ranger should be hidden after clearing, got: {h2:?}"
         );
-        // proxy:设 http_proxy 后显示其 host:port(清除不深究,机器可能自带代理 env)。
+        // proxy: setting http_proxy shows its host:port (clearing is not asserted, the machine
+        // may ship proxy env).
         let p = Config::parse("layout { left { line { proxy #true } } }").unwrap();
         unsafe {
             std::env::set_var("http_proxy", "http://proxy.example:8080");
@@ -4122,7 +4213,8 @@ mod tests {
 
     #[test]
     fn version_segments_resolve() {
-        // cpu_arch 从 /proc 或 uname 恒有;不存在的命令 → 段隐藏(None)。
+        // cpu_arch always has a value from /proc or uname; a missing command → the segment
+        // hides (None).
         assert!(
             !cpu_arch().is_empty(),
             "cpu_arch should have a value, got: {:?}",

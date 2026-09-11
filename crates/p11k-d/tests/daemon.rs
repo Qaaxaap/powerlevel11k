@@ -1,7 +1,8 @@
-//! daemon 进程级集成测试：拉起真实 p11k-d 二进制，验证协议链路。
+//! Process-level daemon integration tests: launch the real p11k-d binary and verify
+//! the protocol path.
 //!
-//! 对拍基准：官方 gitstatusd v1.5.4 的实际行为（可手工用
-//! `~/.cache/gitstatus/gitstatusd-linux-x86_64` 验证同样场景）。
+//! Reference baseline: the actual behavior of official gitstatusd v1.5.4 (the same
+//! scenarios can be verified by hand with `~/.cache/gitstatus/gitstatusd-linux-x86_64`).
 
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -20,14 +21,14 @@ fn spawn(args: &[&str]) -> (Child, ChildStdin, ChildStdout) {
     (child, stdin, stdout)
 }
 
-/// 读 stdout 直到读完 n 字节（响应长度已知，逐字节读避免块等待）。
+/// Read stdout until n bytes have arrived (the response length is known; read byte by byte to avoid blocking).
 fn read_exact(stdout: &mut ChildStdout, n: usize) -> Vec<u8> {
     let mut out = vec![0u8; n];
     stdout.read_exact(&mut out).expect("read response");
     out
 }
 
-/// 握手：id=}hello、dir 为空 → 非仓库响应 }hello\x1f0\x1e。
+/// Handshake: id=}hello, empty dir → non-repo response }hello\x1f0\x1e.
 #[test]
 fn handshake_returns_not_a_repo() {
     let (mut child, mut stdin, mut stdout) = spawn(&[]);
@@ -35,17 +36,17 @@ fn handshake_returns_not_a_repo() {
     stdin.flush().unwrap();
     let resp = read_exact(&mut stdout, 9);
     assert_eq!(resp, b"}hello\x1f0\x1e");
-    drop(stdin); // EOF → daemon 退出
+    drop(stdin); // EOF → the daemon exits
     let status = child.wait().unwrap();
     assert_eq!(status.code(), Some(0));
 }
 
-/// 批量消息：一次写入多条请求，响应按序返回。
-/// 空 dir 请求（含任意 id）都回非仓库——对齐原版"找不到仓库"语义。
+/// Batched messages: write several requests at once, responses come back in order.
+/// Requests with an empty dir (any id) all answer non-repo — mirroring the original's "no repo found" semantics.
 #[test]
 fn batched_requests_are_answered_in_order() {
     let (mut child, mut stdin, mut stdout) = spawn(&[]);
-    // 三条空 dir 请求（响应长度 6/9/7 字节）
+    // Three empty-dir requests (response lengths 6/9/7 bytes)
     stdin
         .write_all(b"}h1\x1f\x1e}hello\x1f\x1e}xyz\x1f\x1e")
         .unwrap();
@@ -67,7 +68,7 @@ fn eof_exits_zero() {
     assert_eq!(status.code(), Some(0));
 }
 
-/// 探活：-p 指向不存在的 PID，约 1~2s 内退出且退出码 0（对齐原版）。
+/// Liveness: -p points at a nonexistent PID, exits within ~1-2s with code 0 (mirrors the original).
 #[test]
 fn parent_pid_liveness_exits_zero() {
     let (mut child, _stdin, _stdout) = spawn(&["-p", "999999999"]);
@@ -81,7 +82,7 @@ fn parent_pid_liveness_exits_zero() {
     );
 }
 
-/// -G 版本不匹配 → 退出码 11。
+/// -G version mismatch → exit code 11.
 #[test]
 fn version_mismatch_exits_eleven() {
     let status = Command::new(env!("CARGO_BIN_EXE_p11k-d"))
@@ -91,7 +92,7 @@ fn version_mismatch_exits_eleven() {
     assert_eq!(status.code(), Some(11));
 }
 
-/// 坏参数 → 退出码 10。
+/// Bad arguments → exit code 10.
 #[test]
 fn bad_args_exits_ten() {
     let status = Command::new(env!("CARGO_BIN_EXE_p11k-d"))
@@ -101,8 +102,8 @@ fn bad_args_exits_ten() {
     assert_eq!(status.code(), Some(10));
 }
 
-/// 真实仓库端到端：建临时 git 仓库（1 提交 + 1 untracked 文件），
-/// 发请求断言 29 字段响应、workdir/commit/分支名/untracked 计数。
+/// Real-repo end to end: create a temporary git repo (1 commit + 1 untracked file),
+/// send a request and assert the 29-field response, workdir/commit/branch name/untracked counts.
 #[test]
 fn real_repo_request_returns_status() {
     let tmp = tempfile::tempdir().unwrap();
@@ -126,7 +127,7 @@ fn real_repo_request_returns_status() {
     let req = format!("id\x1f{}\x1e", repo.to_str().unwrap());
     stdin.write_all(req.as_bytes()).unwrap();
     stdin.flush().unwrap();
-    // 响应长度不定：逐字节读到 MSG_SEP
+    // Response length is unknown: read byte by byte until MSG_SEP
     let mut buf = Vec::new();
     let mut byte = [0u8; 1];
     while buf.last() != Some(&0x1e) {
@@ -134,16 +135,16 @@ fn real_repo_request_returns_status() {
         buf.push(byte[0]);
     }
     let fields: Vec<&[u8]> = buf.split(|&b| b == 0x1f).collect();
-    // id + 1 + 27 数据字段
+    // id + 1 + 27 data fields
     assert_eq!(fields.len(), 29, "fields: {fields:?}");
     assert_eq!(fields[0], b"id");
     assert_eq!(fields[1], b"1");
     assert_eq!(fields[2], repo.to_str().unwrap().as_bytes()); // workdir
     assert_eq!(fields[3].len(), 40); // commit sha
     assert_eq!(fields[4], b"main"); // local branch
-    // 数据字段索引 = 协议 field 常量 + 2（id、1 两个前缀字段）
-    assert_eq!(fields[13], b"1"); // num_untracked（u）
-    assert_eq!(fields[11], b"0"); // num_unstaged（干净）
+    // Data field index = protocol field constant + 2 (the id and 1 prefix fields)
+    assert_eq!(fields[13], b"1"); // num_untracked (u)
+    assert_eq!(fields[11], b"0"); // num_unstaged (clean)
     drop(stdin);
     child.wait().unwrap();
 }

@@ -1,23 +1,24 @@
-//! `dir` 段截断策略（对齐 p10k `POWERLEVEL9K_SHORTEN_STRATEGY` 全量）。
+//! `dir` segment truncation strategies (the full p10k `POWERLEVEL9K_SHORTEN_STRATEGY` set).
 //!
-//! 支持的策略：
-//! - `truncate_to_unique`（默认）：从当前目录往回，把每个非锚定部件缩短到
-//!   "它在目录兄弟中的最短唯一前缀"；缩短后无省略符（对齐 p10k 的默认配置
-//!   `SHORTEN_DELIMITER=`）。锚点（home `~`/根、末尾 `length` 级、含 marker
-//!   文件的祖先）不缩。
-//! - `truncate_middle` / `truncate_from_right`：每级留前 `length`（middle 再留
-//!   后 `length`）字符，中间/尾部换成省略符。
-//! - `truncate_to_last`：只留末 `length` 级。
-//! - `truncate_to_first_and_last`：首 `length` 级 + 末 `length` 级，中间省略。
-//! - `truncate_absolute(_chars)`：整条路径按字符数硬截断（保留末尾）。
-//! - `truncate_with_folder_marker`：在 marker 文件处折叠。
+//! Supported strategies:
+//! - `truncate_to_unique` (default): walking back from the current directory, shorten every
+//!   non-anchor component to "its shortest unique prefix among directory siblings"; no ellipsis
+//!   is left after shortening (aligns with p10k's default `SHORTEN_DELIMITER=`). Anchors
+//!   (home `~`/root, the trailing `length` levels, ancestors containing a marker file) are not shortened.
+//! - `truncate_middle` / `truncate_from_right`: keep the first `length` characters per level
+//!   (middle also keeps the last `length`), replacing the middle/tail with the ellipsis.
+//! - `truncate_to_last`: keep only the last `length` levels.
+//! - `truncate_to_first_and_last`: first `length` levels + last `length` levels, eliding the middle.
+//! - `truncate_absolute(_chars)`: hard-truncate the whole path by character count (keeping the tail).
+//! - `truncate_with_folder_marker`: fold at marker files.
 //!
-//! 返回按类别标记的部件，render 据此映射到 state 上色。
+//! Returns parts tagged by class; render maps those to states for coloring.
 //!
-//! # 性能（对齐 p10k 的 mtime 缓存）
+//! # Performance (aligns with p10k's mtime cache)
 //!
-//! `truncate_to_unique` 每级按 `(绝对目录, 父目录 mtime_ns)` 缓存缩短结果：
-//! 目录不变直接复用，不加 `readdir`。
+//! `truncate_to_unique` caches each level's shortened result under
+//! `(absolute directory, parent mtime_ns)`: an unchanged directory is reused directly,
+//! with no `readdir`.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -30,44 +31,44 @@ thread_local! {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Class {
-    /// 锚（首 `~`/根/当前目录/marker 祖先），不缩。
+    /// Anchor (leading `~`/root/current directory/marker ancestor), not shortened.
     Anchor,
     Shortened,
-    /// 普通（未缩但非锚）。
+    /// Normal (not shortened, but not an anchor).
     Normal,
 }
 
-/// 折叠后的一个部件。
+/// One folded part.
 #[derive(Clone)]
 pub struct DirPart {
     pub text: String,
     pub class: Class,
 }
 
-/// 截断策略（p10k `POWERLEVEL9K_SHORTEN_STRATEGY`）。
+/// Truncation strategy (p10k `POWERLEVEL9K_SHORTEN_STRATEGY`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Strategy {
-    /// 每级缩到兄弟中的最短唯一前缀。p11k/p10k 默认。
+    /// Shorten each level to its shortest unique prefix among siblings. The p11k/p10k default.
     #[default]
     TruncateToUnique,
-    /// 每级留前 N + 省略符 + 后 N。
+    /// Keep the first N + ellipsis + last N per level.
     TruncateMiddle,
-    /// 每级留前 N + 省略符。
+    /// Keep the first N + ellipsis per level.
     TruncateFromRight,
-    /// 只留末 N 级。
+    /// Keep only the last N levels.
     TruncateToLast,
-    /// 首 N 级 + 末 N 级，中间省略。
+    /// First N levels + last N levels, eliding the middle.
     TruncateToFirstAndLast,
-    /// 整条路径按字符数硬截断（保留末尾）。
+    /// Hard-truncate the whole path by character count (keeping the tail).
     TruncateAbsolute,
-    /// 在 marker 文件处折叠。
+    /// Fold at marker files.
     TruncateWithFolderMarker,
-    /// 空/未知策略（p10k 的默认分支）：只保留末 N 级，前面用省略符。
+    /// Empty/unknown strategy (p10k's default branch): keep only the last N levels, prefixed by the ellipsis.
     FoldToLast,
 }
 
 impl Strategy {
-    /// p10k 的策略名 → 策略；空/未知走默认分支（`FoldToLast`）。
+    /// p10k strategy name → strategy; empty/unknown takes the default branch (`FoldToLast`).
     pub fn parse(s: &str) -> Strategy {
         match s {
             "truncate_to_unique" => Strategy::TruncateToUnique,
@@ -82,22 +83,22 @@ impl Strategy {
     }
 }
 
-/// 折叠选项（对应 p10k `SHORTEN_*` / `DIR_*` 那几个参数）。
+/// Folding options (the p10k `SHORTEN_*` / `DIR_*` parameters).
 pub struct Opts {
     pub strategy: Strategy,
-    /// `SHORTEN_DIR_LENGTH`（保留级数 / 每级字符数）。
+    /// `SHORTEN_DIR_LENGTH` (levels kept / characters per level).
     pub length: usize,
-    /// `SHORTEN_DELIMITER`；空 = 不留省略符。
+    /// `SHORTEN_DELIMITER`; empty = leave no ellipsis.
     pub delimiter: String,
-    /// `SHORTEN_FOLDER_MARKER`；空 = 用内置 marker 列表。
+    /// `SHORTEN_FOLDER_MARKER`; empty = use the built-in marker list.
     pub marker: String,
-    /// `truncate_to_unique` 的折叠预算：`None` = 不折，
-    /// `Some(n)` = 这一行超宽了、需要省出 n 列。
-    /// 其它策略与 p10k 一样与宽度无关，忽略本字段。
+    /// Folding budget for `truncate_to_unique`: `None` = no folding,
+    /// `Some(n)` = this line is too wide and n columns must be saved.
+    /// Other strategies ignore this field, being width-independent like p10k.
     pub budget: Option<usize>,
 }
 
-/// 内置 marker 文件（p10k 的默认 `markers` 列表）。
+/// Built-in marker files (p10k's default `markers` list).
 const MARKERS: &[&str] = &[
     ".git",
     ".hg",
@@ -107,7 +108,7 @@ const MARKERS: &[&str] = &[
     "go.mod",
 ];
 
-/// 折叠绝对路径 `cwd`，返回部件序列（不含 `~`/`/`；调用方拼装并加前缀）。
+/// Fold the absolute path `cwd` and return the part sequence (without `~`/`/`; the caller assembles it and adds prefixes).
 pub fn shorten(cwd: &Path, home: Option<&Path>, opts: &Opts) -> Vec<DirPart> {
     let len = opts.length.max(1);
     let (parts, base) = split_parts(cwd, home);
@@ -128,7 +129,7 @@ pub fn shorten(cwd: &Path, home: Option<&Path>, opts: &Opts) -> Vec<DirPart> {
     }
 }
 
-/// 拆成部件序列 + 基准目录（home 优先，否则根）。
+/// Split into a part sequence + base directory (home when available, otherwise root).
 fn split_parts(cwd: &Path, home: Option<&Path>) -> (Vec<String>, PathBuf) {
     if let Some(home) = home
         && let Ok(rel) = cwd.strip_prefix(home)
@@ -146,10 +147,10 @@ fn to_parts(p: &Path) -> Vec<String> {
         .collect()
 }
 
-/// `truncate_to_unique`：锚点保留，其余缩到唯一前缀。
+/// `truncate_to_unique`: anchors are kept, the rest are shortened to unique prefixes.
 ///
-/// `opts.budget` 为 `None` 时整条路径原样；`Some(n)` 时
-/// 从前往后逐级折，累计省出的列数够 n 就停。
+/// With `opts.budget` as `None` the whole path is left as is; with `Some(n)` levels are folded
+/// front to back until the accumulated saved columns reach n.
 fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) -> Vec<DirPart> {
     let n = parts.len();
     let anchor_tail = shortenlen.min(n);
@@ -192,7 +193,7 @@ fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) ->
     out
 }
 
-/// `truncate_middle` / `truncate_from_right`：首尾两个部件保留，中间每级截断。
+/// `truncate_middle` / `truncate_from_right`: the first and last parts are kept, interior levels are truncated.
 fn fold_truncate(parts: &[String], len: usize, delim: &str, middle: bool) -> Vec<DirPart> {
     let d = delim.chars().count();
     let n = parts.len();
@@ -200,7 +201,7 @@ fn fold_truncate(parts: &[String], len: usize, delim: &str, middle: bool) -> Vec
         .iter()
         .enumerate()
         .map(|(i, part)| {
-            // p10k 只处理第 2 个到倒数第 2 个部件（首尾原样）。
+            // p10k handles only the 2nd through 2nd-to-last parts (first and last as is).
             let interior = i > 0 && i + 1 < n;
             let chars: Vec<char> = part.chars().collect();
             let suf = if middle { len } else { 0 };
@@ -221,7 +222,7 @@ fn fold_truncate(parts: &[String], len: usize, delim: &str, middle: bool) -> Vec
         .collect()
 }
 
-/// `truncate_to_last`：只留末 `len` 级，前面的整体丢成一个省略符。
+/// `truncate_to_last`: keep only the last `len` levels, dropping the rest into a single ellipsis.
 fn fold_to_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     let n = parts.len();
     if n <= len {
@@ -243,7 +244,7 @@ fn fold_to_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     out
 }
 
-/// `truncate_to_first_and_last`：首 `len` + 末 `len`，中间一个省略符。
+/// `truncate_to_first_and_last`: first `len` + last `len`, with one ellipsis in between.
 fn fold_first_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     let n = parts.len();
     if n <= len * 2 {
@@ -271,13 +272,13 @@ fn fold_first_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     out
 }
 
-/// `truncate_absolute(_chars)`：整条路径按字符数截断，保留末尾。
+/// `truncate_absolute(_chars)`: truncate the whole path by character count, keeping the tail.
 fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
-    // 从末尾往回累加部件，直到超过 len；越界的那级只留末尾若干字符。
+    // Accumulate parts back from the end until len is exceeded; the overflowing level keeps only its tail characters.
     let mut acc = 0usize;
     let mut start = 0usize;
     for i in (0..parts.len()).rev() {
-        let l = parts[i].chars().count() + 1; // +1 是分隔符
+        let l = parts[i].chars().count() + 1; // +1 for the separator
         if acc + l > len {
             start = i;
             break;
@@ -286,7 +287,7 @@ fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     }
     let mut out: Vec<DirPart> = Vec::new();
     if start > 0 {
-        // 越界的那级截掉开头，前面丢弃。
+        // The overflowing level loses its head and everything before it is dropped.
         let part = &parts[start];
         let keep = len.saturating_sub(acc);
         let chars: Vec<char> = part.chars().collect();
@@ -313,7 +314,7 @@ fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     out
 }
 
-/// `truncate_with_folder_marker`：marker 文件之间的间隔折叠成省略符。
+/// `truncate_with_folder_marker`: gaps between marker files fold into the ellipsis.
 fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -> Vec<DirPart> {
     let n = parts.len();
     let mut marks: Vec<usize> = Vec::new();
@@ -323,7 +324,7 @@ fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -
             marks.push(i);
         }
     }
-    marks.push(usize::MAX); // 相当于 p10k 里补的 1（最前面没有 marker 时也要能算出省略区间）
+    marks.push(usize::MAX); // stands for the 1 p10k appends (so the elided span is computable even without a marker at the front)
     let mut hidden: Vec<bool> = vec![false; n];
     for w in marks.windows(2) {
         let (hi, lo) = (w[0], w[1]);
@@ -356,7 +357,7 @@ fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -
     out
 }
 
-/// 空策略的默认分支：保留末 `len` 级，前面一个省略符。
+/// Default branch for an empty strategy: keep the last `len` levels, prefixed by one ellipsis.
 fn fold_keep_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     let n = parts.len();
     if n <= len {
@@ -375,7 +376,7 @@ fn fold_keep_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     out
 }
 
-/// 全保留（策略不需要折叠时）。
+/// Keep everything (when the strategy needs no folding).
 fn plain(parts: &[String]) -> Vec<DirPart> {
     let n = parts.len();
     parts
@@ -388,7 +389,7 @@ fn plain(parts: &[String]) -> Vec<DirPart> {
         .collect()
 }
 
-/// 非折叠部件的类别：最后一个部件是锚（当前目录），其余普通。
+/// Class for a non-folded part: the last part is the anchor (current directory), the rest are normal.
 fn class_for(i: usize, n: usize) -> Class {
     if i + 1 == n {
         Class::Anchor
@@ -405,7 +406,7 @@ fn join(base: &Path, parts: &[String]) -> PathBuf {
     p
 }
 
-/// 部件在它目录兄弟中的最短唯一前缀（缓存优先）。
+/// Shortest unique prefix of the part among its directory siblings (cache first).
 fn shorten_component(abs: &Path, name: &str) -> String {
     let parent = abs.parent().unwrap_or_else(|| Path::new("/"));
     let parent_mtime = file_mtime(parent).unwrap_or(-1);
@@ -431,7 +432,7 @@ fn shorten_component(abs: &Path, name: &str) -> String {
     best
 }
 
-/// 该绝对路径前缀是否含 marker 文件的祖先（`opts.marker` 非空时只用它）。
+/// Whether this absolute path prefix has an ancestor containing a marker file (only `opts.marker` when it is non-empty).
 fn has_marker_in(abs: &Path, opts: &Opts) -> bool {
     if !opts.marker.is_empty() {
         return abs.join(&opts.marker).exists();
@@ -464,7 +465,7 @@ mod tests {
             length,
             delimiter: delimiter.into(),
             marker: String::new(),
-            // 测试里给足预算(等价于"行放不下、随便折")。
+            // Give the test ample budget (equivalent to "the line does not fit, fold freely").
             budget: Some(usize::MAX),
         }
     }
@@ -479,7 +480,7 @@ mod tests {
     #[test]
     fn truncate_middle_keeps_head_and_tail() {
         let o = opts(Strategy::TruncateMiddle, 2, "…");
-        // 首尾部件原样；中间部件留前 2 + 省略符 + 后 2。
+        // First and last parts as is; interior parts keep the first 2 + ellipsis + last 2.
         assert_eq!(
             texts("/alpha/bravocharlie/delta/echo", &o),
             vec!["alpha", "br…ie", "delta", "echo"]
@@ -489,7 +490,7 @@ mod tests {
     #[test]
     fn truncate_from_right_keeps_head() {
         let o = opts(Strategy::TruncateFromRight, 3, "…");
-        // delta(5) > 3+1 也截；最后一个部件始终原样。
+        // delta (5) > 3+1 is truncated too; the last part is always left as is.
         assert_eq!(
             texts("/alpha/bravocharlie/delta/echo", &o),
             vec!["alpha", "bra…", "del…", "echo"]

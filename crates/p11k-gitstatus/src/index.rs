@@ -268,10 +268,11 @@ impl Index {
 /// nsec of 0 skips nsec comparison (GITSTATUS_ZERO_NSEC — git zeroes nsec
 /// after racy detection).
 pub fn is_modified(entry: &IndexEntry, st: &libc::stat, caps: &RepoCaps) -> bool {
-    // Submodule (gitlink, mode 160000): 磁盘上是目录，其 stat 字段与 index 里
-    // 的 gitlink 条目（size/mtime/ino 都为 0）不可比，mode 也永远不匹配
-    // （S_IFDIR vs S_IFGITLINK）。目录仍在即视为未改，对齐原版 dirty 扫描的
-    // `GIT_SUBMODULE_IGNORE_DIRTY`；目录缺失由 scan 层的 fstatat 失败报 deleted。
+    // Submodule (gitlink, mode 160000): on disk it is a directory, so its stat fields are not
+    // comparable with the index's gitlink entry (size/mtime/ino all 0), and the mode never
+    // matches either (S_IFDIR vs S_IFGITLINK). A directory still present counts as unmodified,
+    // mirroring the original dirty scan's `GIT_SUBMODULE_IGNORE_DIRTY`; a missing directory is
+    // reported as deleted by the scan layer's failed fstatat.
     if entry.mode & libc::S_IFMT == 0o160000 {
         return false;
     }

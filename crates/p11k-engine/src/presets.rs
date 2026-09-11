@@ -1,27 +1,28 @@
-//! 内置预设主题：用 [`Config`] 结构体构造，不硬编码 KDL 字符串。
+//! Built-in preset themes: constructed from [`Config`] structs, with no hard-coded KDL strings.
 //!
-//! 视觉对齐 p10k 官方 config（`config/p10k-{lean,classic,rainbow,pure}.zsh`）。
-//! 颜色变体参数化：classic 段底四档、classic/rainbow/lean 帧四档、lean 256/8 色、
-//! pure original/snazzy。向导按用户答案调构造函数并改字段；`--preset`/引擎回退用
-//! [`build`] 的默认参数。引擎能力未覆盖的 p10k 参数不迁移。
+//! Visually aligned with the official p10k configs (`config/p10k-{lean,classic,rainbow,pure}.zsh`).
+//! Color variants are parameterized: four classic segment backgrounds, four classic/rainbow/lean
+//! frame shades, lean 256/8 colors, pure original/snazzy. The wizard calls the constructors with
+//! the user's answers and edits fields; `--preset`/engine fallback use [`build`]'s defaults. p10k
+//! parameters the engine does not cover are not migrated.
 
 use crate::config::{
     Color, Config, Element, Frame, FramePiece, Prop, Segment, Separators, StateSpec, Style,
 };
 use crate::i18n::msgid;
 
-/// classic 段背景四档（Lightest/Light/Dark/Darkest）。
+/// Four classic segment backgrounds (Lightest/Light/Dark/Darkest).
 pub const BG_COLORS: [u8; 4] = [240, 238, 236, 234];
-/// classic `sub` 细线四档（p10k wizard 的 `sep_color`）。
+/// Four classic `sub` thin-line colors (p10k wizard's `sep_color`).
 pub const SEP_COLORS: [u8; 4] = [248, 246, 244, 242];
-/// 帧四档（classic/rainbow 的 frame 线条颜色）。
+/// Four frame shades (the classic/rainbow frame line color).
 pub const FRAME_COLORS: [u8; 4] = [244, 242, 240, 238];
 
 fn x(n: u8) -> Color {
     Color::Xterm(n)
 }
 
-// ---- 段构造函数（四套预设共享）----
+// ---- Segment constructors (shared by all four presets) ----
 
 fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> Segment {
     let mut s = Segment::default();
@@ -78,18 +79,18 @@ fn vcs_seg(
         .insert("clean-foreground".into(), Prop::Int(clean as i64));
     s.props
         .insert("modified-foreground".into(), Prop::Int(modified as i64));
-    // conflicted 在 p10k 的格式化函数里是独立的 `local conflicted`,
-    // 与 staged/unstaged 用的 modified 不同色（classic/lean 红 196）。
+    // In p10k's formatting function conflicted is its own `local conflicted`, a different
+    // color from the modified used by staged/unstaged (red 196 for classic/lean).
     s.props
         .insert("conflicted-foreground".into(), Prop::Int(conflicted as i64));
     s.props
         .insert("untracked-foreground".into(), Prop::Int(untracked as i64));
-    // meta 是 p10k 格式化函数里的 `local meta`:detached HEAD 的 `@`、
-    // 标签的 `#` 用它（classic/lean 246 灰、rainbow 7 白）。
+    // meta is the `local meta` of p10k's formatting function: used by detached HEAD's `@`
+    // and the tag's `#` (gray 246 for classic/lean, white 7 for rainbow).
     s.props
         .insert("meta-foreground".into(), Prop::Int(meta as i64));
-    // 分支名超 32 字符 → 前 12 + … + 后 12（对齐 p10k 各 config 里硬编码的
-    // `(( $#branch > 32 )) && branch[13,-13]="…"`）。
+    // Branch names over 32 characters → first 12 + … + last 12 (aligns with the
+    // `(( $#branch > 32 )) && branch[13,-13]="…"` hard-coded in the p10k configs).
     s.props.insert("shorten-length".into(), Prop::Int(12));
     s.props.insert("shorten-min-length".into(), Prop::Int(32));
     s.props.insert(
@@ -157,10 +158,10 @@ fn prompt_char_seg(ok: u8, err: u8) -> Segment {
     s
 }
 
-// ---- 帧 / 分隔符 ----
+// ---- Frame / separators ----
 
-/// powerline 箭头帧（classic/rainbow）：首行 `╭─`，中间 `├─`，输入行 `╰─`。
-/// 帧级 fg 给所有块上色（对齐 p10k `%<frame_color>F╭─`）。
+/// powerline arrow frame (classic/rainbow): first line `╭─`, middle `├─`, input line `╰─`.
+/// The frame-level fg colors every piece (aligns with p10k `%<frame_color>F╭─`).
 fn powerline_frame(color: u8) -> Frame {
     let mut f = Frame::default();
     f.style.fg = x(color);
@@ -187,8 +188,8 @@ fn powerline_frame(color: u8) -> Frame {
     f
 }
 
-/// `sub` 细线的前景色（p10k wizard 的 `sep_color`，随 classic 颜色档变）。
-/// rainbow 不设（p10k 的 rainbow subsep 不嵌颜色，跟段底渐变）。
+/// Foreground of the `sub` thin line (p10k wizard's `sep_color`, varying with the classic shade).
+/// Not set for rainbow (p10k's rainbow subsep embeds no color and follows the segment background gradient).
 fn powerline_separators(sub_foreground: Option<u8>) -> Separators {
     Separators {
         segment: "\u{e0b0}".into(),
@@ -206,14 +207,14 @@ fn powerline_separators(sub_foreground: Option<u8>) -> Separators {
     }
 }
 
-/// 空配置骨架（mode 默认 nerdfont-complete，vcs 远端图标用内置表）。
+/// Empty config skeleton (mode defaults to nerdfont-complete, vcs remote icons use the built-in table).
 fn base() -> Config {
     Config::default()
 }
 
-// ---- 四套预设 ----
+// ---- The four presets ----
 
-/// lean：单行、无框无箭头、透明底。`colors_8` 给 8 色降级版（对齐 p10k lean-8colors）。
+/// lean: single line, no frame or arrows, transparent background. `colors_8` requests the 8-color downgrade (aligns with p10k lean-8colors).
 pub fn lean(colors_8: bool) -> Config {
     let (
         dir,
@@ -232,12 +233,12 @@ pub fn lean(colors_8: bool) -> Config {
         pc_ok,
         pc_err,
     ) = if colors_8 {
-        // p10k lean-8colors:clean 2 / modified 3 / untracked 4(蓝) / conflicted 1,
-        // meta 用默认前景(%f,这里给 0)。
+        // p10k lean-8colors: clean 2 / modified 3 / untracked 4 (blue) / conflicted 1,
+        // with meta on the default foreground (%f, 0 here).
         (4, 4, 4, false, 2, 3, 1, 4, 0, 2, 1, 3, 1, 2, 1)
     } else {
-        // p10k lean:clean 76 / modified 178 / untracked 39(蓝) / conflicted 196,
-        // meta 246(灰)。
+        // p10k lean: clean 76 / modified 178 / untracked 39 (blue) / conflicted 196,
+        // meta 246 (gray).
         (
             31, 103, 39, true, 76, 178, 196, 39, 246, 70, 160, 101, 70, 76, 196,
         )
@@ -267,7 +268,7 @@ pub fn lean(colors_8: bool) -> Config {
     cfg
 }
 
-/// classic：多行框 + powerline 箭头，段统一深底。`color` 是四档（1..=4）。
+/// classic: multi-line frame + powerline arrows, one dark background for all segments. `color` is one of the four shades (1..=4).
 pub fn classic(color: usize) -> Config {
     let i = color.clamp(1, 4) - 1;
     let bg = BG_COLORS[i];
@@ -286,18 +287,20 @@ pub fn classic(color: usize) -> Config {
     ]];
     cfg.separators = powerline_separators(Some(SEP_COLORS[i]));
     cfg.frame = powerline_frame(frame);
-    // 底色逐段写（p10k classic 靠全局 `POWERLEVEL9K_BACKGROUND=238` 继承；
-    // p11k 的 `defaults.bg` 同时是帧字符/text 的回退终点，写在那里会把 `╭─`
-    // `╰─` 这些**帧**也染上底色，而 p10k 的帧是透明的）。新增段（wizard 的
-    // time 等）由 wizard 按当前风格补上同样的底色。
+    // The background is written per segment (p10k classic inherits it from the global
+    // `POWERLEVEL9K_BACKGROUND=238`, while p11k's `defaults.bg` is also the fallback end for
+    // frame characters/text, so writing it there tints the **frame** pieces `╭─`/`╰─` too,
+    // whereas p10k's frame is transparent). Segments added later (the wizard's time etc.) get
+    // the same background from the wizard for the current style.
     cfg.segments
         .insert("os_icon".into(), os_icon_seg(255, Some(bg)));
     cfg.segments
         .insert("dir".into(), dir_seg(31, 103, 39, true, Some(bg)));
-    // untracked=39(蓝):p10k classic/lean 的 vcs 格式化函数里 `local
-    // untracked='%39F'`,与 POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND(76,只给
-    // vcs_info 回退路径用)不是一回事,实际渲染出来是蓝色。
-    // conflicted=196(红):p10k classic `local conflicted='%196F'`。
+    // untracked=39 (blue): p10k's classic/lean vcs formatting function uses
+    // `local untracked='%39F'`, which is not the same as
+    // POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND (76, used only by the vcs_info fallback path) —
+    // the actual rendering is blue.
+    // conflicted=196 (red): p10k classic `local conflicted='%196F'`.
     cfg.segments
         .insert("vcs".into(), vcs_seg(None, 76, 178, 196, 39, 246, Some(bg)));
     cfg.segments
@@ -311,7 +314,7 @@ pub fn classic(color: usize) -> Config {
     cfg
 }
 
-/// rainbow：classic 结构但每段彩色底（对齐 p10k rainbow）。`color` 是帧四档。
+/// rainbow: classic structure but a colored background per segment (aligns with p10k rainbow). `color` is one of the four frame shades.
 pub fn rainbow(color: usize) -> Config {
     let i = color.clamp(1, 4) - 1;
     let frame = FRAME_COLORS[i];
@@ -327,16 +330,17 @@ pub fn rainbow(color: usize) -> Config {
         Element::Seg("command_execution_time".into()),
         Element::Seg("background_jobs".into()),
     ]];
-    // rainbow 的细线不嵌颜色（p10k 同款，跟段底渐变）。
+    // rainbow's thin lines embed no color (same as p10k, following the segment background gradient).
     cfg.separators = powerline_separators(None);
     cfg.frame = powerline_frame(frame);
-    // 彩虹底：os 白、dir 蓝、vcs 绿、status 黑、exec 黄、jobs 黑。
+    // Rainbow backgrounds: os white, dir blue, vcs green, status black, exec yellow, jobs black.
     cfg.segments
         .insert("os_icon".into(), os_icon_seg(232, Some(7)));
     cfg.segments
         .insert("dir".into(), dir_seg(254, 250, 255, true, Some(4)));
-    // p10k rainbow 的 vcs 格式化函数:clean/modified/untracked 全是 `%0F`(黑,
-    // 段底是绿 2),conflicted `%1F`(红)。此前传 2/3/2，绿底绿字会让分支名和 ?N 不可见。
+    // p10k rainbow's vcs formatting function: clean/modified/untracked are all `%0F` (black, on
+    // the green 2 segment background) and conflicted is `%1F` (red). Previously 2/3/2 was passed,
+    // and green on green made the branch name and ?N invisible.
     cfg.segments
         .insert("vcs".into(), vcs_seg(None, 0, 0, 1, 0, 7, Some(2)));
     cfg.segments
@@ -350,9 +354,9 @@ pub fn rainbow(color: usize) -> Config {
     cfg
 }
 
-/// pure：单行极简，无框无箭头，透明底。`snazzy` 选 Snazzy 真彩，否则 Original。
+/// pure: single-line minimal, no frame or arrows, transparent background. `snazzy` selects the Snazzy true colors, otherwise Original.
 pub fn pure(snazzy: bool) -> Config {
-    // 对齐 p10k pure 的 pure_original / pure_snazzy 调色板。
+    // Aligns with the pure_original / pure_snazzy palettes of p10k pure.
     let (grey, red, yellow, blue, magenta) = if snazzy {
         (
             x(242),
@@ -372,7 +376,7 @@ pub fn pure(snazzy: bool) -> Config {
         Element::Seg("vcs".into()),
         Element::Seg("command_execution_time".into()),
     ]];
-    // p10k pure 无右栏。
+    // p10k pure has no right column.
     cfg.layout.right = Vec::new();
 
     let mut context = Segment::default();
@@ -400,9 +404,9 @@ pub fn pure(snazzy: bool) -> Config {
     cfg
 }
 
-// ---- 预设清单 ----
+// ---- Preset catalog ----
 
-/// 预设身份（名字/标题/默认参数构建）。
+/// Preset identity (name/title/default-argument construction).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PresetKind {
     Lean,
@@ -421,7 +425,7 @@ impl PresetKind {
         }
     }
 
-    /// 向导里的风格名（对齐 p10k `ask_style` 的说法）。
+    /// Style name shown in the wizard (aligns with p10k `ask_style`'s wording).
     pub fn title(self) -> &'static str {
         match self {
             PresetKind::Lean => msgid("Lean."),
@@ -431,7 +435,7 @@ impl PresetKind {
         }
     }
 
-    /// 全部预设，顺序即向导展示顺序。
+    /// All presets, in wizard display order.
     pub const ALL: [PresetKind; 4] = [
         PresetKind::Lean,
         PresetKind::Classic,
@@ -444,7 +448,7 @@ pub fn by_name(name: &str) -> Option<PresetKind> {
     PresetKind::ALL.iter().copied().find(|k| k.name() == name)
 }
 
-/// 用默认参数构建（`--preset` / 引擎回退用）。
+/// Build with default arguments (used by `--preset` / engine fallback).
 pub fn build(kind: PresetKind) -> Config {
     match kind {
         PresetKind::Lean => lean(false),
@@ -482,9 +486,10 @@ mod tests {
 
     #[test]
     fn classic_colors_every_segment_and_keeps_frame_transparent() {
-        // p10k classic 的底色来自全局 `POWERLEVEL9K_BACKGROUND`，段继承它、帧字符
-        // 仍透明。p11k 的 `defaults.bg` 同时是帧/text 的回退终点，所以底色必须逐段
-        // 写：写进 defaults 会把 `╭─`/`╰─` 也染上底（实测过）。
+        // p10k classic takes its background from the global `POWERLEVEL9K_BACKGROUND`, which
+        // segments inherit while frame characters stay transparent. p11k's `defaults.bg` is also
+        // the fallback end for frame/text, so the background must be written per segment:
+        // putting it in defaults tints `╭─`/`╰─` as well (verified empirically).
         for (color, want) in [(1usize, 240u8), (2, 238), (3, 236), (4, 234)] {
             let c = classic(color);
             for seg in ["os_icon", "dir", "vcs", "status", "command_execution_time"] {
@@ -499,7 +504,7 @@ mod tests {
                 crate::config::Color::Default,
                 "defaults should have no bg (otherwise frame chars get tinted)"
             );
-            // 帧块样式：只有前景色，没有背景。
+            // Frame piece style: foreground only, no background.
             let piece = c.frame_piece_style(&c.frame.first_prefix);
             assert_eq!(
                 piece.bg,
@@ -507,7 +512,7 @@ mod tests {
                 "frame chars must be transparent"
             );
         }
-        // lean/pure/rainbow 全局透明；rainbow 每段各自底色。
+        // lean/pure/rainbow are globally transparent; rainbow gives each segment its own background.
         assert_eq!(lean(false).defaults.bg, crate::config::Color::Default);
         assert_eq!(pure(false).defaults.bg, crate::config::Color::Default);
         assert_eq!(rainbow(1).defaults.bg, crate::config::Color::Default);
@@ -525,7 +530,7 @@ mod tests {
 
     #[test]
     fn wizard_template_kdl_writes_per_segment_background() {
-        // wizard 生成的配置：底色逐段写、defaults 里没有 bg（帧才不会染色）。
+        // Wizard-generated config: background per segment, no bg in defaults (so the frame is not tinted).
         let kdl = classic(2).to_kdl();
         let dir_line = kdl
             .lines()
@@ -539,7 +544,7 @@ mod tests {
             !kdl.contains("defaults"),
             "should not write defaults (it would tint frame chars too):\n{kdl}"
         );
-        // rainbow 相反：每段各有底色，time 段自己带 7。
+        // rainbow is the opposite: every segment has its own background, and the time segment carries 7.
         let rb = rainbow(1).to_kdl();
         assert!(
             rb.contains("bg=7"),
@@ -554,20 +559,20 @@ mod tests {
             Some(Prop::Int(n)) => Some(*n),
             _ => None,
         };
-        // p10k lean/classic 的 vcs 格式化函数:clean %76F、modified %178F、
-        // untracked %39F(蓝)、conflicted %196F(红)。untracked 与
-        // POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND(76,只给 vcs_info 回退路径)不同。
+        // p10k lean/classic's vcs formatting function: clean %76F, modified %178F,
+        // untracked %39F (blue), conflicted %196F (red). untracked differs from
+        // POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND (76, used only by the vcs_info fallback path).
         for c in [lean(false), classic(1)] {
             assert_eq!(int(&c, "vcs", "clean-foreground"), Some(76));
             assert_eq!(int(&c, "vcs", "modified-foreground"), Some(178));
             assert_eq!(int(&c, "vcs", "untracked-foreground"), Some(39));
             assert_eq!(int(&c, "vcs", "conflicted-foreground"), Some(196));
         }
-        // p10k lean-8colors:untracked 4(蓝)、conflicted 1(红)。
+        // p10k lean-8colors: untracked 4 (blue), conflicted 1 (red).
         let l8 = lean(true);
         assert_eq!(int(&l8, "vcs", "untracked-foreground"), Some(4));
         assert_eq!(int(&l8, "vcs", "conflicted-foreground"), Some(1));
-        // p10k rainbow:vcs 段底是绿 2,文字全是黑 0(不能与底色同色,否则文字不可见)。
+        // p10k rainbow: the vcs segment background is green 2 and all its text is black 0 (it must not match the background, or the text becomes invisible).
         let rb = rainbow(1);
         let vcs = rb.segment("vcs");
         assert_eq!(vcs.style.bg, x(2));
@@ -579,7 +584,7 @@ mod tests {
 
     #[test]
     fn vcs_branch_shortening_matches_p10k_hardcoded_rule() {
-        // p10k 各 config 里写死 `(( $#branch > 32 )) && branch[13,-13]="…"`。
+        // `(( $#branch > 32 )) && branch[13,-13]="…"` is hard-coded in the p10k configs.
         use crate::config::Prop;
         let c = classic(1);
         let p = |k: &str| c.segment("vcs").prop(k).cloned();

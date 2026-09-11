@@ -1,9 +1,11 @@
-//! gettext 薄封装：源码里写英文 msgid，运行时按 locale 取 `po/<lang>.po` 的翻译。
+//! Thin gettext wrapper: sources carry English msgids, translated at runtime from
+//! `po/<lang>.po` for the current locale.
 //!
-//! 默认就是英文（没有翻译时 gettext 原样返回 msgid），中文来自 `po/zh_CN.po`。
-//! 语言由标准环境变量决定（`LANG` / `LC_ALL` / `LANGUAGE`），例如 `LANG=zh_CN.UTF-8`。
-//! 翻译目录默认是构建期编译出来的 `$OUT_DIR/locale`，可用 `P11K_LOCALEDIR` 覆盖
-//! （装到系统时指到 `/usr/share/locale`）。
+//! English is the default (gettext returns the msgid unchanged when no translation
+//! exists); Chinese comes from `po/zh_CN.po`. The language is chosen by the standard
+//! environment variables (`LANG` / `LC_ALL` / `LANGUAGE`), e.g. `LANG=zh_CN.UTF-8`.
+//! The catalog directory defaults to the build-time `$OUT_DIR/locale` and can be
+//! overridden with `P11K_LOCALEDIR` (`/usr/share/locale` for a system install).
 
 use std::sync::Once;
 
@@ -11,10 +13,10 @@ use gettextrs::{LocaleCategory, bindtextdomain, gettext, setlocale, textdomain};
 
 static INIT: Once = Once::new();
 
-/// 绑定翻译目录，进程里调用一次即可（幂等）。
+/// Bind the catalog directory. Call once per process (idempotent).
 pub fn init() {
     INIT.call_once(|| {
-        // 空字符串 = 从环境变量取 locale。
+        // An empty string means: take the locale from the environment.
         let _ = setlocale(LocaleCategory::LcAll, "");
         let dir =
             std::env::var("P11K_LOCALEDIR").unwrap_or_else(|_| env!("P11K_LOCALEDIR").to_string());
@@ -23,16 +25,17 @@ pub fn init() {
     });
 }
 
-/// 翻译一条 msgid。找不到翻译时返回原文。
+/// Translate one msgid. Returns the original text when no translation exists.
 pub fn t(s: &str) -> String {
     gettext(s)
 }
 
-/// 标记一个字符串是 msgid，不翻译。
+/// Mark a string as a msgid without translating it.
 ///
-/// 给「先收下文案、稍后在别处统一翻译」的地方用（wizard 的问题标题与选项：
-/// 调用点只传字面量，翻译发生在 `ask_choice_preview`/`ask_yn` 里）。有了它，
-/// `xgettext --keyword=msgid` 就能把那些字面量一并提取进 `po/p11k.pot`。
+/// For call sites that take the text now and translate it later in one place (the
+/// wizard's question titles and options: the call site passes only the literal,
+/// and `ask_choice_preview`/`ask_yn` translate). With this, `xgettext
+/// --keyword=msgid` picks those literals up into `po/p11k.pot`.
 pub const fn msgid(s: &'static str) -> &'static str {
     s
 }
@@ -42,8 +45,8 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    /// 装了文案的源文件（与 tools/i18n.sh 扫的是同一批；i18n.rs 自己不算，
-    /// 它只有封装，没有文案）。
+    /// Source files carrying text (the same set tools/i18n.sh scans; i18n.rs itself
+    /// does not count, it holds only wrappers, no text).
     const SOURCES: &[(&str, &str)] = &[
         ("main.rs", include_str!("main.rs")),
         ("config.rs", include_str!("config.rs")),
@@ -52,7 +55,7 @@ mod tests {
         ("wizard.rs", include_str!("wizard.rs")),
     ];
 
-    /// 解析 .po/.pot:每条 msgid 取出来（含续行分片），头部那条空 msgid 跳过。
+    /// Parse .po/.pot: pull out every msgid (including continuation chunks), skipping the empty header msgid.
     fn catalog_msgids(text: &str) -> BTreeSet<String> {
         let mut ids = BTreeSet::new();
         let mut cur: Option<String> = None;
@@ -63,8 +66,9 @@ mod tests {
                 }
                 cur = Some(unescape(rest.trim_matches('"')));
             } else if let Some(rest) = line.strip_prefix('"') {
-                // 上一条 msgid 的续行分片（msgstr 的续行不会走到这里：
-                // msgstr 行本身以 `msgstr` 开头，会先清掉 cur）。
+                // Continuation chunk of the previous msgid (msgstr continuations never
+                // reach here: the `msgstr` line itself starts with `msgstr` and clears
+                // cur first).
                 if let Some(s) = cur.as_mut() {
                     s.push_str(&unescape(rest.trim_matches('"')));
                 }
@@ -104,11 +108,13 @@ mod tests {
         out
     }
 
-    /// 扫源码里的 `t("…")` 与 `msgid("…")`。
+    /// Scan the sources for `t("…")` and `msgid("…")`.
     ///
-    /// 逐行去掉 `//` 注释后拼成一段字符流再找标记：rustfmt 会把长文案折行，
-    /// 所以 `t(`/`msgid(` 后面允许换行与缩进，只看紧跟的是不是字符串字面量。
-    /// 标记前面必须是分隔符，以免把 `format!(`、`gettext(` 之类误判为标记。
+    /// Strip `//` comments line by line and join the rest into one character stream
+    /// before searching for the markers: rustfmt wraps long text, so a newline and
+    /// indentation may follow `t(`/`msgid(` — only the string literal right after
+    /// matters. A marker must be preceded by a separator so that `format!(` and
+    /// `gettext(` are not mistaken for one.
     fn source_msgids(name: &str, src: &str) -> BTreeSet<String> {
         let code: String = src
             .lines()
@@ -205,7 +211,7 @@ mod tests {
         assert_eq!(gettext("Yes."), "是。");
         assert_eq!(gettext("Prompt Style"), "提示符风格");
         assert_eq!(gettext("Restart from the beginning."), "从头再来。");
-        // 没有翻译条目的 msgid 原样返回(英文即默认语言)。
+        // A msgid with no catalog entry is returned unchanged (English is the default language).
         let unknown = String::from("no such msgid");
         assert_eq!(gettext(&unknown), unknown);
 

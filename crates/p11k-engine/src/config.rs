@@ -1,20 +1,23 @@
-//! 主题配置:KDL 解析 + 内置 lean 主题。
+//! Theme configuration: KDL parsing + the built-in lean theme.
 //!
-//! 用 crate [`kdl`](kdl-rs,KDL 官方参考实现)解析，使用 KDL v2
+//! Parsed with the [`kdl`](kdl-rs, the official KDL reference implementation) crate, using KDL v2.
 //!
-//! 布局用行结构表达多行:
-//! - 布局:`layout { left { line {…} line {…} } right { line {…} } }`。
-//!   `left`/`right` 下每个 `line` 节点即一行;行内是段节点(`dir #true` 等,布尔原生,
-//!   `#false`/未列出则不启用,顺序=children 顺序);行与行之间就是换行。
-//! - 段:`segments { dir fg=39 bold=#true shorten-strategy="t" … }`。
-//!   段节点带属性:`fg`、`bg`、`bold`、
-//!   `content`/`icon`/`prefix`/`suffix`、`disabled`;其余进
-//!   [`Segment::props`](行为,段渲染函数按需读)。
-//! - state 覆盖:段节点下 `state <NAME> fg=…` 子节点;其样式覆盖段默认,
-//!   即 p10k `SEG[_STATE]_ATTR` 三段回退(段STATE → 段 → [`Config::defaults`] 全局兜底)。
-//! - 默认:顶层 `defaults { … }` 是全局回退样式。
+//! Layout expresses multiple lines through line structure:
+//! - Layout: `layout { left { line {…} line {…} } right { line {…} } }`.
+//!   Each `line` node under `left`/`right` is one line; inside a line are segment nodes
+//!   (`dir #true` etc., booleans native; `#false`/omitted means disabled, order = children
+//!   order); line breaks sit between the lines.
+//! - Segments: `segments { dir fg=39 bold=#true shorten-strategy="t" … }`.
+//!   Segment nodes carry the properties `fg`, `bg`, `bold`,
+//!   `content`/`icon`/`prefix`/`suffix`, `disabled`; the rest go into
+//!   [`Segment::props`] (behavior, read on demand by the segment render function).
+//! - state overrides: `state <NAME> fg=…` child nodes under a segment node; their style
+//!   overrides the segment default, i.e. the p10k `SEG[_STATE]_ATTR` three-way fallback
+//!   (segment STATE → segment → [`Config::defaults`] global fallback).
+//! - Defaults: the top-level `defaults { … }` is the global fallback style.
 //!
-//! 段功能由代码实现,外观/布局全由配置驱动，换配置即换主题,不硬编码视觉。
+//! Segment behavior is implemented in code; appearance/layout is entirely config-driven, so
+//! swapping the config swaps the theme, with no hard-coded visuals.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -22,7 +25,7 @@ use std::fmt;
 use crate::i18n::t;
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 
-/// 颜色:数字=256 调色板、`#rrggbb`=24 位、`"default"`/缺省=继承终端。
+/// Color: a number = 256-color palette, `#rrggbb` = 24-bit, `"default"`/absent = inherit the terminal.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Color {
     #[default]
@@ -95,14 +98,14 @@ impl Style {
     }
 }
 
-/// 一个布局元素(行内的一个段或静态文本)。
+/// One layout element (a segment or static text within a line).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Element {
-    /// 普通段。
+    /// Plain segment.
     Seg(String),
-    /// 与相邻段同底贴合(p10k 的 `<seg>_joined` 尾缀)。
+    /// Joins the background with the adjacent segment (p10k's `<seg>_joined` suffix).
     Joined(String),
-    /// 静态文本(如 `text "some text"`,原样输出,不解释为段)。
+    /// Static text (e.g. `text "some text"`): emitted verbatim, never interpreted as a segment.
     Text(String),
 }
 
@@ -110,16 +113,17 @@ pub enum Element {
 pub struct Layout {
     pub left: Vec<Vec<Element>>,
     pub right: Vec<Vec<Element>>,
-    /// 宽松布局:连续 prompt 之间留几个空行(0=紧凑)。
-    /// 对齐 p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` + `_COUNT`。
+    /// Sparse layout: how many blank lines to leave between consecutive prompts (0 = compact).
+    /// Aligns with p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` + `_COUNT`.
     pub prompt_add_newline: usize,
-    /// 瞬态 prompt:命令提交后把多行 header 折叠成单行 `❯`(p10k `TRANSIENT_PROMPT`)。
-    /// 仅 zsh 支持(依赖 zle reset-prompt),bash/fish 忽略。
+    /// Transient prompt: after a command is submitted, collapse the multi-line header into a
+    /// single `❯` line (p10k `TRANSIENT_PROMPT`). zsh only (it needs zle reset-prompt); bash/fish ignore it.
     pub transient_prompt: bool,
-    /// 标尺:header 之上再画一整行 `ruler` 字符(p10k `SHOW_RULER`,缺省关)。
+    /// Ruler: draw a full line of the `ruler` character above the header (p10k `SHOW_RULER`, off by default).
     pub show_ruler: bool,
-    /// 右栏距右边界留几列（zsh `ZLE_RPROMPT_INDENT`，默认 1；贴边绘制会占用
-    /// 最后一格，并比 p10k 早一列"放得下"）。
+    /// Columns kept between the right column and the right edge (zsh `ZLE_RPROMPT_INDENT`,
+    /// default 1; drawing flush against the edge takes the last cell and reports "it fits"
+    /// one column earlier than p10k).
     pub right_indent: usize,
 }
 
@@ -136,56 +140,59 @@ impl Default for Layout {
     }
 }
 
-/// 分隔符/端符族(可配置字符,powerline 风格)。
+/// Separator/end family (configurable characters, powerline style).
 ///
-/// - `segment`:异底段间箭头(如 powerline ``)。空=不画(纯文本空格)。
-/// - `sub`:同底段间细线(如 ``)。
-/// - `end`:左栏末尾端符(右三角 ``,指向前方/行尾)。
-/// - `left_tail`:左栏首段起始端符(p10k `LEFT_PROMPT_FIRST_SEGMENT_START_SYMBOL`),
-///   左三角 ``,画在最左段之前。
-/// - `right_tail`:右栏末段结束端符(p10k `RIGHT_PROMPT_LAST_SEGMENT_END_SYMBOL`),
-///   右三角 ``,画在最右段之后。
+/// - `segment`: arrow between segments with different backgrounds (e.g. powerline ``). Empty = draw nothing (plain space).
+/// - `sub`: thin line between segments sharing a background (e.g. ``).
+/// - `end`: end symbol at the end of the left column (right triangle ``, pointing forward/to the end of the line).
+/// - `left_tail`: start symbol before the first segment of the left column (p10k `LEFT_PROMPT_FIRST_SEGMENT_START_SYMBOL`),
+///   left triangle ``, drawn before the leftmost segment.
+/// - `right_tail`: end symbol after the last segment of the right column (p10k `RIGHT_PROMPT_LAST_SEGMENT_END_SYMBOL`),
+///   right triangle ``, drawn after the rightmost segment.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Separators {
     pub segment: String,
     pub sub: String,
     pub end: String,
-    /// 右段行首端符(左三角,如 ``)。
+    /// Start symbol at the head of a right-column line (left triangle, e.g. ``).
     pub right_start: String,
-    /// 右段**异色**段间箭头(左三角,如 ``)。
+    /// Arrow between right-column segments with **different** colors (left triangle, e.g. ``).
     pub right_segment: String,
-    /// 右段**同色**内部细线(如 ``)。
+    /// Inner thin line between right-column segments sharing a color (e.g. ``).
     pub right_sub: String,
     pub left_tail: String,
     pub right_tail: String,
-    /// 行内左右栏之间的 gap 填充字符(如 `·`;空=空格)。
+    /// Character filling the gap between the left and right columns on a line (e.g. `·`; empty = a space).
     pub gap: String,
-    /// gap 填充字符的前景色(`separators gap-foreground=240`;缺省=终端默认色)。
-    /// 对齐 p10k `POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_FOREGROUND`。
+    /// Foreground of the gap filler (`separators gap-foreground=240`; absent = terminal default).
+    /// Aligns with p10k `POWERLEVEL9K_MULTILINE_FIRST_PROMPT_GAP_FOREGROUND`.
     pub gap_foreground: Option<Color>,
-    /// 同底段间细线的前景色(`sub-foreground=246`;缺省跟后段样式)。
-    /// 对齐 p10k `LEFT_SUBSEGMENT_SEPARATOR` 里嵌的颜色(p10k 的 `sep_color`)。
+    /// Foreground of the thin line between same-background segments (`sub-foreground=246`;
+    /// absent = follow the following segment's style). Aligns with the color embedded in p10k's
+    /// `LEFT_SUBSEGMENT_SEPARATOR` (p10k's `sep_color`).
     pub sub_foreground: Option<Color>,
-    /// 右段同底细线的前景色(对齐 p10k `RIGHT_SUBSEGMENT_SEPARATOR`)。
+    /// Foreground of the right-column same-background thin line (aligns with p10k `RIGHT_SUBSEGMENT_SEPARATOR`).
     pub right_sub_foreground: Option<Color>,
 }
 
-/// 帧的一块(行首/行尾装饰字符):文本 + 可选独立样式。
-/// 样式缺省时回退 frame 级 → defaults。
+/// One frame piece (a line-head/line-tail decoration character): text + optional standalone style.
+/// With no style it falls back to frame level → defaults.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FramePiece {
     pub text: String,
     pub style: Option<Style>,
 }
 
-/// 多行帧(行首/行尾装饰,可配字符与颜色)。见 p10k MULTILINE_*_PROMPT_PREFIX/SUFFIX。
-/// - `first_*`:第一个 header 行(`╭─`/`─╮`);`newline_*`:中间 header 行(`├─`/`─┤`);
-///   `last_*`:输入行(`╰─`/`─╯`)。空 = 不画。
-/// - 颜色:`style`(frame 节点属性 `fg`/`bg`/`bold`)是整帧默认,单块可带
-///   自己的样式属性覆盖;两者都没配的颜色回退 defaults。
+/// Multi-line frame (line-head/line-tail decoration with configurable characters and colors).
+/// See p10k MULTILINE_*_PROMPT_PREFIX/SUFFIX.
+/// - `first_*`: first header line (`╭─`/`─╮`); `newline_*`: middle header lines (`├─`/`─┤`);
+///   `last_*`: input line (`╰─`/`─╯`). Empty = draw nothing.
+/// - Colors: `style` (frame node properties `fg`/`bg`/`bold`) is the whole-frame default; an
+///   individual piece may override it with its own style properties. Colors configured nowhere
+///   fall back to defaults.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Frame {
-    /// 帧级默认样式。
+    /// Frame-level default style.
     pub style: Style,
     pub first_prefix: FramePiece,
     pub first_suffix: FramePiece,
@@ -195,7 +202,7 @@ pub struct Frame {
     pub last_suffix: FramePiece,
 }
 
-/// 行为属性值(类型化,非字符串)。
+/// Behavior property value (typed, not a string).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prop {
     Str(String),
@@ -204,16 +211,17 @@ pub enum Prop {
     Bool(bool),
 }
 
-/// 单个 state 的覆盖:样式 + 可选字符(prompt_char 之类按字符渲染的段用)。
+/// Override for a single state: style + optional character (used by character-rendered segments such as prompt_char).
 #[derive(Clone, Debug, PartialEq)]
 pub struct StateSpec {
     pub style: Style,
-    /// 该 state 下段显示的字符(如 prompt_char 的 ERROR 态);None = 沿用段默认。
+    /// Character the segment shows in this state (e.g. prompt_char's ERROR state); None = keep the segment default.
     pub char: Option<String>,
 }
 
-/// 段上的附加文字槽(左/中/右):仅拼接显示、不独立成块。
-/// `fg` 为 `None` 时沿用段样式,配了则覆盖前景(背景/粗体仍沿用段样式)。
+/// Attached text slot on a segment (left/middle/right): concatenated for display only, never a block of its own.
+/// With `fg` as `None` the segment style is kept; when set it overrides the foreground
+/// (background/bold still follow the segment style).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AttachText {
     pub text: String,
@@ -222,28 +230,28 @@ pub struct AttachText {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Segment {
-    /// 段默认样式。
+    /// Segment default style.
     pub style: Style,
-    /// state 情境覆盖(名字 -> 覆盖,如 dir 的 `SHORTENED`/`ANCHOR`)。
+    /// state overrides (name -> override, e.g. dir's `SHORTENED`/`ANCHOR`).
     pub states: BTreeMap<String, StateSpec>,
-    /// 内容文本(可选;缺省由段渲染函数生成)。
+    /// Content text (optional; generated by the segment render function when absent).
     pub content: Option<String>,
-    /// 段左缘附加文字(icon 之前)。
+    /// Text attached to the segment's left edge (before the icon).
     pub text_left: Option<AttachText>,
-    /// 段中间附加文字(icon 与内容之间;仅当段既有 icon 又有文字时渲染)。
+    /// Text attached in the middle of the segment (between icon and content; rendered only when the segment has both an icon and text).
     pub text_middle: Option<AttachText>,
-    /// 段右缘附加文字(内容之后)。
+    /// Text attached to the segment's right edge (after the content).
     pub text_right: Option<AttachText>,
     pub prefix: Option<String>,
     pub suffix: Option<String>,
-    /// 是否显示(`disabled` 置 false)。
+    /// Whether the segment is shown (`disabled` sets it false).
     pub shown: bool,
-    /// 其它行为属性(如 `shorten-dir-length`、`threshold-seconds`,由段渲染函数按需读)。
+    /// Other behavior properties (e.g. `shorten-dir-length`, `threshold-seconds`), read on demand by the segment render function.
     pub props: BTreeMap<String, Prop>,
 }
 
 impl Default for Segment {
-    /// 段默认显示（`shown=true`），与 `parse` 缺省一致。
+    /// Segments are shown by default (`shown=true`), matching the `parse` default.
     fn default() -> Self {
         Segment {
             style: Style::default(),
@@ -261,10 +269,10 @@ impl Default for Segment {
 }
 
 impl Segment {
-    /// 取某 state(或段默认)的样式,走 段STATE → 段 → 全局 三段回退。
+    /// Style for a state (or the segment default), via the segment STATE → segment → global three-way fallback.
     pub fn effective_style(&self, state: Option<&str>, globals: &Style) -> Style {
-        // 此前 state 命中时只 merge(state, 段)，丢弃了 `defaults`，导致带 state
-        // 的部件（dir 的 ANCHOR/SHORTENED 等）拿不到全局底色。
+        // Previously a state hit merged only (state, segment), dropping `defaults`, so
+        // state-carrying pieces (dir's ANCHOR/SHORTENED etc.) never got the global background.
         let base = merge_style(&self.style, globals);
         match state.and_then(|st| self.states.get(st)) {
             Some(spec) => merge_style(&spec.style, &base),
@@ -272,7 +280,7 @@ impl Segment {
         }
     }
 
-    /// 段在当前 state 下渲染的字符:state.char → 段 `char` 属性 → `default_char`。
+    /// Character the segment renders in the current state: state.char → segment `char` property → `default_char`.
     pub fn char_for<'a>(&'a self, state: Option<&str>, default_char: &'a str) -> &'a str {
         if let Some(st) = state
             && let Some(spec) = self.states.get(st)
@@ -291,20 +299,20 @@ impl Segment {
     }
 }
 
-/// 图标/字体模式。决定内置段图标的字符集。
-/// `nerdfont-complete` 与 `nerdfont-fontconfig` 共用同一套 Nerd Font 字形，
-/// `compatible` 用标准 Unicode + Powerline 字体,
-/// 不依赖 Nerd Font;`ascii` 纯 ASCII。
+/// Icon/font mode. Selects the character set used by built-in segment icons.
+/// `nerdfont-complete` and `nerdfont-fontconfig` share the same Nerd Font glyphs;
+/// `compatible` uses standard Unicode + Powerline fonts and needs no Nerd Font;
+/// `ascii` is pure ASCII.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum IconMode {
-    /// Nerd Font(完整集)。缺省。
+    /// Nerd Font (complete set). Default.
     #[default]
     NerdfontComplete,
-    /// Nerd Font(fontconfig 变体,字形码点与 complete 一致)。
+    /// Nerd Font (fontconfig variant, same glyph code points as complete).
     NerdfontFontconfig,
-    /// 兼容模式:标准 Unicode + Powerline 字体,不依赖 Nerd Font。
+    /// Compatible mode: standard Unicode + Powerline fonts, no Nerd Font needed.
     Compatible,
-    /// 纯 ASCII。
+    /// Pure ASCII.
     Ascii,
 }
 
@@ -314,17 +322,18 @@ impl IconMode {
             "ascii" => IconMode::Ascii,
             "compatible" => IconMode::Compatible,
             "nerdfont-fontconfig" => IconMode::NerdfontFontconfig,
-            _ => IconMode::NerdfontComplete, // 未知或未设置时按 nerdfont-complete 处理
+            _ => IconMode::NerdfontComplete, // unknown or unset is treated as nerdfont-complete
         }
     }
 }
 
-/// 顶层 `icon {}` 里一个图标名的覆盖。
+/// Override for one icon name in the top-level `icon {}`.
 ///
-/// 字段语义:
-/// - `all`:字符被引擎识别类别后自动进入它能显示的档位——NF 私有区字符
-///   只进 nf 档，标准 Unicode 进 nf + compat，纯 ASCII 三档全进。
-/// - `nf` / `compat` / `ascii`:覆盖对应档位。
+/// Field semantics:
+/// - `all`: once the engine classifies the character, it enters every mode that can display
+///   it — NF private-use characters enter only nf, standard Unicode enters nf + compat, and
+///   pure ASCII enters all three.
+/// - `nf` / `compat` / `ascii`: override the corresponding mode.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct IconOverride {
     pub all: Option<String>,
@@ -337,36 +346,36 @@ pub struct IconOverride {
 pub struct Config {
     pub layout: Layout,
     pub segments: BTreeMap<String, Segment>,
-    /// 全局回退样式。
+    /// Global fallback style.
     pub defaults: Style,
-    /// 分隔符/端符族。
+    /// Separator/end family.
     pub separators: Separators,
-    /// 多行帧。
+    /// Multi-line frame.
     pub frame: Frame,
-    /// vcs 图标按远端域名选择(domain 子串 → icon 字符);按序匹配,未命中用 git 默认。
+    /// vcs icon selection by remote domain (domain substring → icon character); matched in order, git's default when nothing matches.
     pub vcs_remote_icons: Vec<(String, String)>,
-    /// 图标/字体模式。
+    /// Icon/font mode.
     pub mode: IconMode,
-    /// 顶层 `icon{}` 覆盖表(图标名 → 覆盖;段渲染时按它引用的图标名查)。
+    /// Top-level `icon{}` override table (icon name → override; looked up by the icon names a segment references).
     pub icon_overrides: BTreeMap<String, IconOverride>,
-    /// `dir-classes { class "pattern" state="WORK" icon="…" }`：
-    /// 按路径模式给 dir 段换 state / 图标（对齐 p10k `DIR_CLASSES`）。
+    /// `dir-classes { class "pattern" state="WORK" icon="…" }`:
+    /// switch the dir segment's state / icon by path pattern (aligns with p10k `DIR_CLASSES`).
     pub dir_classes: Vec<DirClass>,
 }
 
-/// 一条目录分类规则（p10k `DIR_CLASSES` 的三元组）。
+/// One directory classification rule (the triple of p10k `DIR_CLASSES`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DirClass {
-    /// 匹配 `$PWD` 的 glob：`~` 展开为 $HOME、`*`/`?`/`[…]` 不跨 `/`、`**` 跨。
+    /// glob matched against `$PWD`: `~` expands to $HOME, `*`/`?`/`[…]` do not cross `/`, `**` does.
     pub pattern: String,
-    /// 命中后 dir 段使用的 state 名（`state <名字>` 上色）。
+    /// state name the dir segment uses on a match (colored by `state <name>`).
     pub state: String,
-    /// 命中后 dir 段的图标字符；空 = 用默认文件夹图标。
+    /// Icon character for the dir segment on a match; empty = use the default folder icon.
     pub icon: String,
 }
 
 impl Default for Config {
-    /// 空配置:`vcs_remote_icons` 用内置默认表(与 `parse` 缺省一致)。
+    /// Empty config: `vcs_remote_icons` uses the built-in default table (matching the `parse` default).
     fn default() -> Self {
         Config {
             layout: Layout::default(),
@@ -383,20 +392,21 @@ impl Default for Config {
 }
 
 impl Config {
-    /// 解析 KDL 文本为配置。
+    /// Parse KDL text into a config.
     pub fn parse(src: &str) -> Result<Config, String> {
         let doc = KdlDocument::parse(src).map_err(|e| format!("{}{e}", t("KDL parse error: ")))?;
         Self::parse_doc(&doc)
     }
 
-    /// 内置 lean 主题。
+    /// Built-in lean theme.
     pub fn default_lean() -> Result<Config, String> {
         Ok(crate::presets::build(crate::presets::PresetKind::Lean))
     }
 
-    /// 序列化为 KDL 文本;`parse(to_kdl(cfg))` 应得到等价配置(round-trip)。
-    /// 用 kdl-rs 的 autoformat 排版(缩进/空格),否则构造出的文档是紧贴的;
-    /// 再把字符串值改成带引号的表示(见 [`quote_string_values`])。
+    /// Serialize to KDL text; `parse(to_kdl(cfg))` must yield an equivalent config (round-trip).
+    /// Lay it out with kdl-rs autoformat (indentation/spacing), otherwise the constructed
+    /// document is packed tight; then switch string values to their quoted representation
+    /// (see [`quote_string_values`]).
     pub fn to_kdl(&self) -> String {
         let mut doc = self.to_document();
         doc.autoformat();
@@ -404,11 +414,11 @@ impl Config {
         doc.to_string()
     }
 
-    /// 构建等价 KDL 文档。节点顺序 mode/layout/defaults/separators/frame/
-    /// segments/vcs-remote-icons/icon;与 `parse` 缺省值一致的字段省略。
+    /// Build the equivalent KDL document. Node order is mode/layout/defaults/separators/frame/
+    /// segments/vcs-remote-icons/icon; fields equal to the `parse` default are omitted.
     pub fn to_document(&self) -> KdlDocument {
         let mut doc = KdlDocument::new();
-        // mode 必须显式输出:parse 缺省随 locale,省略则 round-trip 不稳。
+        // mode must be emitted explicitly: the parse default follows the locale, so omitting it breaks round-trip.
         doc.nodes_mut().push(leaf("mode", mode_str(&self.mode)));
         doc.nodes_mut().push(self.layout_node());
         if self.defaults != Style::default() {
@@ -430,7 +440,7 @@ impl Config {
             }
             doc.nodes_mut().push(n);
         }
-        // vcs-remote-icons 省略时 parse 用内置默认表,与默认值等价。
+        // When vcs-remote-icons is omitted, parse uses the built-in default table, equivalent to the default value.
         if self.vcs_remote_icons != default_remote_icons() {
             doc.nodes_mut().push(self.remote_icons_node());
         }
@@ -581,15 +591,15 @@ impl Config {
         n
     }
 
-    /// 取某段配置(缺省返回默认空段)。
+    /// Config for one segment (the default empty segment when absent).
     pub fn segment(&self, name: &str) -> &Segment {
         self.segments.get(name).unwrap_or(&EMPTY_SEG)
     }
 
-    /// 某帧块的实际样式:块级属性 → frame 级 → `defaults`。
-    /// **只继承 `defaults` 的前景/加粗，不继承它的 `bg`**——`defaults.bg` 是段背景
-    /// 的回退（p10k 段的全局 `POWERLEVEL9K_BACKGROUND`），而帧字符（`╭─`/`╰─`）在
-    /// p10k 里始终透明（只有前景色）。
+    /// Actual style of a frame piece: piece-level properties → frame level → `defaults`.
+    /// **Only `defaults`' foreground/bold are inherited, never its `bg`** — `defaults.bg` is the
+    /// fallback for segment backgrounds (p10k's global `POWERLEVEL9K_BACKGROUND` for segments),
+    /// while frame characters (`╭─`/`╰─`) are always transparent in p10k (foreground only).
     pub fn frame_piece_style(&self, piece: &FramePiece) -> Style {
         let base = merge_style(&self.frame.style, &self.defaults);
         let base = Style {
@@ -609,8 +619,8 @@ impl Config {
         let mut separators = Separators::default();
         let mut frame = Frame::default();
         let mut vcs_remote_icons = default_remote_icons();
-        // 缺省 mode 由 locale 决定：非 UTF-8 终端无法显示 Unicode，自动降级
-        // 为 ascii；用户显式写 `mode` 时以配置为准。
+        // The default mode follows the locale: a non-UTF-8 terminal cannot display Unicode,
+        // so it degrades to ascii; an explicit `mode` in the config wins.
         let mut mode = if locale_is_utf8() {
             IconMode::NerdfontComplete
         } else {
@@ -627,8 +637,9 @@ impl Config {
                         for seg in ch.nodes() {
                             let name = seg.name().value().to_string();
                             let parsed = parse_segment(seg)?;
-                            // 同段名多个节点(如 os icon=… 与 os fg=… 两行)合并,
-                            // 后者覆盖字段,states/props 累积。
+                            // Multiple nodes with the same segment name (e.g. `os icon=…` and
+                            // `os fg=…` on two lines) merge: the later one overrides fields,
+                            // while states/props accumulate.
                             match segments.get_mut(&name) {
                                 Some(existing) => merge_segment(existing, parsed),
                                 None => {
@@ -666,12 +677,14 @@ impl Config {
     }
 }
 
-// ---- 序列化辅助(Config → KDL)----
+// ---- Serialization helpers (Config → KDL) ----
 
-/// 给所有字符串值设带引号的表示。kdl-rs 对"能当裸标识符"的字符串不加引号
-/// (如 `mode nerdfont-complete`、`segment <U+E0B0>`,后者看起来像空值),
-/// 而 p11k 的预设/文档一律带引号,这里统一。`autoformat_keep` 让 autoformat
-/// 不覆盖这个表示(它只保留 value_repr 与 leading,其余重排)。
+/// Give every string value a quoted representation. kdl-rs leaves strings that can be bare
+/// identifiers unquoted
+/// (e.g. `mode nerdfont-complete`, `segment <U+E0B0>`, which looks like an empty value),
+/// while p11k's presets/docs are always quoted, so this unifies them. `autoformat_keep` stops
+/// autoformat from overwriting that representation (it keeps only value_repr and leading and
+/// reformats the rest).
 fn quote_string_values(doc: &mut KdlDocument) {
     for node in doc.nodes_mut() {
         quote_node_strings(node);
@@ -696,7 +709,7 @@ fn quote_node_strings(node: &mut KdlNode) {
     }
 }
 
-/// KDL v2 字符串字面量(转义规则对齐 kdl-rs 的 `write_string`)。
+/// KDL v2 string literal (escape rules align with kdl-rs's `write_string`).
 fn quote_kdl_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -718,7 +731,7 @@ fn quote_kdl_string(s: &str) -> String {
     out
 }
 
-/// 单一位置值节点(`<name> "value"` / `<name> #true`)。
+/// Single positional value node (`<name> "value"` / `<name> #true`).
 fn leaf(name: &str, value: impl Into<KdlValue>) -> KdlNode {
     let mut n = KdlNode::new(name);
     n.entries_mut().push(KdlEntry::new(value));
@@ -743,7 +756,7 @@ fn color_value(c: &Color) -> KdlValue {
     }
 }
 
-/// 样式 → KDL 属性(fg/bg/bold 仅输出非默认项)。
+/// Style → KDL properties (fg/bg/bold, only non-default entries emitted).
 fn style_entries(style: &Style) -> Vec<KdlEntry> {
     let mut v = Vec::new();
     if style.fg != Color::Default {
@@ -767,7 +780,7 @@ fn prop_value(p: &Prop) -> KdlValue {
     }
 }
 
-/// 一行布局元素 → `line { … }` 节点。
+/// One line of layout elements → a `line { … }` node.
 fn line_node(row: &[Element]) -> KdlNode {
     let mut n = KdlNode::new("line");
     let ch = n.ensure_children();
@@ -787,7 +800,7 @@ fn line_node(row: &[Element]) -> KdlNode {
     n
 }
 
-/// 单个段 → `<name> … { state … text-* … }` 节点。
+/// One segment → a `<name> … { state … text-* … }` node.
 fn segment_node(name: &str, seg: &Segment) -> KdlNode {
     let mut n = KdlNode::new(name);
     n.entries_mut().extend(style_entries(&seg.style));
@@ -838,7 +851,7 @@ fn segment_node(name: &str, seg: &Segment) -> KdlNode {
     n
 }
 
-/// 附加文字槽 → `text-<side> "…" [fg=…]` 节点。
+/// Attached text slot → a `text-<side> "…" [fg=…]` node.
 fn attach_node(name: &str, a: &AttachText) -> KdlNode {
     let mut n = KdlNode::new(name);
     n.entries_mut().push(KdlEntry::new(a.text.clone()));
@@ -849,8 +862,8 @@ fn attach_node(name: &str, a: &AttachText) -> KdlNode {
     n
 }
 
-/// 解析顶层 `icon` 节点:每个子节点 = 一个图标名的覆盖;覆盖字段是它的子节点
-/// (如 `ok { all "✔" ascii "V" }`,all/nf/compat/ascii 各一)。
+/// Parse the top-level `icon` node: each child is the override for one icon name, and the
+/// override fields are its children (e.g. `ok { all "✔" ascii "V" }`, one each for all/nf/compat/ascii).
 fn parse_icon_table(node: &KdlNode) -> BTreeMap<String, IconOverride> {
     let mut out = BTreeMap::new();
     if let Some(ch) = node.children() {
@@ -896,22 +909,22 @@ fn locale_is_utf8() -> bool {
             }
         }
     }
-    false // 全未设 → C locale → 非 UTF-8
+    false // nothing set → C locale → not UTF-8
 }
 
-/// 单个 locale 串(如 `en_US.UTF-8`、`C.UTF-8`、`C`)的 codeset 是否 UTF-8。
+/// Whether one locale string's codeset (e.g. `en_US.UTF-8`, `C.UTF-8`, `C`) is UTF-8.
 fn locale_str_is_utf8(locale: &str) -> bool {
     let code = locale
         .rsplit('.')
         .next()
         .unwrap_or("")
-        .split('@') // 去 modifier,如 UTF-8@euro
+        .split('@') // strip the modifier, e.g. UTF-8@euro
         .next()
         .unwrap_or("");
     code.eq_ignore_ascii_case("utf-8") || code.eq_ignore_ascii_case("utf8")
 }
 
-/// 同段名多节点的合并:样式非 Default 覆盖、文本/图标后者覆盖、states/props 累积。
+/// Merge multiple nodes with the same segment name: non-Default styles override, text/icons take the later value, states/props accumulate.
 fn merge_segment(a: &mut Segment, b: Segment) {
     if b.style.fg != Color::Default {
         a.style.fg = b.style.fg;
@@ -951,8 +964,8 @@ fn merge_segment(a: &mut Segment, b: Segment) {
     }
 }
 
-/// 解析 `dir-classes { class "pattern" state="WORK" icon="…" }`。
-/// 第一个参数是模式，`state` / `icon` 是节点属性；按声明顺序匹配，先命中者先生效。
+/// Parse `dir-classes { class "pattern" state="WORK" icon="…" }`.
+/// The first argument is the pattern, `state` / `icon` are node properties; matched in declaration order, first match wins.
 fn parse_dir_classes(node: &KdlNode) -> Vec<DirClass> {
     let mut out = Vec::new();
     let Some(ch) = node.children() else {
@@ -983,7 +996,7 @@ fn parse_dir_classes(node: &KdlNode) -> Vec<DirClass> {
     out
 }
 
-/// 解析 `vcs-remote-icons` 节点:每个子节点 = domain→icon 字符串。
+/// Parse the `vcs-remote-icons` node: each child is a domain→icon string.
 fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
     let mut out = Vec::new();
     if let Some(ch) = node.children() {
@@ -996,8 +1009,8 @@ fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
     out
 }
 
-/// 解析 `frame` 节点:frame 级样式(节点属性 fg/bg/bold)+ first/newline/last 的
-/// prefix/suffix(子节点,值字符串;子节点自己的 fg/bg/bold 覆盖帧级)。
+/// Parse the `frame` node: the frame-level style (node properties fg/bg/bold) + the
+/// prefix/suffix of first/newline/last (child nodes, value a string; a child's own fg/bg/bold overrides the frame level).
 fn parse_frame(node: &KdlNode) -> Frame {
     let mut f = Frame {
         style: Style::from_entries(node.entries()),
@@ -1010,7 +1023,7 @@ fn parse_frame(node: &KdlNode) -> Frame {
             };
             let Some(text) = str_val(v) else { continue };
             let st = Style::from_entries(child.entries());
-            // 子节点没写样式属性 → None(回退帧级);写了 → Some(覆盖)。
+            // A child with no style properties → None (fall back to frame level); with them → Some (override).
             let style = if st == Style::default() {
                 None
             } else {
@@ -1031,7 +1044,7 @@ fn parse_frame(node: &KdlNode) -> Frame {
     f
 }
 
-/// 解析 `layout`:`left`/`right` 两组布局行，以及 `prompt-add-newline`、`transient-prompt`、`show-ruler`、`right-indent`。
+/// Parse `layout`: the two layout line groups `left`/`right`, plus `prompt-add-newline`, `transient-prompt`, `show-ruler`, `right-indent`.
 fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     let mut layout = Layout::default();
     if let Some(ch) = node.children() {
@@ -1039,7 +1052,7 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
             match child.name().value() {
                 "left" => layout.left = parse_lines(child),
                 "right" => layout.right = parse_lines(child),
-                // `prompt-add-newline #true` = 1 行；给数字则按数字（0=关）。
+                // `prompt-add-newline #true` = 1 line; a number is taken as is (0 = off).
                 "prompt-add-newline" => {
                     layout.prompt_add_newline = match first_value(child) {
                         Some(KdlValue::Integer(n)) => (*n).clamp(0, 9) as usize,
@@ -1049,11 +1062,11 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
                 "transient-prompt" => {
                     layout.transient_prompt = first_value(child).map(bool_val).unwrap_or(false);
                 }
-                // `show-ruler #true`：header 之上加一整行标尺（p10k SHOW_RULER）。
+                // `show-ruler #true`: add a full ruler line above the header (p10k SHOW_RULER).
                 "show-ruler" => {
                     layout.show_ruler = first_value(child).map(bool_val).unwrap_or(false);
                 }
-                // `right-indent <N>`：右栏距右边界留几列（缺省 1，同 zsh）。
+                // `right-indent <N>`: columns kept between the right column and the right edge (default 1, same as zsh).
                 "right-indent" => {
                     if let Some(KdlValue::Integer(n)) = first_value(child) {
                         layout.right_indent = (*n).clamp(0, 9) as usize;
@@ -1066,7 +1079,7 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     Ok(layout)
 }
 
-/// 解析一个侧:每个子节点是一行。
+/// Parse one side: each child node is one line.
 fn parse_lines(node: &KdlNode) -> Vec<Vec<Element>> {
     let mut rows = Vec::new();
     if let Some(ch) = node.children() {
@@ -1077,18 +1090,18 @@ fn parse_lines(node: &KdlNode) -> Vec<Vec<Element>> {
     rows
 }
 
-/// 解析一行:行内每个子节点是一个段(布尔启用),或 `text "…"` 静态文本。
+/// Parse one line: each child node is a segment (boolean enable), or `text "…"` static text.
 fn parse_line(node: &KdlNode) -> Vec<Element> {
     let mut out = Vec::new();
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
-            // 值是字符串 → 静态文本(如 `text "some text"`);否则视为段。
+            // A string value → static text (e.g. `text "some text"`); otherwise treat it as a segment.
             if let Some(KdlValue::String(s)) = first_value(child) {
                 out.push(Element::Text(s.clone()));
                 continue;
             }
             let name = child.name().value();
-            // 值缺省视为启用;显式 #false 禁用。
+            // An absent value means enabled; an explicit #false disables it.
             let enabled = first_value(child).map(bool_val).unwrap_or(true);
             if !enabled {
                 continue;
@@ -1103,7 +1116,7 @@ fn parse_line(node: &KdlNode) -> Vec<Element> {
     out
 }
 
-/// 解析一个段节点:属性(样式/文本/显隐/行为)+ `state <NAME> …` 子节点覆盖。
+/// Parse one segment node: properties (style/text/visibility/behavior) + `state <NAME> …` child overrides.
 fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
     let mut seg = Segment {
         style: Style::from_entries(node.entries()),
@@ -1141,7 +1154,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                         },
                     );
                 }
-                // 附加文字槽:左/中/右。位置字符串是文本，`fg` 可选。
+                // Attached text slots: left/middle/right. The positional string is the text, `fg` is optional.
                 "text-left" | "text-middle" | "text-right" => {
                     let Some(text) = first_state_name(child) else {
                         return Err(format!(
@@ -1168,7 +1181,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
     Ok(seg)
 }
 
-/// 节点的命名字符串属性(如 state 节点的 `char="✘"`)。
+/// A node's named string property (e.g. a state node's `char="✘"`).
 fn named_str(node: &KdlNode, name: &str) -> Option<String> {
     node.entries()
         .iter()
@@ -1176,7 +1189,7 @@ fn named_str(node: &KdlNode, name: &str) -> Option<String> {
         .and_then(|e| str_val(e.value()))
 }
 
-/// 节点的命名颜色属性(如附加文字的 `fg=196`)。
+/// A node's named color property (e.g. attached text's `fg=196`).
 fn named_color(node: &KdlNode, name: &str) -> Option<Color> {
     node.entries()
         .iter()
@@ -1184,7 +1197,7 @@ fn named_color(node: &KdlNode, name: &str) -> Option<Color> {
         .map(|e| Color::from_value(e.value()))
 }
 
-/// 节点的首个位置参数值(条目无 name 的那个)。
+/// A node's first positional argument value (the entry with no name).
 fn first_value(node: &KdlNode) -> Option<&KdlValue> {
     node.entries()
         .iter()
@@ -1192,7 +1205,7 @@ fn first_value(node: &KdlNode) -> Option<&KdlValue> {
         .map(|e| e.value())
 }
 
-/// state 节点的名字 = 首个位置参数。
+/// A state node's name = its first positional argument.
 fn first_state_name(node: &KdlNode) -> Option<String> {
     match first_value(node) {
         Some(KdlValue::String(s)) => Some(s.clone()),
@@ -1200,16 +1213,16 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
     }
 }
 
-/// 配置里出现引擎不认识的键时提醒。
+/// Warn when the config contains a key the engine does not know.
 fn warn_unknown_key(name: &str) {
     eprintln!("p11k: {}{name}", t("unknown config key: "));
 }
 
-/// 解析 `separators` 节点:字符子节点(`segment`/`sub`/`end`/`right-start`/`right-segment`/`right-sub`/`left-tail`/`right-tail`/`gap`),值按整串字符串读入。
+/// Parse the `separators` node: character child nodes (`segment`/`sub`/`end`/`right-start`/`right-segment`/`right-sub`/`left-tail`/`right-tail`/`gap`), values read as whole strings.
 fn parse_separators(node: &KdlNode) -> Separators {
     let mut s = Separators::default();
-    // `gap-foreground` / `sub-foreground` / `right-sub-foreground` 是
-    // separators 节点的属性(不是子节点)。
+    // `gap-foreground` / `sub-foreground` / `right-sub-foreground` are
+    // properties of the separators node (not child nodes).
     if let Some(c) = named_color(node, "gap-foreground") {
         s.gap_foreground = Some(c);
     }
@@ -1259,7 +1272,7 @@ static EMPTY_SEG: Segment = Segment {
     props: BTreeMap::new(),
 };
 
-/// 合并:上层非 Default 字段覆盖下层(三段回退末端)。
+/// Merge: the upper layer's non-Default fields override the lower layer (the tail end of the three-way fallback).
 fn merge_style(over: &Style, base: &Style) -> Style {
     Style {
         fg: if over.fg == Color::Default {
@@ -1398,7 +1411,7 @@ icon {
 
     #[test]
     fn parses_icon_mode() {
-        // mode 顶层节点:ascii/compatible/nerdfont-fontconfig 分别映射。
+        // The top-level mode node: ascii/compatible/nerdfont-fontconfig map to their modes.
         let c = Config::parse("mode \"ascii\"\nlayout { left { line { dir #true } } }").unwrap();
         assert_eq!(c.mode, IconMode::Ascii);
         let c =
@@ -1408,7 +1421,7 @@ icon {
             Config::parse("mode \"nerdfont-fontconfig\"\nlayout { left { line { dir #true } } }")
                 .unwrap();
         assert_eq!(c.mode, IconMode::NerdfontFontconfig);
-        // 未写 mode → 跟随 locale:UTF-8 → nerdfont,否则(控制台/C locale)→ ascii。
+        // No mode written → follow the locale: UTF-8 → nerdfont, otherwise (console/C locale) → ascii.
         let c = Config::parse("layout { left { line { dir #true } } }").unwrap();
         let expect = if locale_is_utf8() {
             IconMode::NerdfontComplete
@@ -1420,7 +1433,7 @@ icon {
 
     #[test]
     fn locale_codeset_utf8_detection() {
-        // locale 串的 codeset 判断(对齐 p10k langinfo[CODESET]):UTF-8 家族是,其余否。
+        // The locale string's codeset check (aligns with p10k langinfo[CODESET]): the UTF-8 family yes, the rest no.
         assert!(locale_str_is_utf8("en_US.UTF-8"));
         assert!(locale_str_is_utf8("C.UTF-8"));
         assert!(locale_str_is_utf8("zh_CN.utf8"));
@@ -1433,7 +1446,7 @@ icon {
 
     #[test]
     fn parses_joined_element_and_disabled() {
-        // "dir_joined" 同底贴合; 显式 #false 的段被跳过。
+        // "dir_joined" shares the background; segments explicitly set to #false are skipped.
         let c = Config::parse(
             "layout {\n  left {\n    line { dir_joined #true; vcs #true; time #false }\n  }\n}",
         )
@@ -1504,7 +1517,7 @@ icon {
             ]
         );
         assert!(c.segment("dir").props.contains_key("shorten-strategy"));
-        // prompt_char 段仍在(供输入行前缀上色),但不在 header 布局里。
+        // The prompt_char segment is still there (to color the input line prefix) but is not in the header layout.
         assert_eq!(c.segment("prompt_char").style.fg, Color::Xterm(76));
         assert!(
             !c.layout

@@ -1,7 +1,9 @@
-//! 端到端测试：把引擎二进制放进 pty，从另一侧断言透传与 prompt 窗口。
+//! End-to-end tests: put the engine binary behind a pty and assert passthrough and
+//! the prompt window from the other side.
 //!
-//! 引擎不解析 pty 输出，它画出的字节和用户在终端里看到的是同一份 —— 所以断言
-//! 直接落在这些字节上：占位协议、header 回填、退出码着色。
+//! The engine does not parse pty output; the bytes it paints are the same ones the user
+//! sees in the terminal — so the assertions land directly on those bytes: the
+//! placeholder protocol, header repaint, exit-code coloring.
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -12,17 +14,18 @@ const COLS: u16 = 100;
 
 struct Engine {
     master: Box<dyn MasterPty + Send>,
-    /// 留着句柄由 Drop 收尾：pty 主端一关，内部 shell 自己退出，不需要 kill。
+    /// The handle is kept and cleaned up by Drop: closing the pty master makes the inner shell exit on its own, no kill needed.
     #[allow(dead_code)]
     child: Box<dyn Child + Send + Sync>,
     reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
 }
 
-/// 按隔离条件起引擎：显式 `--shell zsh`（CI 的 `$SHELL` 是 bash，而下面的断言是
-/// 照 zsh 的输出写的）、用户 rc 指向 `/dev/null`（真实 `~/.zshrc` 里的
-/// oh-my-zsh/p10k 又慢又会干扰断言）、cwd 用 `/tmp`（非 git 目录，避免 git 状态
-/// 扫描抖动 prompt 时序）。
+/// Start the engine under isolation: explicit `--shell zsh` (CI's `$SHELL` is bash,
+/// while the assertions below are written against zsh's output), user rc pointed at
+/// `/dev/null` (a real `~/.zshrc` with oh-my-zsh/p10k is both slow and disruptive to
+/// the assertions), cwd `/tmp` (not a git directory, so git status scanning cannot
+/// jitter the prompt timing).
 fn spawn_engine() -> Engine {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -50,8 +53,8 @@ fn spawn_engine() -> Engine {
     }
 }
 
-/// 读到 `needle` 出现或超时，返回累计输出。用 poll 限时：直接阻塞读会让超时
-/// 变成永久等待。
+/// Read until `needle` appears or the timeout expires, returning the accumulated output.
+/// Poll with a deadline: a plain blocking read would turn the timeout into an indefinite wait.
 fn read_until(
     master: &dyn MasterPty,
     reader: &mut dyn Read,
@@ -82,14 +85,16 @@ fn read_until(
     acc
 }
 
-/// 等真正的第一个 prompt 就绪。判据是 `✔`：instant header 是引擎按启动时已知的
-/// 状态画的、不含退出码，只有内部 shell 加载完、第一次 precmd 之后重画的 header
-/// 才带它。
+/// Wait for the real first prompt to be ready. The criterion is `✔`: the instant header
+/// is painted by the engine from the state known at startup and carries no exit code;
+/// only the header repainted after the inner shell finishes loading and runs its first
+/// precmd carries it.
 fn wait_ready(master: &dyn MasterPty, reader: &mut dyn Read) -> String {
     let out = read_until(master, reader, "\u{f00c}", Duration::from_secs(10));
     if !out.contains('\u{f00c}') {
-        // 超时时只看到“输出被截断”，无从判断是 spawn 失败、卡在 ack 还是 shell
-        // 根本没起来 —— 把引擎日志尾部带上。
+        // On timeout all we see is "output was truncated", with no way to tell whether spawn
+        // failed, the engine is stuck on an ack, or the shell never started — include the tail
+        // of the engine log.
         match std::fs::read_to_string("/tmp/p11k-engine.log") {
             Ok(log) => {
                 let tail: Vec<&str> = log.lines().rev().take(15).collect();
@@ -113,8 +118,8 @@ fn initial_prompt_shows_header_and_input_line() {
         out.contains('\u{f00c}'),
         "real header should contain the ✔ exit-code status"
     );
-    // instant header 也含 ❯；前缀覆盖占位符这件事由
-    // placeholder_overwritten_by_prefix 单独验证。
+    // The instant header also contains ❯; the prefix overwriting the placeholder is
+    // verified separately by placeholder_overwritten_by_prefix.
     assert!(
         out.contains('❯'),
         "input line should contain ❯, got {out:?}"
@@ -125,8 +130,10 @@ fn initial_prompt_shows_header_and_input_line() {
     );
 }
 
-/// 占位协议：shell 渲染的 `__`（`_` 按前缀可见宽度重复而成）原样透传，引擎随后
-/// 用 `\r` + 前缀覆盖它。前缀宽度与占位符恒等（2 列），zle 重绘的列偏移由此对齐。
+/// Placeholder protocol: the `__` rendered by the shell (`_` repeated to the prefix's
+/// visible width) passes through verbatim, and the engine then overwrites it with `\r` +
+/// the prefix. The prefix width equals the placeholder's (2 columns), so zle's repaint
+/// column offset lines up.
 #[test]
 fn placeholder_overwritten_by_prefix() {
     let mut eng = spawn_engine();
@@ -172,7 +179,7 @@ fn command_output_passthrough_and_next_prompt() {
         "command output should pass through"
     );
 
-    // 命令执行完 → precmd → 重画 header，此时带 ✔。
+    // The command finished → precmd → the header is repainted, this time carrying ✔.
     let out2 = read_until(
         &*eng.master,
         &mut *eng.reader,
@@ -206,8 +213,8 @@ fn exit_code_shows_in_status() {
 
 #[test]
 fn prompt_char_turns_error_color_on_failure() {
-    // 默认 lean 的 prompt_char 带 state ERROR fg=196、正常态 fg=76：失败命令后
-    // 前缀 ❯ 应该变红。
+    // The default lean prompt_char has state ERROR fg=196 and normal fg=76: after a
+    // failed command the ❯ prefix should turn red.
     let mut eng = spawn_engine();
     wait_ready(&*eng.master, &mut *eng.reader);
 

@@ -1,14 +1,15 @@
-//! `p11k --version` / `--help` 的 CLI 行为。
+//! CLI behavior of `p11k --version` / `--help`.
 //!
-//! 这两条路径不涉及终端状态，因此不需要 pty：直接启动进程读取 stdout 即可。
+//! Neither path touches terminal state, so no pty is needed: launching the process and
+//! reading stdout suffices.
 
 use std::process::Command;
 
 fn p11k(args: &[&str]) -> (String, String, i32) {
     let out = Command::new(env!("CARGO_BIN_EXE_p11k"))
         .args(args)
-        // 断言写的是英文文案，而 help 是走 gettext 的：宿主 locale（尤其
-        // LC_MESSAGES，它比 LANG 优先）一设成 zh_CN 就会输出中文。
+        // The assertions check English text, while help goes through gettext: a host locale
+        // (especially LC_MESSAGES, which outranks LANG) set to zh_CN would print Chinese.
         .env("LC_ALL", "C")
         .env_remove("LANGUAGE")
         .output()

@@ -255,8 +255,8 @@ impl Repo {
     /// With skip_index (wire diff='1'), index stats are skipped: stats stay
     /// all-zero, like the original's `if (req.diff) stats = ...`.
     pub fn build_fields(&mut self, skip_index: bool) -> [Vec<u8>; field::COUNT] {
-        // HEAD 每次请求重新读取（对齐原版 gitstatus.cc 每次调用 `Head(repo)`）：
-        // commit/checkout 改变 HEAD 后立即生效，COMMIT 字段与 staged 缓存一并刷新。
+        // Re-read HEAD on every request (mirrors the original gitstatus.cc calling `Head(repo)` each
+        // time): a commit/checkout takes effect immediately, refreshing COMMIT and the staged cache together.
         self.head_oid = self
             .git
             .find_reference("HEAD")
@@ -353,11 +353,12 @@ impl Repo {
     /// `branch.<name>.merge`; None (all three fields empty) without config
     /// or a local branch.
     ///
-    /// 原版还有一条前置条件（差分实测，见 tests/compat.rs 的 remote 场景）：
-    /// remote 必须能通过 libgit2 的 `git_remote_lookup`，即配置中同时存在
-    /// `remote.<name>.url`（空串也算存在）与 `remote.<name>.fetch`，且 upstream
-    /// ref `refs/remotes/<remote>/<branch>` 存在；缺少任意一条时，原版三个字段
-    /// 全空（`git_remote_lookup` / `git_branch_upstream` 失败）。
+    /// The original has one more precondition (measured differentially, see the remote
+    /// scenarios in tests/compat.rs): the remote must pass libgit2's `git_remote_lookup`,
+    /// i.e. the config must have both `remote.<name>.url` (an empty string counts as
+    /// present) and `remote.<name>.fetch`, and the upstream ref
+    /// `refs/remotes/<remote>/<branch>` must exist; when any one is missing, the original
+    /// leaves all three fields empty (`git_remote_lookup` / `git_branch_upstream` fail).
     fn upstream_remote(&self) -> Option<RemoteInfo> {
         let branch = self.local_branch();
         if branch.is_empty() {
@@ -384,7 +385,7 @@ impl Repo {
     /// Push remote (git.cc GetPushRemote): `branch.<name>.pushRemote` →
     /// `remote.pushDefault` → None. On the mainstream path
     /// (pushRemote/pushDefault configured) the push ref is the tracking ref.
-    /// 前置条件与 tracking remote（非 push）路径相同：URL 非空 + upstream ref 存在。
+    /// Same preconditions as the tracking remote (non-push) path: non-empty URL + upstream ref present.
     fn push_remote(&self) -> Option<RemoteInfo> {
         let branch = self.local_branch();
         if branch.is_empty() {
@@ -411,9 +412,10 @@ impl Repo {
         })
     }
 
-    /// 解析 remote 的 URL，行为对齐原版的 `git_remote_lookup`：只有 url 而无
-    /// fetch refspec 的 remote，原版视为不存在（差分实测），此处同样返回 None。
-    /// url 为空串不算失败（原版照常上报 branch/name，仅 url 字段留空）。
+    /// Resolve the remote URL, mirroring the original's `git_remote_lookup`: a remote with
+    /// a url but no fetch refspec is treated as absent by the original (measured
+    /// differentially), and returns None here too. An empty url is not a failure (the
+    /// original still reports branch/name, leaving only the url field empty).
     fn remote_or_none(&self, name: &str) -> Option<String> {
         let remote = self.git.find_remote(name).ok()?;
         let has_fetch = remote
@@ -582,8 +584,8 @@ impl Repo {
             self.staged_stats = StagedStats::default();
             self.staged_index_stat = None;
         } else if let Some(head) = self.head_oid {
-            // 缓存失效条件是 HEAD 变化 **或 index 变化**（如 `git add` 只改 index、
-            // 不动 HEAD；对齐原版 git_index_read_ex 的 new_index → head_ = {}）。
+            // The cache is invalidated when HEAD changes **or the index changes** (e.g. `git add`
+            // only touches the index, not HEAD; mirrors the original git_index_read_ex new_index → head_ = {}).
             let index_stat = self.index_stat;
             let index_changed = index_stat != self.staged_index_stat;
             if self.staged_head != Some(head) || index_changed {

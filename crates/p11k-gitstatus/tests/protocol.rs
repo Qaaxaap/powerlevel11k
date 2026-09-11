@@ -1,17 +1,19 @@
-//! 协议层测试（golden tests，逐字节对拍）。
+//! Protocol-layer tests (golden tests, byte-for-byte comparison).
 //!
-//! 测试数据来源：romkatv/gitstatus v1.5.5 的实际字节流语义。
-//! 所有 fixture 字节与调研报告 `.cache/p11k-research/gitstatus-report.md`
-//! 一致——协议要求**逐字节兼容**，golden test 是唯一可靠的验证手段。
+//! Test data source: the actual byte-stream semantics of romkatv/gitstatus v1.5.5.
+//! All fixture bytes match the research report
+//! `.cache/p11k-research/gitstatus-report.md` — the protocol requires
+//! **byte-for-byte compatibility**, and a golden test is the only reliable way
+//! to verify it.
 
 use p11k_gitstatus::protocol::{self, Request, Response, field};
 
-/// 喂入一条请求（不含 MSG_SEP），断言解析成功。
+/// Feed one request (without MSG_SEP), asserting it parses.
 fn parse(bytes: &[u8]) -> Request {
     protocol::parse_request(bytes)
 }
 
-/// 请求解析：三字段普通请求（id + dir + diff='1' → skip_index）。
+/// Request parsing: plain three-field request (id + dir + diff='1' → skip_index).
 #[test]
 fn parse_request_plain() {
     let r = parse(b"123\x1f/home/u/repo\x1f1");
@@ -21,7 +23,7 @@ fn parse_request_plain() {
     assert!(r.skip_index);
 }
 
-/// 请求解析：GIT_DIR 形式（dir 带 ':' 前缀 → dir_is_gitdir=true，dir 不含 ':'）。
+/// Request parsing: GIT_DIR form (dir with a ':' prefix → dir_is_gitdir=true, dir without ':').
 #[test]
 fn parse_request_gitdir_prefix() {
     let r = parse(b"123\x1f:/path/.git");
@@ -29,22 +31,22 @@ fn parse_request_gitdir_prefix() {
     assert_eq!(r.dir, b"/path/.git");
 }
 
-/// 请求解析：diff 字段缺失时 skip_index=false（对齐原版 Request.diff 默认 true=全量计算）。
+/// Request parsing: a missing diff field means skip_index=false (mirrors the original Request.diff default true=full computation).
 #[test]
 fn parse_request_missing_diff() {
     let r = parse(b"123\x1f/home/u/repo");
     assert!(!r.skip_index);
 }
 
-/// 请求解析：diff='0' 与缺省等价（都做全量计算）。
+/// Request parsing: diff='0' is equivalent to omission (both do the full computation).
 #[test]
 fn parse_request_diff_zero() {
     let r = parse(b"123\x1f/home/u/repo\x1f0");
     assert!(!r.skip_index);
 }
 
-/// 握手请求：id=}hello、dir 为空。原版此处是 `*begin` 解引用的 UB，
-/// p11k 安全处理为空 dir 且不触发 from_dotgit。
+/// Handshake request: id=}hello, empty dir. The original is UB here (`*begin`
+/// dereference); p11k handles an empty dir safely and does not trigger from_dotgit.
 #[test]
 fn parse_request_hello_handshake() {
     let r = parse(b"}hello\x1f");
@@ -53,14 +55,14 @@ fn parse_request_hello_handshake() {
     assert!(!r.dir_is_gitdir);
 }
 
-/// 空输入：畸形（EOF 由 daemon 层 read 0 字节检测，不会传入本函数）。
+/// Empty input: malformed (EOF is detected by the daemon layer reading 0 bytes, never passed to this function).
 #[test]
 #[should_panic(expected = "empty message")]
 fn parse_request_empty_input() {
     protocol::parse_request(b"");
 }
 
-/// 畸形：缺少字段分隔符（原版 VERIFY → abort；p11k panic 对齐）。
+/// Malformed: missing field separator (the original VERIFY → abort; p11k panics, mirroring it).
 #[test]
 #[should_panic(expected = "missing dir field")]
 fn malformed_no_field_sep() {
@@ -85,7 +87,7 @@ fn malformed_too_many_fields() {
     parse(b"123\x1fdir\x1f1\x1fx");
 }
 
-/// 握手响应：非仓库响应只有 id 与 '0' 两个字段。
+/// Handshake response: a non-repo response has only the id and '0' fields.
 #[test]
 fn serialize_hello_response() {
     let r = Response {
@@ -96,7 +98,7 @@ fn serialize_hello_response() {
     assert_eq!(protocol::serialize_response(&r), b"}hello\x1f0\x1e");
 }
 
-/// 仓库响应：27 个数据字段的精确顺序（与 field 常量逐一核对）。
+/// Repo response: exact order of the 27 data fields (checked one by one against the field constants).
 #[test]
 fn serialize_repo_response_field_order() {
     let fields: [Vec<u8>; field::COUNT] = std::array::from_fn(|i| format!("f{i:02}").into_bytes());
@@ -115,7 +117,7 @@ fn serialize_repo_response_field_order() {
     assert_eq!(out, expect);
 }
 
-/// id 也过 SafePrint（对齐 ResponseWriter 构造）：控制字符 → '?'。
+/// id also goes through SafePrint (mirrors the ResponseWriter constructor): control chars → '?'.
 #[test]
 fn serialize_id_is_safe_printed() {
     let r = Response {
@@ -126,13 +128,13 @@ fn serialize_id_is_safe_printed() {
     assert_eq!(protocol::serialize_response(&r), b"a?b\x1f0\x1e");
 }
 
-/// SafePrint：控制字符（<0x20）与 DEL（0x7F）替换为 '?'。
+/// SafePrint: control chars (<0x20) and DEL (0x7F) are replaced with '?'.
 #[test]
 fn safe_print_control_chars() {
     assert_eq!(protocol::safe_print(b"a\x01b\x1fc\x7fd"), b"a?b?c?d");
 }
 
-/// SafePrint：字节 >0x7F 原样保留（作者意图；"分支" 的 UTF-8 是 E5 88 86）。
+/// SafePrint: bytes above 0x7F pass through unchanged — the `"分支"` literal below is E5 88 86 in UTF-8.
 #[test]
 fn safe_print_utf8_passthrough() {
     assert_eq!(protocol::safe_print("分支".as_bytes()), "分支".as_bytes());

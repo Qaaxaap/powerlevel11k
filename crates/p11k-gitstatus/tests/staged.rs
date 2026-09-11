@@ -1,8 +1,10 @@
-//! 集成：`git add` 后 staged 计数刷新（index 变但 HEAD 不变的缓存失效）。
+//! Integration: the staged count refreshes after `git add` (cache invalidation
+//! when the index changes but HEAD does not).
 //!
-//! 复现路径：daemon 常驻期间 commit → 改文件 + git add → 同 repo 再查。
-//! staged 缓存若只按 HEAD 失效，会返回旧的 0（原版 gitstatusd 用
-//! `git_index_read_ex` 的 new_index 检测，index 变即清 `head_`）。
+//! Reproduction path: commit while the daemon is resident → modify a file + git add
+//! → query the same repo again. If the staged cache were invalidated by HEAD alone,
+//! it would return a stale 0 (the original gitstatusd detects the new_index in
+//! `git_index_read_ex` and clears `head_` as soon as the index changes).
 
 use p11k_gitstatus::options::Options;
 use p11k_gitstatus::protocol::field;
@@ -45,7 +47,7 @@ fn staged_refreshes_after_git_add_with_same_head() {
     assert_eq!(num(&mut cache, &dir_bytes, field::NUM_STAGED), 0, "clean");
     assert_eq!(num(&mut cache, &dir_bytes, field::NUM_UNSTAGED), 0);
 
-    // 修改 + git add：index 变、HEAD 不变。同一 daemon 实例再查必须刷新。
+    // Modify + git add: the index changes, HEAD does not. Querying again from the same daemon instance must refresh.
     std::fs::write(dir.path().join("f.txt"), "v2").unwrap();
     run_git(dir.path(), &["add", "f.txt"]);
 
@@ -55,7 +57,7 @@ fn staged_refreshes_after_git_add_with_same_head() {
         "staged must refresh to 1 after git add"
     );
 
-    // commit：HEAD 移动。同 daemon 再查 staged 应清 0，COMMIT 字段应为新 commit。
+    // commit: HEAD moves. Querying staged again from the same daemon should reset to 0, and COMMIT should be the new commit.
     run_git(dir.path(), &["commit", "-qm", "c2"]);
     assert_eq!(
         num(&mut cache, &dir_bytes, field::NUM_STAGED),
