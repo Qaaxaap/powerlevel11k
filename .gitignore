@@ -1,4 +1,3 @@
-# ── AI / research scratch space (memory files, research notes — never committed) ──
 .cache/
 
 # ── Rust (Cargo) ──
@@ -32,3 +31,7 @@ debug/
 # ── OS ──
 .DS_Store
 Thumbs.db
+
+# ── Nix ──
+/result
+/result-*
