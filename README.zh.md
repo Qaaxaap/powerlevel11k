@@ -147,11 +147,18 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 - 引擎占位协议：多行 header 几何自洽，zsh/bash/fish/pwsh 四 shell
 - instant / transient prompt、vi_mode、history、宽松布局
 - 80+ 段与 KDL 主题语言、图标三档 mode 与 `icon{}` 覆盖
+- `p11k configure` 向导、gettext 词条（zh_CN）、CI
 
 待办：
 
-- `p10k configure` 式配置向导
-- 剩余段的补齐与框架集成（oh-my-zsh、prezto、zinit）
+- p10k 还没搬过来的开关：`STATUS_EXTENDED_STATES`（`OK_PIPE` /
+  `ERROR_PIPE` / `ERROR_SIGNAL`）、`VCS_DISABLED_WORKDIR_PATTERN`、
+  `ICON_PADDING` / `ICON_BEFORE_CONTENT` / `LEGACY_ICON_SPACING`、
+  `TRANSIENT_PROMPT` 剩下的模式、热重载、`DISABLE_RPROMPT` 一类开关。
+  `DIR_MAX_LENGTH` 与 `DIR_MIN_COMMAND_COLUMNS(_PCT)` 做不到：它们要读 zle
+  的 buffer，而引擎根本看不到。
+- 打包与发布
+- macOS 支持
 - daemon / 引擎的长期维护与加固（这正是 p11k 存在的意义）
 
 ## 许可证

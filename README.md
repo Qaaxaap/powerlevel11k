@@ -176,11 +176,18 @@ Done:
 - instant / transient prompt, vi_mode, history, loose layout
 - 80+ segments and the KDL theme language, three-mode icons + `icon{}`
   overrides
+- `p11k configure` wizard, gettext catalogues (zh_CN), CI
 
 Roadmap:
 
-- a `p10k configure`-style wizard
-- remaining segments and framework integrations (oh-my-zsh, prezto, zinit)
+- the p10k knobs that are still missing: `STATUS_EXTENDED_STATES`
+  (`OK_PIPE` / `ERROR_PIPE` / `ERROR_SIGNAL`), `VCS_DISABLED_WORKDIR_PATTERN`,
+  `ICON_PADDING` / `ICON_BEFORE_CONTENT` / `LEGACY_ICON_SPACING`, the remaining
+  `TRANSIENT_PROMPT` modes, hot reload, `DISABLE_RPROMPT`-style toggles.
+  `DIR_MAX_LENGTH` and `DIR_MIN_COMMAND_COLUMNS(_PCT)` cannot be implemented:
+  they need zle's buffer, which the engine never sees.
+- packaging and releases
+- macOS support
 - long-term maintenance and hardening of the daemon and engine (the point of
   p11k)
 
