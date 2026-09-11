@@ -91,6 +91,20 @@ if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 引擎 exec 覆盖启动 shell，继承其环境；内部 shell 会重新 source 用户配置
 （主题本身除外——引擎就是主题）。`P11K_ENGINE` 用于打破递归。
 
+### 开发环境
+
+构建与测试需要的东西全部钉在 `flake.nix` 里：
+
+```bash
+nix develop        # rust（cargo/clippy/rustfmt）+ msgfmt + zsh + zh_CN.UTF-8
+cargo test --all
+nix build          # 两个二进制：p11k 与 p11k-d
+```
+
+devShell 同时导出 `LOCALE_ARCHIVE`：否则 `setlocale("zh_CN.UTF-8")` 会失败、
+i18n 的翻译测试只能跳过——跳过的测试等于没测。CI 跑的就是这几条
+`nix develop` 命令，不存在另一套需要同步的 CI 环境。
+
 ### 语言
 
 引擎本身和 `p11k configure` 的用户可见文案走 gettext。英文是源语言：代码里的

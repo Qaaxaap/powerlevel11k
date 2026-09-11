@@ -109,6 +109,21 @@ Pass `--shell` explicitly: `$SHELL` does not change when pwsh is started from
 zsh or bash. Without the flag the engine falls back to `$SHELL`, using
 `PSModulePath`/`PSHOME` to recognise PowerShell.
 
+### Development environment
+
+Everything the build and the tests need is pinned in `flake.nix`:
+
+```bash
+nix develop        # rust (cargo/clippy/rustfmt) + msgfmt + zsh + zh_CN.UTF-8
+cargo test --all
+nix build          # the binaries: p11k and p11k-d
+```
+
+The devShell also exports `LOCALE_ARCHIVE`, otherwise `setlocale("zh_CN.UTF-8")`
+fails and the i18n translation test has to skip — and a skipped test is not a
+test. CI runs exactly these `nix develop` commands, so there is no separate CI
+environment to keep in sync.
+
 The engine execs over the launching shell and inherits its environment; the
 inner shell re-sources the user config (except the theme — the engine is the
 theme). `P11K_ENGINE` breaks recursion.

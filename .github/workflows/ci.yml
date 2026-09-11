@@ -4,37 +4,22 @@ on:
   push:
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      # msgfmt：build.rs 用它把 po/*.po 编成 .mo（缺了只是不翻译，不报错，
-      # 但那样 i18n 的翻译测试会被跳过，等于没测）。zsh 是引擎默认内部 shell，
-      # 集成测试要跑它。git identity 是 gitstatus 测试自己 commit 时需要的。
-      - name: System dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gettext locales zsh
-          sudo locale-gen zh_CN.UTF-8
-          git config --global user.email "ci@example.com"
-          git config --global user.name "CI"
+      # 环境全部来自 flake.nix 的 devShell：rust 工具链、msgfmt、zsh、git，
+      # 以及经 LOCALE_ARCHIVE 暴露的 zh_CN.UTF-8。CI 与本地 `nix develop`
+      # 跑的是同一套东西，不存在"CI 上装了什么特别的东西"。
+      - uses: cachix/install-nix-action@v30
 
       - name: Format
-        run: cargo fmt --all -- --check
+        run: nix develop --command cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets --locked -- -D warnings
+        run: nix develop --command cargo clippy --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --all --locked
+        run: nix develop --command cargo test --all --locked
