@@ -396,7 +396,11 @@ function global:P11kEnginePrompt {
         [IO.File]::AppendAllText($script:P11kAnnounce, "r`n")
     }
     $P11kJobs = @(Get-Job -ErrorAction SilentlyContinue).Count
-    $P11kHist = (Get-History).Count
+    # Send the command number, not the history count: zsh reports HISTCMD, and
+    # HistoryInfo.Id is PowerShell's nearest equivalent (session-unique and
+    # monotonic). .Count drops when MaximumHistoryCount trims; Id survives that.
+    # After Clear-History there is nothing left to read, so it reports 0.
+    $P11kHist = if ($h = Get-History -Count 1) { $h.Id } else { 0 }
     [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n")
     # Wait for the engine ack: the placeholder is printed first, the header is backfilled after.
     while (-not [IO.File]::Exists($script:P11kAck)) { Start-Sleep -Milliseconds 5 }

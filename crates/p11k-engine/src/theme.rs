@@ -19,8 +19,8 @@ pub struct HeaderInfo {
     /// 上一条命令耗时(秒,引擎计时:回车 → 本次 precmd);首 prompt 为 0。
     pub exec_seconds: f64,
     pub jobs: usize,
-    /// 历史计数：zsh 发命令号(`HISTCMD`)，pwsh 发条目数(`(Get-History).Count`)，
-    /// 两者在历史被清空或截断后会分叉；bash/fish 没有这一列，按 0 处理。
+    /// 命令号：zsh 发 `HISTCMD`，pwsh 发最后一条历史的 `HistoryInfo.Id`
+    /// （同样是会话内单调递增的编号）；bash/fish 没有这一列，按 0 处理。
     pub history: usize,
 }
 
