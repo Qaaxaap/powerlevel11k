@@ -249,6 +249,8 @@ TRAPWINCH() {
 }
 
 # 补全：compinit 激活 + complist/menu select。
+# 注意别在这里碰补全的着色（list-colors）：设成空值会让 zsh 退回内置默认，
+# 目录变粗体红，与用户 rc（oh-my-zsh 从 LS_COLORS 派生的 di=01;34 蓝）不一致。
 autoload -Uz compinit && compinit
 zmodload -i zsh/complist
 setopt auto_menu complete_in_word always_to_end
@@ -256,7 +258,6 @@ unsetopt menu_complete
 zstyle ':completion:*:*:*:*:*' menu select
 zstyle ':completion:*' matcher-list 'm:{[:lower:][:upper:]}={[:upper:][:lower:]}' 'r:|=*' 'l:|=* r:|=*'
 zstyle ':completion:*' special-dirs true
-zstyle ':completion:*' list-colors ''
 zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
 "#;
 
