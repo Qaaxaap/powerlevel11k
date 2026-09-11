@@ -9,7 +9,11 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "LGPL-3.0-or-later"
-rust-version = "1.85" # edition 2024 的最低支持版本
+# 实测最低版本，不是 edition 2024 的名义下限 1.85：依赖链卡住了 —— kdl 6.7 要求
+# rustc 1.95、icu_* 2.3 要求 1.88、idna_adapter 要求 1.86，1.85 直接编不过，
+# 1.95 实测 `cargo check --all --locked` 通过。这个数跟着 Cargo.lock 走，
+# 动依赖版本（尤其 kdl）后必须重新实测。
+rust-version = "1.95"
 
 # workspace 级依赖（各 crate 按需启用，见各 crate 的 Cargo.toml）。
 #
