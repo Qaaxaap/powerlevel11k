@@ -189,8 +189,6 @@ mod tests {
         let dir = env!("P11K_LOCALEDIR");
         let _ = bindtextdomain("p11k", dir);
         let _ = textdomain("p11k");
-        // 构建机上可能既没有 msgfmt（.mo 没编出来）也没有 zh_CN locale：
-        // 那不是代码问题，跳过而不是判失败。
         if !std::path::Path::new(dir)
             .join("zh_CN/LC_MESSAGES/p11k.mo")
             .exists()

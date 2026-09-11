@@ -87,14 +87,13 @@ pub struct Opts {
     pub strategy: Strategy,
     /// `SHORTEN_DIR_LENGTH`（保留级数 / 每级字符数）。
     pub length: usize,
-    /// `SHORTEN_DELIMITER`；空 = 不留省略符（p10k 的默认配置就是空）。
+    /// `SHORTEN_DELIMITER`；空 = 不留省略符。
     pub delimiter: String,
     /// `SHORTEN_FOLDER_MARKER`；空 = 用内置 marker 列表。
     pub marker: String,
-    /// `truncate_to_unique` 的折叠预算：`None` = 不折（整行放得下时 p10k 就是
-    /// 原样显示），`Some(n)` = 这一行超宽了、需要省出 n 列。p10k 是按行宽动态
-    /// 决定折几级的（实测 100 列不折、90 列折一级、80 列折两级）。其它策略与
-    /// p10k 一样与宽度无关，忽略本字段。
+    /// `truncate_to_unique` 的折叠预算：`None` = 不折，
+    /// `Some(n)` = 这一行超宽了、需要省出 n 列。
+    /// 其它策略与 p10k 一样与宽度无关，忽略本字段。
     pub budget: Option<usize>,
 }
 
@@ -149,8 +148,8 @@ fn to_parts(p: &Path) -> Vec<String> {
 
 /// `truncate_to_unique`：锚点保留，其余缩到唯一前缀。
 ///
-/// `opts.budget` 为 `None` 时整条路径原样（p10k 放得下就不折）；`Some(n)` 时
-/// 从前往后逐级折，累计省出的列数够 n 就停——p10k 在窄终端正是这个行为。
+/// `opts.budget` 为 `None` 时整条路径原样；`Some(n)` 时
+/// 从前往后逐级折，累计省出的列数够 n 就停。
 fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) -> Vec<DirPart> {
     let n = parts.len();
     let anchor_tail = shortenlen.min(n);
@@ -324,7 +323,7 @@ fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -
             marks.push(i);
         }
     }
-    marks.push(usize::MAX); // 相当于 p10k 里补的那个 1（最前面没有 marker 时也要能算出省略区间）
+    marks.push(usize::MAX); // 相当于 p10k 里补的 1（最前面没有 marker 时也要能算出省略区间）
     let mut hidden: Vec<bool> = vec![false; n];
     for w in marks.windows(2) {
         let (hi, lo) = (w[0], w[1]);

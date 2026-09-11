@@ -1,8 +1,7 @@
-//! M0 集成测试：把引擎二进制放进一个 pty，从另一侧断言
-//! 透传行为与 prompt 窗口的主题输出。
+//! 端到端测试：把引擎二进制放进 pty，从另一侧断言透传与 prompt 窗口。
 //!
-//! 真实终端（测试侧 pty）看到的内容 = 引擎透传的 shell 输出 + 引擎画的
-//! header，与用户在 kitty 里看到的一致。
+//! 引擎不解析 pty 输出，它画出的字节和用户在终端里看到的是同一份 —— 所以断言
+//! 直接落在这些字节上：占位协议、header 回填、退出码着色。
 
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
@@ -11,16 +10,19 @@ use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system}
 
 const COLS: u16 = 100;
 
-/// 一个跑起来的引擎：pty 主端、子进程、读端、写端。
 struct Engine {
     master: Box<dyn MasterPty + Send>,
-    /// 进程句柄：由 Drop 收尾（测试里不需要 kill，pty 关闭时 shell 自会退出）。
+    /// 留着句柄由 Drop 收尾：pty 主端一关，内部 shell 自己退出，不需要 kill。
     #[allow(dead_code)]
     child: Box<dyn Child + Send + Sync>,
     reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
 }
 
+/// 按隔离条件起引擎：显式 `--shell zsh`（CI 的 `$SHELL` 是 bash，而下面的断言是
+/// 照 zsh 的输出写的）、用户 rc 指向 `/dev/null`（真实 `~/.zshrc` 里的
+/// oh-my-zsh/p10k 又慢又会干扰断言）、cwd 用 `/tmp`（非 git 目录，避免 git 状态
+/// 扫描抖动 prompt 时序）。
 fn spawn_engine() -> Engine {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -32,14 +34,9 @@ fn spawn_engine() -> Engine {
         })
         .unwrap();
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_p11k"));
-    // 显式指定 shell：不写的话引擎回退到 $SHELL，而 CI 上是 /bin/bash，
-    // 下面这些断言却是照着 zsh 的输出写的。
     cmd.arg("--shell");
     cmd.arg("zsh");
-    // 隔离：不依赖测试机上的真实 ~/.zshrc（有 oh-my-zsh/p10k，慢且干扰断言）。
-    // 指向空文件，让内部 shell 只跑引擎协议层。
     cmd.env("P11K_USER_ZSHRC", "/dev/null");
-    // 隔离：cwd 用非 git 目录，避免 git 状态同步扫描拖慢/抖动 prompt 时序。
     cmd.cwd("/tmp");
     let child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
@@ -53,8 +50,8 @@ fn spawn_engine() -> Engine {
     }
 }
 
-/// 读 pty 输出直到 `needle` 出现（或超时），返回累计内容。
-/// 用 poll 限时，避免阻塞读使超时变成永久阻塞。
+/// 读到 `needle` 出现或超时，返回累计输出。用 poll 限时：直接阻塞读会让超时
+/// 变成永久等待。
 fn read_until(
     master: &dyn MasterPty,
     reader: &mut dyn Read,
@@ -85,13 +82,14 @@ fn read_until(
     acc
 }
 
-/// 等真正的第一个 prompt 就绪：instant header 没有退出码状态（无 ✔），只有
-/// 内部 shell 加载完、第一次 precmd 后清屏重画的真 header 才带 ✔。
+/// 等真正的第一个 prompt 就绪。判据是 `✔`：instant header 是引擎按启动时已知的
+/// 状态画的、不含退出码，只有内部 shell 加载完、第一次 precmd 之后重画的 header
+/// 才带它。
 fn wait_ready(master: &dyn MasterPty, reader: &mut dyn Read) -> String {
     let out = read_until(master, reader, "\u{f00c}", Duration::from_secs(10));
     if !out.contains('\u{f00c}') {
-        // 超时只会表现为“输出被截断”。输出引擎日志尾部，否则无法判断是
-        // spawn 失败、卡在 ack，还是内部 shell 未启动。
+        // 超时时只看到“输出被截断”，无从判断是 spawn 失败、卡在 ack 还是 shell
+        // 根本没起来 —— 把引擎日志尾部带上。
         match std::fs::read_to_string("/tmp/p11k-engine.log") {
             Ok(log) => {
                 let tail: Vec<&str> = log.lines().rev().take(15).collect();
@@ -115,8 +113,8 @@ fn initial_prompt_shows_header_and_input_line() {
         out.contains('\u{f00c}'),
         "real header should contain the ✔ exit-code status"
     );
-    // instant header 已含输入行前缀 ❯；真 prompt 的前缀覆盖由
-    // placeholder_overwritten_by_prefix 单独验证（❯ 在占位符 __ 之后）。
+    // instant header 也含 ❯；前缀覆盖占位符这件事由
+    // placeholder_overwritten_by_prefix 单独验证。
     assert!(
         out.contains('❯'),
         "input line should contain ❯, got {out:?}"
@@ -127,14 +125,12 @@ fn initial_prompt_shows_header_and_input_line() {
     );
 }
 
-/// 占位协议：占位符 `__`（`_` 按前缀可见宽度重复而成）原样透传，引擎随后用
-/// `\r` + 前缀覆盖（输入行延后绘制）。前缀宽度与占位符恒等（2 列），zle 重绘
-/// 列偏移由此对齐。
+/// 占位协议：shell 渲染的 `__`（`_` 按前缀可见宽度重复而成）原样透传，引擎随后
+/// 用 `\r` + 前缀覆盖它。前缀宽度与占位符恒等（2 列），zle 重绘的列偏移由此对齐。
 #[test]
 fn placeholder_overwritten_by_prefix() {
     let mut eng = spawn_engine();
     let mut full = wait_ready(&*eng.master, &mut *eng.reader);
-    // shell 渲染的多行占位（换行 + __）先透传，引擎随后 \r + 前缀（❯）回到行首覆盖。
     assert!(
         full.contains("__"),
         "placeholder should pass through verbatim, got {full:?}"
@@ -176,7 +172,7 @@ fn command_output_passthrough_and_next_prompt() {
         "command output should pass through"
     );
 
-    // 下一个 prompt 也该出现（命令执行完 → precmd → header 重画带 ✔）。
+    // 命令执行完 → precmd → 重画 header，此时带 ✔。
     let out2 = read_until(
         &*eng.master,
         &mut *eng.reader,
@@ -194,7 +190,6 @@ fn exit_code_shows_in_status() {
     let mut eng = spawn_engine();
     wait_ready(&*eng.master, &mut *eng.reader);
 
-    // 失败命令 → header 右段显示红色 ✘ n。
     eng.writer.write_all(b"false\n").unwrap();
     eng.writer.flush().unwrap();
     let out = read_until(
@@ -211,8 +206,8 @@ fn exit_code_shows_in_status() {
 
 #[test]
 fn prompt_char_turns_error_color_on_failure() {
-    // 默认 lean:prompt_char 带 state ERROR fg=196。失败命令后输入行前缀
-    // 的 ❯ 应变红（38;5;196），正常态是 76。
+    // 默认 lean 的 prompt_char 带 state ERROR fg=196、正常态 fg=76：失败命令后
+    // 前缀 ❯ 应该变红。
     let mut eng = spawn_engine();
     wait_ready(&*eng.master, &mut *eng.reader);
 
@@ -235,7 +230,6 @@ fn ctrl_c_interrupts_running_command() {
     let mut eng = spawn_engine();
     wait_ready(&*eng.master, &mut *eng.reader);
 
-    // sleep 前台运行，Ctrl-C 打断，然后出新 prompt。
     eng.writer.write_all(b"sleep 5\n").unwrap();
     eng.writer.flush().unwrap();
     std::thread::sleep(Duration::from_millis(300));

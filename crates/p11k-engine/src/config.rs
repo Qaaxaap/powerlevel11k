@@ -1200,8 +1200,7 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
     }
 }
 
-/// 配置里出现引擎不认识的键时提醒一句。静默忽略会让写错的键名毫无反馈 ——
-/// 测试里就曾把 `prompt-add-newline` 写成 `add-newline` 而一直没人发现。
+/// 配置里出现引擎不认识的键时提醒。
 fn warn_unknown_key(name: &str) {
     eprintln!("p11k: {}{name}", t("unknown config key: "));
 }
