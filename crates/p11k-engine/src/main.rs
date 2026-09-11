@@ -663,6 +663,11 @@ fn main() -> anyhow::Result<()> {
     // 引擎在透传流里匹配占位符画前缀覆盖。占位符前的内容累积到缓冲。
     let mut pending_placeholder = false;
     let mut placeholder_buf: Vec<u8> = Vec::new();
+    // 用户自当前 prompt 就绪以来敲过键没有：缩窗时代 pwsh 敲空回车只在输入行
+    // 还空着时才敢做，否则会把用户没写完的命令提交掉。
+    let mut typed_since_prompt = false;
+    // 上一次次替 pwsh 敲回车的时刻（拖动窗口会连发 SIGWINCH，节流一下）。
+    let mut last_pwsh_nudge: Option<std::time::Instant> = None;
 
     // instant header：不等内部 shell 加载完较慢的用户 rc，立即用引擎 cwd 画
     // 占位 header + prompt，打开窗口即见 prompt；内部 shell 第一次 precmd 后
@@ -696,9 +701,10 @@ fn main() -> anyhow::Result<()> {
     let mut instant_newlines = 0usize;
 
     loop {
-        // resize 信号：同步内部 pty 尺寸（含 pixel）。zsh/bash 靠各自的
-        // TRAPWINCH/trap WINCH 宣告 r 后重画；fish 交互时不触发 signal event、
-        // 重绘也不输出字节、不重调 fish_prompt，只能引擎主动重画。
+        // resize 信号：同步内部 pty 尺寸（含 pixel）。zsh/bash/fish 都挂了信号
+        // 钩子（TRAPWINCH / trap WINCH / --on-signal WINCH），收到后宣告 `r`，
+        // 由引擎按新宽度重排；pwsh 挂不到 SIGWINCH，只能在 prompt 函数里比较
+        // 窗口尺寸，所以下面那段在缩窗时替它敲一次空回车。
         if RESIZE_FLAG.swap(false, Ordering::Relaxed) {
             // 重新套一遍 raw：tmux 之类的复用器在新建/调整 pane 时会重设 pane pty
             // 的 termios，ECHO 一旦被打开，引擎自己往终端写的东西会被回显回 stdin，
@@ -729,6 +735,21 @@ fn main() -> anyhow::Result<()> {
                     )?;
                     theme::render_prompt(&mut stdout, &prefix.text)?;
                     stdout.flush()?;
+                }
+                // pwsh 挂不到 SIGWINCH：它只能在 prompt 函数里比较窗口尺寸，
+                // 所以缩窗后屏幕上是终端 reflow 过的旧内容，要等下一次 prompt
+                // 才重排。这里替用户敲一次空回车（仅当输入行还空着），让 pwsh
+                // 重新调用 prompt → 宣告 r → 引擎按新宽度重排。
+                if shell == Shell::Pwsh
+                    && at_prompt
+                    && !typed_since_prompt
+                    && last_pwsh_nudge
+                        .is_none_or(|t| t.elapsed() > std::time::Duration::from_millis(150))
+                {
+                    log("resize: nudge pwsh with an empty line so it redraws");
+                    let _ = writer.write_all(b"\r");
+                    let _ = writer.flush();
+                    last_pwsh_nudge = Some(std::time::Instant::now());
                 }
             }
         }
@@ -843,6 +864,7 @@ fn main() -> anyhow::Result<()> {
                     theme::render_prompt(&mut stdout, &text)?;
                     stdout.flush()?;
                     at_prompt = true; // 输入行就绪
+                    typed_since_prompt = false;
                 }
                 AnnMsg::Resize => {
                     // 尺寸检查在循环开头已 resize pty。
@@ -926,7 +948,10 @@ fn main() -> anyhow::Result<()> {
                     // 不再重画 header（否则 \e[1A 会画错行）。
                     if buf[..n].iter().any(|&b| b == b'\r' || b == b'\n') {
                         at_prompt = false;
+                        typed_since_prompt = false;
                         last_enter = Some(std::time::Instant::now()); // 命令开始计时
+                    } else {
+                        typed_since_prompt = true;
                     }
                     writer.write_all(&buf[..n])?;
                 }
@@ -971,6 +996,7 @@ fn main() -> anyhow::Result<()> {
                             placeholder_buf.clear();
                             pending_placeholder = false;
                             at_prompt = true; // bash/fish 的"prompt 就绪"（等价 zsh 的 p 宣告）
+                            typed_since_prompt = false;
                         } else if placeholder_buf.len() > 8192 {
                             stdout.write_all(&placeholder_buf)?;
                             placeholder_buf.clear();
