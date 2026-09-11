@@ -54,7 +54,7 @@ fn spawn_engine() -> Engine {
 }
 
 /// 读 pty 输出直到 `needle` 出现（或超时），返回累计内容。
-/// 用 poll 限时，避免阻塞读把超时变成死等。
+/// 用 poll 限时，避免阻塞读使超时变成永久阻塞。
 fn read_until(
     master: &dyn MasterPty,
     reader: &mut dyn Read,
@@ -90,8 +90,8 @@ fn read_until(
 fn wait_ready(master: &dyn MasterPty, reader: &mut dyn Read) -> String {
     let out = read_until(master, reader, "\u{f00c}", Duration::from_secs(10));
     if !out.contains('\u{f00c}') {
-        // 超时只表现为"拿到半截输出"。把引擎日志尾巴带出来，否则没法判断是
-        // spawn 失败、卡在 ack，还是内部 shell 压根没跑起来。
+        // 超时只会表现为“输出被截断”。输出引擎日志尾部，否则无法判断是
+        // spawn 失败、卡在 ack，还是内部 shell 未启动。
         match std::fs::read_to_string("/tmp/p11k-engine.log") {
             Ok(log) => {
                 let tail: Vec<&str> = log.lines().rev().take(15).collect();
@@ -115,8 +115,8 @@ fn initial_prompt_shows_header_and_input_line() {
         out.contains('\u{f00c}'),
         "real header should contain the ✔ exit-code status"
     );
-    // instant header 已含输入行前缀 ❯;真 prompt 的前缀覆盖由
-    // placeholder_overwritten_by_prefix 单独验证(❯ 在占位符 __ 之后)。
+    // instant header 已含输入行前缀 ❯；真 prompt 的前缀覆盖由
+    // placeholder_overwritten_by_prefix 单独验证（❯ 在占位符 __ 之后）。
     assert!(
         out.contains('❯'),
         "input line should contain ❯, got {out:?}"
@@ -127,14 +127,14 @@ fn initial_prompt_shows_header_and_input_line() {
     );
 }
 
-/// 占位协议：占位符 `aa` 原样透传，引擎随后 `\r` + 前缀顶掉（输入行延后
-/// 绘制）。前缀的可见宽度与占位符恒等（2 列），zle 重绘列偏移由此对齐。
+/// 占位协议：占位符 `__`（`_` 按前缀可见宽度重复而成）原样透传，引擎随后用
+/// `\r` + 前缀覆盖（输入行延后绘制）。前缀宽度与占位符恒等（2 列），zle 重绘
+/// 列偏移由此对齐。
 #[test]
 fn placeholder_overwritten_by_prefix() {
     let mut eng = spawn_engine();
     let mut full = wait_ready(&*eng.master, &mut *eng.reader);
-    // 占位协议：shell 渲染的多行占位(换行 + 占位符 __)先透传,引擎随后 \r + 前缀
-    // (❯)回行首顶掉。instant 的 ❯ 在 __ 之前,不算;真 prompt 的 ❯ 一定在 __ 之后。
+    // shell 渲染的多行占位（换行 + __）先透传，引擎随后 \r + 前缀（❯）回到行首覆盖。
     assert!(
         full.contains("__"),
         "placeholder should pass through verbatim, got {full:?}"
@@ -161,7 +161,6 @@ fn placeholder_overwritten_by_prefix() {
 #[test]
 fn command_output_passthrough_and_next_prompt() {
     let mut eng = spawn_engine();
-    // 等真正的 prompt 就绪（instant 不算，内部 shell 还没起）。
     wait_ready(&*eng.master, &mut *eng.reader);
 
     eng.writer.write_all(b"echo hello-from-shell\n").unwrap();
@@ -213,7 +212,7 @@ fn exit_code_shows_in_status() {
 #[test]
 fn prompt_char_turns_error_color_on_failure() {
     // 默认 lean:prompt_char 带 state ERROR fg=196。失败命令后输入行前缀
-    // 的 ❯ 应变红(38;5;196),正常态是 76。
+    // 的 ❯ 应变红（38;5;196），正常态是 76。
     let mut eng = spawn_engine();
     wait_ready(&*eng.master, &mut *eng.reader);
 

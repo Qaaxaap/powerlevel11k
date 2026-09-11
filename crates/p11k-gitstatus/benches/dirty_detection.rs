@@ -11,7 +11,7 @@
 //! - 本 crate：criterion 基准（`cargo bench -p p11k-gitstatus`）。
 //! - 原版：同一 fixture 上，用 shell 循环对 gitstatusd 发 10 次请求计时
 //!   （取中位数），脚本放 `.cache/`（不入库）。
-//! - 达标线：p11k 不低于原版的 2 倍耗时（先达标，再追求追平）。
+//! - 达标线：p11k 耗时不超过原版的 2 倍（先达标，再追求追平）。
 //!
 //! # fixture 准备
 //!
@@ -43,7 +43,6 @@ fn bench_many_untracked(c: &mut criterion::Criterion) {
     todo!("same as above, fixture is thousands of untracked files")
 }
 
-// criterion 入口：三个场景各自成组。
 criterion::criterion_group!(
     benches,
     bench_clean_repo,

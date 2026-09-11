@@ -29,14 +29,14 @@ fn parse_request_gitdir_prefix() {
     assert_eq!(r.dir, b"/path/.git");
 }
 
-/// 请求解析：diff 字段缺失时 skip_index=false（对齐原版 Request.diff 默认 true=全算）。
+/// 请求解析：diff 字段缺失时 skip_index=false（对齐原版 Request.diff 默认 true=全量计算）。
 #[test]
 fn parse_request_missing_diff() {
     let r = parse(b"123\x1f/home/u/repo");
     assert!(!r.skip_index);
 }
 
-/// 请求解析：diff='0' 与缺省等价（都全算）。
+/// 请求解析：diff='0' 与缺省等价（都做全量计算）。
 #[test]
 fn parse_request_diff_zero() {
     let r = parse(b"123\x1f/home/u/repo\x1f0");
@@ -67,21 +67,18 @@ fn malformed_no_field_sep() {
     parse(b"123");
 }
 
-/// 畸形：diff 字段非 '0'/'1'。
 #[test]
 #[should_panic(expected = "bad diff field")]
 fn malformed_bad_diff() {
     parse(b"123\x1fdir\x1f2");
 }
 
-/// 畸形：diff 字段多于 1 字节。
 #[test]
 #[should_panic(expected = "bad diff field")]
 fn malformed_two_byte_diff() {
     parse(b"123\x1fdir\x1f10");
 }
 
-/// 畸形：超过 3 个字段。
 #[test]
 #[should_panic(expected = "too many fields")]
 fn malformed_too_many_fields() {
@@ -141,7 +138,6 @@ fn safe_print_utf8_passthrough() {
     assert_eq!(protocol::safe_print("分支".as_bytes()), "分支".as_bytes());
 }
 
-/// SafePrint：纯可打印 ASCII 原样返回。
 #[test]
 fn safe_print_ascii_passthrough() {
     assert_eq!(protocol::safe_print(b"hello world"), b"hello world");

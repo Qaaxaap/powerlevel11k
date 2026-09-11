@@ -178,7 +178,6 @@ pub fn parse_args(args: &[String]) -> Result<ParseOutcome, ParseError> {
             return Ok(ParseOutcome::Version);
         }
         if let Some(long) = arg.strip_prefix("--") {
-            // Boolean long options (--recurse-untracked-dirs etc.) take no value.
             if let Some(eq) = long.find('=') {
                 let name = &long[..eq];
                 let value = &long[eq + 1..];
@@ -212,7 +211,6 @@ pub fn parse_args(args: &[String]) -> Result<ParseOutcome, ParseError> {
                 }
                 parse_short_opt(&mut options, name, Some(&args[i]))?;
             } else {
-                // Boolean short option (-e/-U/-W/-D).
                 parse_short_opt(&mut options, name, None)?;
             }
         } else {
@@ -225,8 +223,7 @@ pub fn parse_args(args: &[String]) -> Result<ParseOutcome, ParseError> {
     Ok(ParseOutcome::Run(options))
 }
 
-/// Whether the short option takes a value. Value-taking: l p t v r z s u c d
-/// m G; boolean: e U W D.
+/// Value-taking: l p t v r z s u c d m G; boolean: e U W D.
 fn short_opt_takes_value(name: &str) -> bool {
     matches!(
         name,
@@ -234,8 +231,7 @@ fn short_opt_takes_value(name: &str) -> bool {
     )
 }
 
-/// Whether the long option takes a value. Boolean longs (corresponding to
-/// -e/-U/-W/-D) return false.
+/// Boolean longs (corresponding to -e/-U/-W/-D) return false.
 fn long_opt_takes_value(name: &str) -> bool {
     matches!(
         name,

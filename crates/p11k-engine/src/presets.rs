@@ -3,7 +3,7 @@
 //! 视觉对齐 p10k 官方 config（`config/p10k-{lean,classic,rainbow,pure}.zsh`）。
 //! 颜色变体参数化：classic 段底四档、classic/rainbow/lean 帧四档、lean 256/8 色、
 //! pure original/snazzy。向导按用户答案调构造函数并改字段；`--preset`/引擎回退用
-//! [`build`] 的默认参数。引擎能力未覆盖的 p10k 参数不搬。
+//! [`build`] 的默认参数。引擎能力未覆盖的 p10k 参数不迁移。
 
 use crate::config::{
     Color, Config, Element, Frame, FramePiece, Prop, Segment, Separators, StateSpec, Style,
@@ -336,7 +336,7 @@ pub fn rainbow(color: usize) -> Config {
     cfg.segments
         .insert("dir".into(), dir_seg(254, 250, 255, true, Some(4)));
     // p10k rainbow 的 vcs 格式化函数:clean/modified/untracked 全是 `%0F`(黑,
-    // 段底是绿 2),conflicted `%1F`(红)。之前传 2/3/2,绿底绿字把分支和 ?N 画没了。
+    // 段底是绿 2),conflicted `%1F`(红)。此前传 2/3/2，绿底绿字会让分支名和 ?N 不可见。
     cfg.segments
         .insert("vcs".into(), vcs_seg(None, 0, 0, 1, 0, 7, Some(2)));
     cfg.segments
@@ -440,7 +440,6 @@ impl PresetKind {
     ];
 }
 
-/// 按名字查预设身份；未知返回 None。
 pub fn by_name(name: &str) -> Option<PresetKind> {
     PresetKind::ALL.iter().copied().find(|k| k.name() == name)
 }
@@ -568,7 +567,7 @@ mod tests {
         let l8 = lean(true);
         assert_eq!(int(&l8, "vcs", "untracked-foreground"), Some(4));
         assert_eq!(int(&l8, "vcs", "conflicted-foreground"), Some(1));
-        // p10k rainbow:vcs 段底是绿 2,文字全是黑 0(不能与底色同色,否则画没了)。
+        // p10k rainbow:vcs 段底是绿 2,文字全是黑 0(不能与底色同色,否则文字不可见)。
         let rb = rainbow(1);
         let vcs = rb.segment("vcs");
         assert_eq!(vcs.style.bg, x(2));

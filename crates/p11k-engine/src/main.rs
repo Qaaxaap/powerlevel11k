@@ -4,8 +4,8 @@
 //! 1. 用 portable-pty 起一个无主题 shell（ZDOTDIR 指向引擎生成的临时目录，
 //!    .zshrc 里只设占位 PROMPT 和宣告钩子）。
 //! 2. 透传：pty 输出 → 真实终端 stdout；真实终端 stdin → pty。引擎不解析
-//!    pty 输出的 ANSI，shell 渲染什么（命令输出、zle、占位 prompt、补全
-//!    菜单）引擎一概不管。
+//!    pty 输出的 ANSI：命令输出、zle、占位 prompt、补全菜单等一律由 shell
+//!    渲染，引擎不做干预。
 //! 3. prompt 窗口由 announce 驱动的两笔绘制：
 //!    - `h`（precmd 宣告）：发 OSC133A 标记 + touch ack 放行 shell 输出占位，
 //!      header 内容不在此时画。
@@ -14,14 +14,14 @@
 //!      所在列，即使引擎稍慢、用户已开始输入也不受影响。
 //!
 //! 几何协议：PROMPT 带 header 行数个换行 + "__" 占位符，让 shell 的 prompt
-//! 几何把 header 行也算进去（zsh 才能用 reset-prompt 干净折叠 transient）。
+//! 几何把 header 行也算进去。
 //! precmd 写 announce 后轮询 ack，保证占位先输出、header 后回填。
 //!
 //! 部署：将 exec 启动加入用户 rc，并通过 P11K_ENGINE 避免递归
 //! `[[ -z "$P11K_ENGINE" ]] && exec p11k --shell zsh`（见 README）。
 //! - 正常（P11K_ENGINE 未设）：spawn 内部 shell 时设 `P11K_ENGINE=1`；
-//! - 递归（P11K_ENGINE 已设）：用户 rc 的引导行无判断导致递归，启动空白
-//!   shell 并打印修复提示，不加载用户 rc。
+//! - 递归（P11K_ENGINE 已设）：用户 rc 的引导行无判断导致递归，启动一个
+//!   干净的 shell 并打印修复提示，不加载用户 rc。
 //!
 //! 内部 shell 经 double-fork 孤儿化（脱离引擎进程树），引擎退出时 master
 //! 关闭 → slave 挂断 → 内部 shell 收 SIGHUP 退出。header/前缀绘制时发 OSC
@@ -57,7 +57,6 @@ use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use theme::{GitStatus, HeaderInfo};
 
-/// 支持的 shell 类型。
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Shell {
     Zsh,
@@ -77,7 +76,6 @@ impl Shell {
     }
 }
 
-/// 从命令行参数解析 `--shell <name>`。
 fn shell_from_args() -> Option<Shell> {
     let args: Vec<String> = std::env::args().collect();
     let pos = args.iter().position(|a| a == "--shell")?;
@@ -97,14 +95,14 @@ fn config_from_args() -> Option<PathBuf> {
     args.get(pos + 1).map(PathBuf::from)
 }
 
-/// 从 `--preset <name>` 取内置预设名(lean/classic/rainbow/pure)。
+/// 从 `--preset <name>` 取内置预设名（lean/classic/rainbow/pure）。
 fn preset_from_args() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     let pos = args.iter().position(|a| a == "--preset")?;
     args.get(pos + 1).cloned()
 }
 
-/// 加载主题:--config 文件 > --preset 内置 > 缺省 lean;前两者失败打日志回退。
+/// 加载主题：--config 文件 > --preset 内置 > 缺省 lean；前两者失败时打日志并回退。
 fn load_config() -> Config {
     let fallback = || Config::default_lean().expect("built-in lean config should be valid");
     if let Some(path) = config_from_args() {
@@ -137,7 +135,7 @@ fn load_config() -> Config {
 ///
 /// 只认 `$SHELL`。曾经想用 `PSModulePath`/`PSHOME` 认 PowerShell（pwsh 不改
 /// `$SHELL`，从 zsh 里起 pwsh 时它还是 /bin/zsh），结果 CI 的 runner 环境里
-/// 恰好带着这类变量，于是所有默认 shell 的调用都被判成 pwsh、起不来。安装行
+/// 恰好带着这类变量，于是所有默认 shell 的调用都被判定为 pwsh，无法启动。安装行
 /// 里始终显式写 `--shell <name>`，这里只是没写时的兜底。
 fn detect_shell() -> Shell {
     if let Some(s) = shell_from_args() {
@@ -272,8 +270,8 @@ zstyle ':completion:*' special-dirs true
 zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
 "#;
 
-/// bash 没有 `p` 宣告，引擎 ack 后 bash 直接打印 PS1（`__`），引擎靠字节匹配
-/// 画前缀覆盖。resize 用 trap WINCH 检测尺寸变化宣告 `r`。
+/// bash 没有 `p` 宣告：ack 之后 bash 直接打印 PS1（`__`），引擎靠字节匹配它来
+/// 绘制前缀覆盖。resize 用 trap WINCH 检测尺寸变化并宣告 `r`。
 const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol layer + user config.
 PS1='__'
 
@@ -314,9 +312,9 @@ trap '_p11k_winch' WINCH
 
 /// fish 协议层（XDG_CONFIG_HOME 重定向注入）。fish_prompt 占位 + 宣告。
 ///
-/// fish 没有 precmd/zle/PROMPT_COMMAND：宣告 h 放在 `fish_prompt`
-/// 里，等 ack 后返回占位；引擎字节匹配占位画前缀覆盖（同
-/// bash，无 `p` 宣告）。resize 用 `--on-signal WINCH`。
+/// fish 没有 precmd/zle/PROMPT_COMMAND：宣告 `h` 放在 `fish_prompt` 里，等 ack
+/// 后返回占位符；引擎按字节匹配占位符并绘制前缀覆盖（同 bash，无 `p` 宣告）。
+/// resize 用 `--on-signal WINCH`。
 const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) -- protocol layer + user config.
 
 set -g _p11k_last_cols $COLUMNS
@@ -372,13 +370,13 @@ end
 
 /// pwsh 协议层（`-NoProfile -NoExit -Command ". <rc>"` 注入）。
 ///
-/// pwsh 也没有 precmd/zle/PROMPT_COMMAND 那套：宣告 `h` 放在 prompt 函数里，
-/// 等引擎 ack 后才返回占位符 → 引擎在透传流里字节匹配占位符画前缀覆盖
-/// （同 bash/fish，没有 `p` 宣告）。resize 在 prompt 里比较窗口尺寸后宣告 `r`：
-/// pwsh 不把 SIGWINCH 变成可挂接的事件。
+/// pwsh 同样没有 precmd/zle/PROMPT_COMMAND：宣告 `h` 放在 prompt 函数里，等引擎
+/// ack 后才返回占位符 → 引擎在透传流里按字节匹配占位符并绘制前缀覆盖（同
+/// bash/fish，没有 `p` 宣告）。resize 在 prompt 里比较窗口尺寸后宣告 `r`：
+/// pwsh 不会把 SIGWINCH 转换为可挂接的事件。
 ///
 /// 实现体写成独立函数，prompt 只做转发：用户 profile 覆盖 prompt 后，
-/// 末尾再重新指回引擎实现即可（bash/fish 模板是把整段抄两遍）。
+/// 末尾再重新指回引擎实现即可。
 const PWSH_TEMPLATE: &str = r#"# p11k engine bootstrap (pwsh) -- protocol layer + user config.
 $P11kAnnounce = $env:P11K_ANNOUNCE
 $P11kAck = $env:P11K_ACK
@@ -425,8 +423,8 @@ $P11kAck = $env:P11K_ACK
 function global:prompt { P11kEnginePrompt }
 "#;
 
-/// `--help` 的用法说明。逐行交给 gettext（字面量用 `msgid` 标记，好让
-/// xgettext 提取），空行直接打印，免得在 po 里混进空 msgid。
+/// `--help` 的用法说明。逐行交给 gettext（字面量用 `msgid` 标记，便于
+/// xgettext 提取），空行直接打印，避免空 msgid 混进 po 文件。
 fn print_help() {
     for line in [
         msgid("usage: p11k [options]"),
@@ -457,9 +455,9 @@ fn print_help() {
 }
 
 fn main() -> anyhow::Result<()> {
-    // 文案按 locale 取翻译(默认英文,中文见 po/zh_CN.po)。
+    // 文案按 locale 取翻译（默认英文，中文见 po/zh_CN.po）。
     i18n::init();
-    // `--version`/`--help`：在碰任何终端状态之前处理，这样在管道、
+    // `--version`/`--help`：在触及任何终端状态之前处理，这样在管道、
     // 没有 tty 的环境里也能用（CI、脚本里查版本号）。
     if std::env::args().any(|a| a == "--version" || a == "-V") {
         println!("p11k {}", env!("CARGO_PKG_VERSION"));
@@ -475,7 +473,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // 递归检测：P11K_ENGINE 已设 = 本引擎是被内部 shell 的 rc 引导再次调用的
-    // 多余实例（用户 rc 里引导行忘了加判断，或写错）。降级为 exec 一个
+    // 多余实例（用户 rc 的引导行漏加判断或写错）。降级为 exec 一个
     // 干净 shell，并提示用户修复。
     if std::env::var_os("P11K_ENGINE").is_some() {
         eprintln!(
@@ -492,10 +490,10 @@ fn main() -> anyhow::Result<()> {
     }
 
     let shell = detect_shell();
-    // 先加载配置以算输入行前缀宽度,再据此生成等宽占位符。
+    // 先加载配置以计算输入行前缀宽度，再据此生成等宽占位符。
     let config = load_config();
-    // prompt_char 各态(正常/ERROR)提示符必须等宽。
-    // 不等宽是配置错误,直接在真实终端报错,再 exec 干净 shell
+    // prompt_char 各态（正常/ERROR）的提示符必须等宽。
+    // 不等宽属于配置错误：直接在真实终端报错，再 exec 一个干净 shell。
     if let Err(e) = crate::render::check_prompt_char_widths(&config) {
         eprintln!("p11k: {}{e}", t("config error: "));
         eprintln!(
@@ -519,9 +517,9 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
     let prefix = crate::render::input_prefix(&config, None);
-    // 占位符带 header 行数个换行:shell 的 prompt 几何因此把 header 行也算进去,
-    // zsh 才能用 reset-prompt 干净折叠 transient。
-    // marker 是换行之后那段可见占位字节,bash/fish 靠匹配它定位占位已输出。
+    // 占位符带 header 行数个换行：shell 的 prompt 几何因此把 header 行也算进去，
+    // zsh 才能用 reset-prompt 干净地折叠 transient。
+    // marker 是换行之后那段可见占位字节，bash/fish 靠匹配它判断占位符已输出。
     let header_rows = config.layout.left.len().max(config.layout.right.len());
     let marker = "_".repeat(prefix.width.max(1));
     let placeholder = format!("{}{}", "\n".repeat(header_rows), marker);
@@ -537,8 +535,8 @@ fn main() -> anyhow::Result<()> {
 
     // 真实终端（stdin 所在的 pty）必须设为 raw 模式：关掉 ISIG/ICANON/ECHO，
     // 让所有字节原样透传给 pty 里的 shell。否则 ^C 会在真实终端一侧被内核
-    // 转成 SIGINT 杀掉引擎（shell 根本收不到），输入还会被内核回显造成双回显。
-    // shell 自己的终端（portable-pty 的 slave）由 shell 自己管理 termios。
+    // 转成 SIGINT 杀掉引擎（shell 完全收不到），输入还会被内核回显造成双重回显。
+    // shell 自己的终端（portable-pty 的 slave）由 shell 自行管理 termios。
     let _raw = RawTerminal::enter(libc::STDIN_FILENO)?;
 
     let (rows, cols, xpix, ypix) = tty_size().unwrap_or((24, 80, 0, 0));
@@ -578,35 +576,33 @@ fn main() -> anyhow::Result<()> {
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
     // portable-pty 的 spawn_command 默认把 current_dir 设成 HOME；这里显式
-    // 用引擎启动时的 cwd，让内部 shell 落在用户当初 `exec p11k` 的目录
+    // 用引擎启动时的 cwd，让内部 shell 落在用户当初 `exec p11k` 的目录。
     cmd.cwd(std::env::current_dir()?);
-    // 递归标志：内部 shell 及其子进程若再 exec p11k，入口检测到即降级，
+    // 递归标志：内部 shell 及其子进程若再次 exec p11k，入口检测到后即降级。
     cmd.env("P11K_ENGINE", "1");
-    // transient 是 zsh 独占能力，把引擎预计算的单行提示符(zsh %F 转义)交给 shell,
-    // zle-line-finish 里换 PROMPT + reset-prompt 同步折叠。
+    // transient 是 zsh 独占能力：把引擎预计算的单行提示符（zsh %F 转义）交给 shell，
+    // 在 zle-line-finish 里换 PROMPT + reset-prompt 同步折叠。
     if config.layout.transient_prompt && shell == Shell::Zsh {
         cmd.env(
             "P11K_TRANSIENT_PROMPT",
             crate::render::transient_prompt_zsh(&config),
         );
     } else {
-        // 关掉时必须显式清空：shell 端只看这个变量是否非空，若外层环境残留
-        // 了旧值（例如从上一个 p11k 会话继承），配置说关也照样折叠。
         cmd.env("P11K_TRANSIENT_PROMPT", "");
     }
 
-    // double-fork 孤儿化：内部 shell 脱离引擎进程树（父变 init）。kitty 关闭
-    // 窗口时检测的是它 child 的子孙进程，孤儿不在树里 → 不弹"确认关闭"。
+    // double-fork 孤儿化：内部 shell 脱离引擎进程树（父进程变为 init）。kitty 关闭
+    // 窗口时检测的是它 child 的子孙进程，孤儿不在树里 → 不会弹出"确认关闭"。
     // 引擎仍持 master fd 读写（fd 不因孤儿而断）；引擎退出时 master 关闭 →
-    // slave 挂断 → 内部 shell 收 SIGHUP 退出，无需再记 PID 去 kill。
+    // slave 挂断 → 内部 shell 收 SIGHUP 退出，无需记录 PID 再 kill。
     let mid = unsafe { libc::fork() };
     if mid < 0 {
         anyhow::bail!("fork failed: {}", io::Error::last_os_error());
     }
     if mid == 0 {
         // 中间进程：spawn 内部 shell（父 = 本进程），随即退出使其孤儿化。
-        // 这里只能做 async-signal-safe 的事：引擎是多线程的，fork 之后碰
-        // malloc（println/gettext 都会）有死锁风险。错误码丢回父进程打印。
+        // 这里只能做 async-signal-safe 的事：引擎是多线程的，fork 之后调用
+        // malloc（println/gettext 都会）有死锁风险。错误码交回父进程打印。
         let status = match pair.slave.spawn_command(cmd) {
             Ok(_) => 0,
             Err(_) => 1,
@@ -616,8 +612,8 @@ fn main() -> anyhow::Result<()> {
     // 引擎：回收中间进程，丢弃 slave 引用（slave 已被内部 shell 接管）。
     let mut _st = 0;
     unsafe { libc::waitpid(mid, &mut _st, 0) };
-    // 中间进程非 0 = 内部 shell 根本没起来。以前这里是静默的，结果上层只看到
-    // "shell 没输出"，无从判断是 spawn 失败还是别的。
+    // 中间进程非 0 = 内部 shell 未能启动。以前这里静默处理，上层只能看到
+    // "shell 没输出"，无法判断是 spawn 失败还是其他原因。
     if _st != 0 {
         eprintln!("p11k: {}", t("the inner shell failed to start"));
     }
@@ -652,10 +648,10 @@ fn main() -> anyhow::Result<()> {
     // 首次扫描 1~2s 也不会卡住 prompt 显示。
     let (req_tx, req_rx) = mpsc::channel::<GitRequest>();
     let (res_tx, res_rx) = mpsc::channel::<GitResult>();
-    // 按照 p10k 惯例进行调用;计数上限与 dirty 跳过阈值来自 vcs 段属性
-    // (p10k 里是全局的 POWERLEVEL9K_VCS_*_MAX_NUM 与
-    // POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY,-1 = 不限)。先取值再 spawn,
-    // 免得把整个 config 移动进线程。
+    // 按照 p10k 惯例进行调用；计数上限与 dirty 跳过阈值来自 vcs 段属性
+    // （p10k 里是全局的 POWERLEVEL9K_VCS_*_MAX_NUM 与
+    // POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY，-1 = 不限）。先取值再 spawn，
+    // 避免把整个 config 移动进线程。
     let dirty_cap = vcs_int_prop(&config, "max-index-size-dirty", -1);
     let max_staged = vcs_int_prop(&config, "max-num-staged", -1);
     let max_unstaged = vcs_int_prop(&config, "max-num-unstaged", -1);
@@ -698,26 +694,25 @@ fn main() -> anyhow::Result<()> {
     let mut git_gen: u64 = 0; // 发起请求的序号，只使用最新结果
     // 当前 cwd 的上次 git 状态。
     let mut last_vcs: Option<(String, Option<GitStatus>)> = None;
-    // 当前 prompt 的 info。
     let mut current_info: Option<HeaderInfo> = None;
     // 光标是否停在输入行（p 宣告后、用户回车前），异步结果仅在此时重画，
     // 否则 redraw 的 \e[1A 会画到命令输出上。
     let mut at_prompt = false;
     // 上次回车的时刻，用于下次 precmd 计算命令耗时。
     let mut last_enter: Option<std::time::Instant> = None;
-    // resize 后延迟补画 prompt：等 zle 重绘 占位符+buffer 透传完（约 60ms）再画前缀，
+    // resize 后延迟补画 prompt：等 zle 重绘的占位符+buffer 透传完（约 60ms）再画前缀，
     // 避免画 prompt 早于 zle 重绘被占位符覆盖、或光标停在 buffer 前。
     let mut resize_prompt_at: Option<std::time::Instant> = None;
     // bash 无 zle-line-init（无 `p` 宣告）：ack 后 bash 直接打印 PS1 占位符，
     // 引擎在透传流里匹配占位符画前缀覆盖。占位符前的内容累积到缓冲。
     let mut pending_placeholder = false;
     let mut placeholder_buf: Vec<u8> = Vec::new();
-    // 用户自当前 prompt 就绪以来敲过键没有：缩窗时代 pwsh 敲空回车只在输入行
-    // 还空着时才敢做，否则会把用户没写完的命令提交掉。
+    // 用户自当前 prompt 就绪以来是否敲过键：缩窗时代 pwsh 发送空回车只在输入行
+    // 仍为空时执行，否则会提交用户尚未写完的命令。
     let mut typed_since_prompt = false;
-    // 最后一次被判定成"用户输入"的原始字节，只用于诊断日志（-e 转义）。
+    // 最后一次被判定为"用户输入"的原始字节，仅用于诊断日志（-e 转义）。
     let mut last_input: Vec<u8> = Vec::new();
-    // 上一次次替 pwsh 敲回车的时刻（拖动窗口会连发 SIGWINCH，节流一下）。
+    // 上次替 pwsh 发送空回车的时刻（拖动窗口会连发 SIGWINCH，需要节流）。
     let mut last_pwsh_nudge: Option<std::time::Instant> = None;
 
     // instant header：不等内部 shell 加载完较慢的用户 rc，立即用引擎 cwd 画
@@ -732,9 +727,9 @@ fn main() -> anyhow::Result<()> {
         jobs: 0,
         history: 0,
     };
-    // 返回的是每行的显示宽度：万一画的时候终端比 pty 窄（窗口刚建好、尺寸还没
+    // 返回的是每行的显示宽度：如果绘制时终端比 pty 窄（窗口刚建好、尺寸还没
     // 同步过来），内容会折行，擦除时得按**当时的列宽**折算实际占用行数，否则会
-    // 留下半截 header。
+    // 残留半个 header。
     let mut instant_widths =
         theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
     theme::render_prompt(&mut stdout, &prefix.text)?;
@@ -746,20 +741,20 @@ fn main() -> anyhow::Result<()> {
         widths.iter().map(|w| w.div_ceil(c).max(1)).sum()
     }
     // instant 阶段内部 shell 透传给终端的内容：字节数 + 换行数。换行数 = 0
-    // 表示屏幕上只有我们画的那份 header（可以就地擦掉重画）；否则说明 rc 真的
-    // 打了行出来，那些行插在我们下方，只能保留。
+    // 表示屏幕上只有我们画的那份 header（可以就地擦掉重画）；否则说明 rc 确实
+    // 输出过内容，那些行插在我们下方，只能保留。
     let mut instant_bytes = 0usize;
     let mut instant_newlines = 0usize;
 
     loop {
-        // resize 信号：同步内部 pty 尺寸（含 pixel）。zsh/bash/fish 都挂了信号
+        // resize 信号：同步内部 pty 尺寸（含 pixel）。zsh/bash/fish 都注册了信号
         // 钩子（TRAPWINCH / trap WINCH / --on-signal WINCH），收到后宣告 `r`，
-        // 由引擎按新宽度重排；pwsh 挂不到 SIGWINCH，只能在 prompt 函数里比较
-        // 窗口尺寸，所以下面那段在缩窗时替它敲一次空回车。
+        // 由引擎按新宽度重排；pwsh 无法挂接 SIGWINCH，只能在 prompt 函数里比较
+        // 窗口尺寸，所以下面那段在缩窗时替它发送一次空回车。
         if RESIZE_FLAG.swap(false, Ordering::Relaxed) {
-            // 重新套一遍 raw：tmux 之类的复用器在新建/调整 pane 时会重设 pane pty
-            // 的 termios，ECHO 一旦被打开，引擎自己往终端写的东西会被回显回 stdin，
-            // 再被当输入转发进 pty —— 屏幕上就会多出一份 header。
+            // 重新设置一次 raw 模式：tmux 等终端复用器在新建/调整 pane 时会重设
+            // pane pty 的 termios，ECHO 一旦被打开，引擎写入终端的内容会被回显回
+            // stdin，再被当作输入转发进 pty —— 屏幕上就会多出一份 header。
             let _ = RawTerminal::enter(libc::STDIN_FILENO);
             let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
             if (r, c, xp, yp) != last_size {
@@ -771,10 +766,10 @@ fn main() -> anyhow::Result<()> {
                 })?;
                 last_size = (r, c, xp, yp);
                 log(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
-                // instant 期间还没有 shell 的 `r` 宣告来触发重画，屏幕上是按旧
-                // 列宽画的那份（可能已经折行、位置全错），这里自己重画一遍。
-                // 只有当 instant 阶段没别的输出时才敢清屏重来——终端 reflow 之后
-                // "上移几行"已经不可靠，这是唯一稳妥的做法。
+                // instant 期间还没有 shell 的 `r` 宣告来触发重画，屏幕上仍是按旧
+                // 列宽绘制的那份（可能已经折行、位置不再正确），此处主动重画一遍。
+                // 仅当 instant 阶段没有其他输出时才清屏重来：终端 reflow 之后
+                // "上移几行"已不可靠，这是唯一稳妥的做法。
                 if instant_drawn && instant_newlines == 0 {
                     write!(stdout, "\x1b[2J\x1b[H")?;
                     instant_widths = theme::render_header_cfg(
@@ -787,9 +782,9 @@ fn main() -> anyhow::Result<()> {
                     theme::render_prompt(&mut stdout, &prefix.text)?;
                     stdout.flush()?;
                 }
-                // pwsh 挂不到 SIGWINCH：它只能在 prompt 函数里比较窗口尺寸，
-                // 所以缩窗后屏幕上是终端 reflow 过的旧内容，要等下一次 prompt
-                // 才重排。这里替用户敲一次空回车（仅当输入行还空着），让 pwsh
+                // pwsh 无法挂接 SIGWINCH：只能在 prompt 函数里比较窗口尺寸，
+                // 所以缩窗后屏幕上仍是终端 reflow 过的旧内容，要等下一次 prompt
+                // 才会重排。此处替用户发送一次空回车（仅当输入行仍为空），让 pwsh
                 // 重新调用 prompt → 宣告 r → 引擎按新宽度重排。
                 if shell == Shell::Pwsh
                     && at_prompt
@@ -847,23 +842,23 @@ fn main() -> anyhow::Result<()> {
                         // 几行**：上移到 header 首行、`\x1b[J` 擦到屏末——光标下方
                         // 只有我们画的 header + 输入行。这样不动屏幕上方的既有内容
                         // （上一个会话的输出、窗口横幅、`exec p11k` 之前的打印），
-                        // 也不像 `\x1b[2J` 那样整屏闪一下。p10k 同样不清屏。
+                        // 也不像 `\x1b[2J` 那样整屏闪烁。p10k 同样不清屏。
                         //
                         // 若期间内部 shell 有输出（rc 的 echo/警告/报错），那些行就
                         // 插在我们下方，"上移 k 行"会落进输出里——这时什么都不做，
-                        // 保留输出，让真 prompt 接在它后面（p10k 也保留并给警告）。
-                        // 打开 P11K_INSTANT_LOG 可以打一行日志看是否命中。
+                        // 保留输出，让真实 prompt 接在它后面（p10k 也保留并给警告）。
+                        // 打开 P11K_INSTANT_LOG 可以打一行日志，查看是否命中该分支。
                         instant_drawn = false;
-                        // 现场重新问一次终端宽度：画 instant header 时如果尺寸还没
-                        // 同步过来（窗口刚建好、SIGWINCH 还没到），内容是按旧宽度画
-                        // 的、在真实窗口里已经折行，得按**真实**列宽折算行数。
+                        // 此处重新查询一次终端宽度：画 instant header 时若尺寸尚未
+                        // 同步（窗口刚建好、SIGWINCH 还没到），内容是按旧宽度绘制
+                        // 的，在真实窗口里已经折行，需要按**真实**列宽折算行数。
                         let (rows_cap, cols_now, ..) = tty_size().unwrap_or(last_size);
                         let rows = instant_rows_at(&instant_widths, cols_now);
                         if instant_newlines == 0 && rows < rows_cap as usize {
                             write!(stdout, "\x1b[{rows}A\r\x1b[J")?;
                         } else if instant_newlines == 0 {
-                            // 窗口比 header 还矮：header 自己就把屏滚了，位置不可靠，
-                            // 退回整屏清。
+                            // 窗口高度不足以容纳 header：header 自身已触发滚屏，位置
+                            // 不可靠，回退为整屏清除。
                             write!(stdout, "\x1b[2J\x1b[H")?;
                         } else if std::env::var_os("P11K_INSTANT_LOG").is_some() {
                             log(&format!(
@@ -876,12 +871,11 @@ fn main() -> anyhow::Result<()> {
                             write!(stdout, "\r\n\r\n")?;
                         }
                     }
-                    // 先发 prompt 开始标记(早于 shell 的多行占位);header 内容不在这
-                    // 画,否则会与占位自带换行重复推进光标。
+                    // 先发 prompt 开始标记（早于 shell 的多行占位）；header 内容不在
+                    // 此绘制，否则会与占位自带的换行重复推进光标。
                     theme::prompt_start(&mut stdout)?;
                     stdout.flush()?;
                     File::create(&state.ack)?; // 放行 precmd → shell 输出占位符
-                    // bash/fish 无 `p` 宣告：ack 后 shell 打印占位 prompt，
                     if shell != Shell::Zsh {
                         pending_placeholder = true;
                         placeholder_buf.clear();
@@ -897,8 +891,8 @@ fn main() -> anyhow::Result<()> {
                 }
                 AnnMsg::Prompt => {
                     log("p: fill header + draw prompt prefix");
-                    // zle 已渲染完多行占位(header 行数空行 + 占位符),光标停在占位符后:
-                    // 上移 header 行数回填真实 header,再回行首覆盖占位符为前缀。
+                    // zle 已渲染完多行占位（header 行数空行 + 占位符），光标停在占位符后：
+                    // 上移 header 行数回填真实 header，再回行首把占位符覆盖为前缀。
                     let info = current_info.as_ref().unwrap_or(&instant_info);
                     let vcs = last_vcs
                         .as_ref()
@@ -924,11 +918,11 @@ fn main() -> anyhow::Result<()> {
                 }
                 AnnMsg::Resize => {
                     // 尺寸检查在循环开头已 resize pty。
-                    // zsh：zle 重绘占位 prompt，回填走 `p` 宣告，这里先把 header 换掉，
-                    // 延迟 ~60ms 再补画前缀（等 zle 重绘占位+buffer 透传完）。
-                    // 其它 shell：resize 后 shell 从头打印占位符（带新的换行前缀），
+                    // zsh：zle 重绘占位 prompt，回填走 `p` 宣告，这里先重画 header，
+                    // 延迟 ~60ms 再补画前缀（等 zle 重绘的占位+buffer 透传完）。
+                    // 其他 shell：resize 后 shell 从头打印占位符（带新的换行前缀），
                     // 交给上面 marker 匹配那条路径统一回填——此刻占位符还没输出，
-                    // 先上移画会落在上一屏内容上，而且占位符没人覆盖会留在屏幕上。
+                    // 先上移绘制会落在上一屏内容上，而且占位符无人覆盖会残留在屏幕上。
                     if at_prompt {
                         if shell == Shell::Zsh {
                             log("r: redraw header, defer prompt");
@@ -1001,7 +995,7 @@ fn main() -> anyhow::Result<()> {
                 Ok(0) => break, // 真实终端关闭
                 Ok(n) => {
                     // 用户回车 → 光标离开输入行，异步 git 结果
-                    // 不再重画 header（否则 \e[1A 会画错行）。
+                    // 不再重画 header（否则 \e[1A 会画在错误的位置）。
                     if buf[..n].iter().any(|&b| b == b'\r' || b == b'\n') {
                         at_prompt = false;
                         typed_since_prompt = false;
@@ -1030,9 +1024,9 @@ fn main() -> anyhow::Result<()> {
                         placeholder_buf.extend_from_slice(&buf[..n]);
                         if let Some(pos) = find_bytes(&placeholder_buf, marker.as_bytes()) {
                             let end = pos + marker.len();
-                            // 先透传占位(多行空行 + 占位符),光标推进到占位符后。
+                            // 先透传占位（多行空行 + 占位符），光标推进到占位符后。
                             stdout.write_all(&placeholder_buf[..end])?;
-                            // 上移 header 行数回填真实 header,再回行首覆盖占位符。
+                            // 上移 header 行数回填真实 header，再回行首覆盖占位符。
                             let info = current_info.as_ref().unwrap_or(&instant_info);
                             let vcs = last_vcs
                                 .as_ref()
@@ -1062,10 +1056,10 @@ fn main() -> anyhow::Result<()> {
                             pending_placeholder = false;
                         }
                     } else {
-                        // instant 阶段统计透传内容：有**换行**说明内部 shell 真在屏
-                        // 上打了东西（rc 的 echo/警告/报错），此时不能擦自己的行
-                        // （行位置已经被顶下去了）；只有控制序列（设标题之类，用户
-                        // rc 里很常见）不算，照旧走干净擦行。p10k 会保留并给警告。
+                        // instant 阶段统计透传内容：出现**换行**说明内部 shell 确实在
+                        // 屏幕上输出过内容（rc 的 echo/警告/报错），此时不能擦掉自己
+                        // 画的行（行位置已被顶下去）；仅控制序列（设置标题等，用户
+                        // rc 中很常见）不算，仍走干净擦行。p10k 会保留并给警告。
                         if instant_drawn {
                             instant_bytes += n;
                             instant_newlines += buf[..n].iter().filter(|b| **b == b'\n').count();
@@ -1079,7 +1073,6 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        // 异步 git 结果：只使用最新 generation；且只在光标停在输入行时重画 header
         while let Ok(res) = res_rx.try_recv() {
             if res.generation != git_gen {
                 continue; // 过期结果
@@ -1094,7 +1087,7 @@ fn main() -> anyhow::Result<()> {
                 theme::redraw_header_cfg(&mut stdout, last_size.1 as usize, &config, info, vcs)?;
                 stdout.flush()?;
             }
-            // 输入行未就绪:last_vcs 已更新,`p`/marker 回填时自然带上,无需补画。
+            // 输入行未就绪：last_vcs 已更新，`p`/marker 回填时会自然带上，无需补画。
         }
 
         // resize 后延迟补画 prompt。
@@ -1133,7 +1126,7 @@ impl StateDir {
         let dir = std::env::temp_dir().join(format!("p11k-{}", process::id()));
         fs::create_dir_all(&dir)?;
 
-        // 每 shell 一份协议层 rc。保留接口用于读取临时 rc 调试。
+        // 每 shell 一份协议层 rc。保留读取临时 rc 的接口，便于调试。
         let rc = match shell {
             Shell::Zsh => {
                 let rc = dir.join(".zshrc");
@@ -1178,30 +1171,32 @@ impl StateDir {
 
 /// announce 消息：prompt 窗口的绘制与 resize。
 enum AnnMsg {
-    /// `h\t<exit>\t<cwd>`：precmd 宣告，画 header。
+    /// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`：precmd 宣告，画 header。
     Header(HeaderInfo),
     /// `p`：zle-line-init 宣告，画输入行前缀覆盖。
     Prompt,
-    /// `r`：TRAPWINCH 宣告，resize pty + 清屏重画。
+    /// `r`：resize 宣告（zsh 的 TRAPWINCH、bash 的 trap WINCH、fish 的
+    /// `--on-signal WINCH`，pwsh 在 prompt 里比较窗口尺寸），resize pty + 重画。
     Resize,
     /// `v\t<keymap>`：zle-keymap-select 宣告，更新编辑模式并重画 header。
     VimMode(String),
 }
 
-/// 异步 git 请求。
 struct GitRequest {
     generation: u64,
     cwd: String,
 }
 
-/// 异步 git 结果。
 struct GitResult {
     generation: u64,
     status: Option<GitStatus>,
 }
 
 /// 读 announce 文件的新行并解析为 prompt 消息。
-/// 行格式：`h\t<exit_code>\t<cwd>` 或 `p`。
+/// 行格式（首列为消息类型，其后字段以制表符分隔）：
+/// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`、`p`、`r`、`v\t<keymap>`。
+/// 缺列可容忍：`<exit>` 解析失败为 None，`<cwd>` 缺失为空串，`<jobs>`/`<history>`
+/// 缺失或非法为 0。`<history>` 只有 zsh 与 pwsh 会发，bash/fish 没有这一列。
 fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
     let mut out = Vec::new();
     let Ok(mut f) = OpenOptions::new().read(true).open(path) else {
@@ -1277,10 +1272,10 @@ fn log(msg: &str) {
 
 /// 终端对程序查询的应答，不算"用户在输入行打字"。
 ///
-/// PSReadLine 会时不时发 DSR（`\x1b[6n`）问光标在哪，终端回的 `\x1b[<行>;<列>R`
-/// 走的是 stdin —— 引擎如果不认出来，就会以为用户敲了键，缩窗时代敲空回车的
-/// 逻辑就再也不触发。焦点事件 `\x1b[I`/`\x1b[O` 与设备属性应答 `\x1b[?...c`
-/// 同理。方向键（`\x1b[A`）之类是真的按键，不能算进来。
+/// PSReadLine 会不时发送 DSR（`\x1b[6n`）查询光标位置，终端回的 `\x1b[<行>;<列>R`
+/// 走的是 stdin：引擎若不能识别，就会误认为用户敲了键，缩窗时代敲空回车的逻辑
+/// 便再也不会触发。焦点事件 `\x1b[I`/`\x1b[O` 与设备属性应答 `\x1b[?...c` 同理。
+/// 方向键（`\x1b[A`）等是真实按键，不能算入。
 fn is_terminal_reply(buf: &[u8]) -> bool {
     let Some(rest) = buf.strip_prefix(b"\x1b[") else {
         return false;
@@ -1294,7 +1289,6 @@ fn is_terminal_reply(buf: &[u8]) -> bool {
             .all(|b| b.is_ascii_digit() || *b == b';' || *b == b'?')
 }
 
-/// 在 `haystack` 里找子切片 `needle` 的首位置。
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
@@ -1414,8 +1408,8 @@ mod tests {
     }
 
     /// pwsh 没有 zle：占位符是引擎在透传流里按字节匹配的，所以协议层必须
-    /// 宣告 `h`、等 ack、返回占位符三件事都齐（resize 只加一条 `r`，
-    /// 不能提前 return —— 那样占位符没人回填，会留在屏幕上）。
+    /// 宣告 `h`、等 ack、返回占位符三件事齐全（resize 只追加一条 `r`，
+    /// 不能提前 return —— 那样占位符无人回填，会残留在屏幕上）。
     #[test]
     fn pwsh_template_implements_the_placeholder_protocol() {
         let t = PWSH_TEMPLATE;
@@ -1438,7 +1432,7 @@ mod tests {
             "must clear the ack"
         );
         // resize 分支不能 return：return 之后就没有 h 宣告，引擎不会回填。
-        // 只看代码行 —— 注释里出现 "returning" 之类的词不该让断言翻车。
+        // 只看代码行 —— 注释里出现 "returning" 之类的词不应让断言失败。
         let resize_block = t
             .split("$P11kSize.Width -ne")
             .nth(1)
@@ -1455,7 +1449,7 @@ mod tests {
             !resize_code.contains("return"),
             "the resize branch must not return early"
         );
-        // 用户 profile 加载失败不能带崩协议不变量。
+        // 用户 profile 加载失败不能破坏协议不变量。
         assert!(
             t.contains("try { . $P11kUserProfile } catch"),
             "sourcing must catch exceptions"
@@ -1463,8 +1457,9 @@ mod tests {
     }
 
     /// 占位符是 `replace("__", placeholder)` 字面替换进去的：模板里有几处 `__`
-    /// 就会替换出几份占位符。注释里混进一个 `__` 就多替换一份，prompt 几何跟着崩。
-    /// 下面的数字是设计值，改模板时要一起改。只有 pwsh 是 1 处，别照着它改别的。
+    /// 就会替换出几份占位符。注释里混进一个 `__` 就会多替换一份，prompt 几何随之
+    /// 出错。下面的数字是设计值，改模板时要一起改。只有 pwsh 是 1 处，不要照此
+    /// 修改其他模板。
     #[test]
     fn templates_carry_the_expected_number_of_placeholder_slots() {
         for (name, template, want) in [
@@ -1482,8 +1477,8 @@ mod tests {
         }
     }
 
-    /// DSR/DA/焦点这些是终端应答，不是用户打字 —— 认错会让 pwsh 的缩窗代敲
-    /// 逻辑彻底失效（真实终端上 PSReadLine 一直在问光标位置）。
+    /// DSR/DA/焦点这些是终端应答，不是用户打字 —— 误判会让 pwsh 的缩窗代敲逻辑
+    /// 彻底失效（真实终端上 PSReadLine 会持续查询光标位置）。
     #[test]
     fn terminal_replies_are_not_user_typing() {
         assert!(

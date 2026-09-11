@@ -28,12 +28,10 @@ thread_local! {
     static CACHE: RefCell<HashMap<(PathBuf, i64), String>> = RefCell::new(HashMap::new());
 }
 
-/// 部件类别。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Class {
     /// 锚（首 `~`/根/当前目录/marker 祖先），不缩。
     Anchor,
-    /// 被缩短。
     Shortened,
     /// 普通（未缩但非锚）。
     Normal,
@@ -318,7 +316,6 @@ fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
 
 /// `truncate_with_folder_marker`：marker 文件之间的间隔折叠成省略符。
 fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -> Vec<DirPart> {
-    // 从末尾往回找出每个含 marker 的祖先级。
     let n = parts.len();
     let mut marks: Vec<usize> = Vec::new();
     for i in (0..n).rev() {
@@ -327,7 +324,7 @@ fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -
             marks.push(i);
         }
     }
-    marks.push(usize::MAX); // 相当于 p10k 里补的那个 1（前面没有 marker 时也要收口）
+    marks.push(usize::MAX); // 相当于 p10k 里补的那个 1（最前面没有 marker 时也要能算出省略区间）
     let mut hidden: Vec<bool> = vec![false; n];
     for w in marks.windows(2) {
         let (hi, lo) = (w[0], w[1]);

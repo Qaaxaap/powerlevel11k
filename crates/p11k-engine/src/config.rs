@@ -72,7 +72,6 @@ impl fmt::Display for Color {
     }
 }
 
-/// 一段的视觉样式。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Style {
     pub fg: Color,
@@ -81,7 +80,6 @@ pub struct Style {
 }
 
 impl Style {
-    /// 从一组 KDL 属性读样式键。
     fn from_entries(entries: &[kdl::KdlEntry]) -> Style {
         let mut s = Style::default();
         for e in entries {
@@ -108,7 +106,6 @@ pub enum Element {
     Text(String),
 }
 
-/// 布局:左右各是一组行;每行一组元素,行与行=换行。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     pub left: Vec<Vec<Element>>,
@@ -121,8 +118,8 @@ pub struct Layout {
     pub transient_prompt: bool,
     /// 标尺:header 之上再画一整行 `ruler` 字符(p10k `SHOW_RULER`,缺省关)。
     pub show_ruler: bool,
-    /// 右栏距右边界留几列（zsh `ZLE_RPROMPT_INDENT`，默认 1；贴边画会顶到
-    /// 最后一格并比 p10k 早一列"放得下"）。
+    /// 右栏距右边界留几列（zsh `ZLE_RPROMPT_INDENT`，默认 1；贴边绘制会占用
+    /// 最后一格，并比 p10k 早一列"放得下"）。
     pub right_indent: usize,
 }
 
@@ -134,7 +131,6 @@ impl Default for Layout {
             prompt_add_newline: 0,
             transient_prompt: false,
             show_ruler: false,
-            // zsh 的 ZLE_RPROMPT_INDENT 默认 1：右栏与窗口右边界之间留一格。
             right_indent: 1,
         }
     }
@@ -160,9 +156,7 @@ pub struct Separators {
     pub right_segment: String,
     /// 右段**同色**内部细线(如 ``)。
     pub right_sub: String,
-    /// 左栏首段起始端符(左三角 ``)。
     pub left_tail: String,
-    /// 右栏末段结束端符(右三角 ``)。
     pub right_tail: String,
     /// 行内左右栏之间的 gap 填充字符(如 `·`;空=空格)。
     pub gap: String,
@@ -219,14 +213,13 @@ pub struct StateSpec {
 }
 
 /// 段上的附加文字槽(左/中/右):仅拼接显示、不独立成块。
-/// `fg` 为 `None` 时沿用段样式,配了则覆盖前景(背景/粗体仍跟段走)。
+/// `fg` 为 `None` 时沿用段样式,配了则覆盖前景(背景/粗体仍沿用段样式)。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AttachText {
     pub text: String,
     pub fg: Option<Color>,
 }
 
-/// 单个段的配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Segment {
     /// 段默认样式。
@@ -270,8 +263,8 @@ impl Default for Segment {
 impl Segment {
     /// 取某 state(或段默认)的样式,走 段STATE → 段 → 全局 三段回退。
     pub fn effective_style(&self, state: Option<&str>, globals: &Style) -> Style {
-        // 以前 state 命中时直接 merge(state, 段)，把 `defaults` 丢了，于是带
-        // state 的部件（dir 的 ANCHOR/SHORTENED 等）拿不到全局底色。
+        // 此前 state 命中时只 merge(state, 段)，丢弃了 `defaults`，导致带 state
+        // 的部件（dir 的 ANCHOR/SHORTENED 等）拿不到全局底色。
         let base = merge_style(&self.style, globals);
         match state.and_then(|st| self.states.get(st)) {
             Some(spec) => merge_style(&spec.style, &base),
@@ -293,7 +286,6 @@ impl Segment {
         }
     }
 
-    /// 读一个行为属性。
     pub fn prop(&self, name: &str) -> Option<&Prop> {
         self.props.get(name)
     }
@@ -322,7 +314,7 @@ impl IconMode {
             "ascii" => IconMode::Ascii,
             "compatible" => IconMode::Compatible,
             "nerdfont-fontconfig" => IconMode::NerdfontFontconfig,
-            _ => IconMode::NerdfontComplete, // 未知/缺省按 nerdfont-complete
+            _ => IconMode::NerdfontComplete, // 未知或未设置时按 nerdfont-complete 处理
         }
     }
 }
@@ -330,8 +322,8 @@ impl IconMode {
 /// 顶层 `icon {}` 里一个图标名的覆盖。
 ///
 /// 字段语义:
-/// - `all`:字符被引擎识别类别后自动落到它能显示的档位， NF 私有区字符
-///   只落 nf 档,标准 Unicode 落 nf + compat,纯 ASCII 三档全落。
+/// - `all`:字符被引擎识别类别后自动进入它能显示的档位——NF 私有区字符
+///   只进 nf 档，标准 Unicode 进 nf + compat，纯 ASCII 三档全进。
 /// - `nf` / `compat` / `ascii`:覆盖对应档位。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct IconOverride {
@@ -341,7 +333,6 @@ pub struct IconOverride {
     pub ascii: Option<String>,
 }
 
-/// 顶层配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub layout: Layout,
@@ -596,9 +587,9 @@ impl Config {
     }
 
     /// 某帧块的实际样式:块级属性 → frame 级 → `defaults`。
-    /// **只继承 `defaults` 的前景/加粗，不吃它的 `bg`**——`defaults.bg` 是段背景的
-    /// 回退（p10k 段的全局 `POWERLEVEL9K_BACKGROUND`），帧字符（`╭─`/`╰─`）在
-    /// p10k 里始终是透明的（只有前景色）。
+    /// **只继承 `defaults` 的前景/加粗，不继承它的 `bg`**——`defaults.bg` 是段背景
+    /// 的回退（p10k 段的全局 `POWERLEVEL9K_BACKGROUND`），而帧字符（`╭─`/`╰─`）在
+    /// p10k 里始终透明（只有前景色）。
     pub fn frame_piece_style(&self, piece: &FramePiece) -> Style {
         let base = merge_style(&self.frame.style, &self.defaults);
         let base = Style {
@@ -618,8 +609,8 @@ impl Config {
         let mut separators = Separators::default();
         let mut frame = Frame::default();
         let mut vcs_remote_icons = default_remote_icons();
-        // 缺省 mode 看 locale,非 UTF-8 终端无法
-        // 显示 Unicode ，自动降级 ascii;用户显式写 `mode` 时覆盖。
+        // 缺省 mode 由 locale 决定：非 UTF-8 终端无法显示 Unicode，自动降级
+        // 为 ascii；用户显式写 `mode` 时以配置为准。
         let mut mode = if locale_is_utf8() {
             IconMode::NerdfontComplete
         } else {
@@ -886,7 +877,6 @@ fn parse_icon_table(node: &KdlNode) -> BTreeMap<String, IconOverride> {
     out
 }
 
-/// 内置 vcs 远端图标表。
 fn default_remote_icons() -> Vec<(String, String)> {
     vec![
         ("github".into(), "\u{f113}".into()),            // 
@@ -961,9 +951,8 @@ fn merge_segment(a: &mut Segment, b: Segment) {
     }
 }
 
-/// 解析 `vcs-remote-icons` 节点:每个子节点 = domain→icon 字符串。
 /// 解析 `dir-classes { class "pattern" state="WORK" icon="…" }`。
-/// 第一个参数是模式，`state` / `icon` 是节点属性；按声明顺序匹配，先命中先用。
+/// 第一个参数是模式，`state` / `icon` 是节点属性；按声明顺序匹配，先命中者先生效。
 fn parse_dir_classes(node: &KdlNode) -> Vec<DirClass> {
     let mut out = Vec::new();
     let Some(ch) = node.children() else {
@@ -994,6 +983,7 @@ fn parse_dir_classes(node: &KdlNode) -> Vec<DirClass> {
     out
 }
 
+/// 解析 `vcs-remote-icons` 节点:每个子节点 = domain→icon 字符串。
 fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
     let mut out = Vec::new();
     if let Some(ch) = node.children() {
@@ -1041,7 +1031,7 @@ fn parse_frame(node: &KdlNode) -> Frame {
     f
 }
 
-/// 解析 `layout`:{ `left`/`right`、`add-newline` }。
+/// 解析 `layout`:`left`/`right` 两组布局行，以及 `prompt-add-newline`、`transient-prompt`、`show-ruler`、`right-indent`。
 fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     let mut layout = Layout::default();
     if let Some(ch) = node.children() {
@@ -1141,7 +1131,6 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                     let Some(nm) = first_state_name(child) else {
                         return Err(t("`state` needs a name (a positional string)"));
                     };
-                    // state 覆盖 = 样式 + 可选 char。
                     let st = Style::from_entries(child.entries());
                     let ch = named_str(child, "char");
                     seg.states.insert(
@@ -1152,7 +1141,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                         },
                     );
                 }
-                // 附加文字槽:左/中/右。位置字符串是文本,`fg` 可选(缺省跟段走)。
+                // 附加文字槽:左/中/右。位置字符串是文本，`fg` 可选。
                 "text-left" | "text-middle" | "text-right" => {
                     let Some(text) = first_state_name(child) else {
                         return Err(format!(
@@ -1211,7 +1200,7 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
     }
 }
 
-/// 解析 `separators` 节点:`segment`/`sub`/`end` 子节点,值=字符串(首字符)。
+/// 解析 `separators` 节点:字符子节点(`segment`/`sub`/`end`/`right-start`/`right-segment`/`right-sub`/`left-tail`/`right-tail`/`gap`),值按整串字符串读入。
 fn parse_separators(node: &KdlNode) -> Separators {
     let mut s = Separators::default();
     // `gap-foreground` / `sub-foreground` / `right-sub-foreground` 是
@@ -1393,7 +1382,6 @@ icon {
             "layout {\n  left {\n    line { dir #true; vcs #true }\n    line { prompt_char #true }\n  }\n  right {\n    line { status #true }\n  }\n  add-newline #true\n}",
         )
         .unwrap();
-        // 左:两行
         assert_eq!(
             c.layout.left,
             vec![
@@ -1401,7 +1389,6 @@ icon {
                 vec![Element::Seg("prompt_char".into())],
             ]
         );
-        // 右:一行
         assert_eq!(c.layout.right, vec![vec![Element::Seg("status".into())]]);
     }
 

@@ -1,8 +1,8 @@
 //! 构建期把 `po/*.po` 用 `msgfmt` 编成 `.mo`，并注入 `P11K_LOCALEDIR`。
 //!
-//! 运行时由 `i18n::init` 用它调 `bindtextdomain`；装到系统时可以用同名环境变量
-//! 指到 `/usr/share/locale` 之类的目录。没有 `msgfmt`（或没有 po 文件）时只警告
-//! 不报错：程序照常跑，只是不翻译（gettext 找不到翻译就返回 msgid 原文）。
+//! 运行时由 `i18n::init` 用它调用 `bindtextdomain`；安装到系统时可以用同名环境
+//! 变量指向 `/usr/share/locale` 等目录。没有 `msgfmt`（或没有 po 文件）时只警告
+//! 不报错：程序仍可运行，只是不做翻译（gettext 找不到翻译就返回 msgid 原文）。
 
 use std::path::PathBuf;
 use std::process::Command;

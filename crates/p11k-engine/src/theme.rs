@@ -18,9 +18,9 @@ pub struct HeaderInfo {
     pub cwd: String,
     /// 上一条命令耗时(秒,引擎计时:回车 → 本次 precmd);首 prompt 为 0。
     pub exec_seconds: f64,
-    /// 后台任务数。
     pub jobs: usize,
-    /// zsh 历史命令号(`HISTCMD`),bash/fish 无则 0。
+    /// 历史计数：zsh 发命令号(`HISTCMD`)，pwsh 发条目数(`(Get-History).Count`)，
+    /// 两者在历史被清空或截断后会分叉；bash/fish 没有这一列，按 0 处理。
     pub history: usize,
 }
 
@@ -64,9 +64,9 @@ pub fn prompt_start(out: &mut dyn Write) -> io::Result<()> {
     write!(out, "\x1b]133;A\x07")
 }
 
-/// 逐行输出 header 内容:每行 `\r\x1b[K` 清行 + 内容 + `\r\n`,把光标推进到
-/// 下一行行首。返回每行内容的**显示宽度**——内容比终端宽时终端会折行，
-/// 调用方按当时的列宽折算出实际占用行数（instant header 之后要按它上移擦除）。
+/// 逐行输出 header 内容并推进到下一行行首，返回每行内容的**显示宽度**——
+/// 内容比终端宽时终端会折行，调用方按当时的列宽折算出实际占用行数
+/// （instant header 之后要按它上移擦除）。
 fn header_body(out: &mut dyn Write, lines: &[String]) -> io::Result<Vec<usize>> {
     let mut widths = Vec::with_capacity(lines.len());
     for line in lines {

@@ -1,6 +1,6 @@
 //! `p11k --version` / `--help` 的 CLI 行为。
 //!
-//! 这两条路径不碰终端状态，所以不需要 pty：直接起进程、读 stdout 即可。
+//! 这两条路径不涉及终端状态，因此不需要 pty：直接启动进程读取 stdout 即可。
 
 use std::process::Command;
 

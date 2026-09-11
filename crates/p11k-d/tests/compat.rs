@@ -3,7 +3,7 @@
 //! # 前置条件
 //!
 //! 环境变量 `GITSTATUSD_PATH` 指向原版 C++ gitstatusd 二进制。
-//! 未设置时本文件的测试整体跳过（`--ignored` 标记，CI 默认不跑）。
+//! 未设置时本文件的测试整体跳过（`--ignored` 标记，CI 默认不运行）。
 //! 官方预编译二进制（如 `~/.cache/gitstatus/gitstatusd-linux-x86_64`）
 //! 的 SafePrint 保留 >0x7F 字节，与 p11k 一致（见协议模块文档）。
 //!
@@ -15,12 +15,10 @@
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
-/// 原版二进制路径（GITSTATUSD_PATH）。
 fn gitstatusd() -> String {
     std::env::var("GITSTATUSD_PATH").expect("GITSTATUSD_PATH not set")
 }
 
-/// 对某个二进制发一段请求，返回全部响应字节。
 fn ask(bin: &str, req: &[u8]) -> Vec<u8> {
     let mut child = Command::new(bin)
         .stdin(Stdio::piped())
@@ -45,7 +43,7 @@ fn assert_identical(orig_req: &[u8], p11k_req: &[u8], ctx: &str) {
     assert_eq!(a, b, "mismatch for {ctx}\noriginal: {a:?}\np11k: {b:?}");
 }
 
-/// 用 git2 建一个状态确定的仓库：2 提交、tag、stash、untracked 文件、
+/// 用 git2 建一个状态确定的仓库：2 提交、tag、untracked 文件、
 /// 已修改与已删除的文件。返回仓库路径。
 fn make_repo(dir: &std::path::Path) -> String {
     let repo = git2::Repository::init(dir).unwrap();
@@ -74,7 +72,7 @@ fn make_repo(dir: &std::path::Path) -> String {
     )
     .unwrap();
 
-    // 第二次提交（供 ahead/behind 与 stash 使用）
+    // 第二次提交（使 HEAD 与 tag v1.0 指向不同提交）
     std::fs::write(dir.join("a"), b"1\n2").unwrap();
     let mut index = repo.index().unwrap();
     index.add_path(std::path::Path::new("a")).unwrap();
@@ -98,7 +96,7 @@ fn make_repo(dir: &std::path::Path) -> String {
 fn differential_multi_state_repo() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = make_repo(tmp.path());
-    // 无 diff 字段（全算）
+    // 无 diff 字段（执行全量 index 比较）
     assert_identical(
         format!("id1\x1f{repo}\x1e").as_bytes(),
         format!("id1\x1f{repo}\x1e").as_bytes(),
@@ -147,11 +145,11 @@ fn differential_gitdir_and_empty_repo() {
     );
 }
 
-/// 对拍：upstream 相关的三种边界（原版在 remote 解析不出 URL、或
-/// upstream ref 不存在时，remote_branch/name/url 三个字段全空）。
+/// 对拍：upstream 相关的四组边界用例（原版在 remote 解析不出来——未配置或
+/// 缺 fetch refspec——或 upstream ref 不存在时，remote_branch/name/url 全空）。
 ///
 /// 手动探测原版时发现的差异：p11k 之前只看 `branch.<n>.remote` 配置就上报，
-/// 于是"remote 未配置""url 为空""tracking ref 不存在"三种情况下都会多报。
+/// 因此"remote 未配置""缺 fetch refspec""tracking ref 不存在"三种情形都会误报。
 #[test]
 #[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
 fn differential_upstream_edge_cases() {
@@ -172,7 +170,7 @@ fn differential_upstream_edge_cases() {
                 .unwrap();
         }
         let head_id = repo.head().unwrap().peel_to_commit().unwrap().id();
-        // 建 remote-tracking ref 并把当前分支挪到 local-name / 指向它。
+        // 建 remote-tracking ref，并让当前分支切到指向同一 commit 的 local-name。
         repo.reference("refs/remotes/origin/tracking-test", head_id, true, "test")
             .unwrap();
         {
@@ -204,7 +202,7 @@ fn differential_upstream_edge_cases() {
     );
 
     // (2) remote 在但 url 是空串（libgit2 不认 `remote("origin", "")`，
-    //     所以先建好再直接把配置值改成空串）。原版照常上报 branch/name，
+    //     因此先建好 remote 再将该配置值改为空串）。原版照常上报 branch/name，
     //     url 字段留空——空 url 不是判据。
     repo.remote("origin", "https://example.invalid/repo.git")
         .unwrap();

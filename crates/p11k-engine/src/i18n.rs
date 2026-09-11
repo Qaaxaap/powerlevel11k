@@ -108,7 +108,7 @@ mod tests {
     ///
     /// 逐行去掉 `//` 注释后拼成一段字符流再找标记：rustfmt 会把长文案折行，
     /// 所以 `t(`/`msgid(` 后面允许换行与缩进，只看紧跟的是不是字符串字面量。
-    /// 标记前面必须是分隔符，免得 `format!(`、`gettext(` 之类被算进来。
+    /// 标记前面必须是分隔符，以免把 `format!(`、`gettext(` 之类误判为标记。
     fn source_msgids(name: &str, src: &str) -> BTreeSet<String> {
         let code: String = src
             .lines()

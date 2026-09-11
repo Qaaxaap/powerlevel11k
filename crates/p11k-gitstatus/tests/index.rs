@@ -61,7 +61,6 @@ fn open_root(path: &Path) -> RawFd {
     fd
 }
 
-/// 建树：嵌套路径 → 前序目录树、files/subdirs 归属正确。
 #[test]
 fn from_entries_builds_tree() {
     // 用假 stat（建树不读 stat 字段）
@@ -82,7 +81,6 @@ fn from_entries_builds_tree() {
     };
     let entries = vec![fake("a"), fake("dir/b"), fake("dir/sub/c")];
     let index = Index::from_entries(entries);
-    // dirs 前序：根、dir/、dir/sub/
     assert_eq!(index.dirs.len(), 3);
     assert_eq!(&index.dirs[0].path[..index.dirs[0].path.len() - 1], b"");
     assert_eq!(&index.dirs[1].path[..index.dirs[1].path.len() - 1], b"dir/");
@@ -90,9 +88,9 @@ fn from_entries_builds_tree() {
         &index.dirs[2].path[..index.dirs[2].path.len() - 1],
         b"dir/sub/"
     );
-    assert_eq!(index.dirs[0].files, vec![0]); // a
-    assert_eq!(index.dirs[1].files, vec![1]); // dir/b
-    assert_eq!(index.dirs[2].files, vec![2]); // dir/sub/c
+    assert_eq!(index.dirs[0].files, vec![0]);
+    assert_eq!(index.dirs[1].files, vec![1]);
+    assert_eq!(index.dirs[2].files, vec![2]);
     assert_eq!(index.dirs[0].subdirs, vec![b"dir".to_vec()]);
     assert_eq!(index.dirs[1].subdirs, vec![b"sub".to_vec()]);
     assert_eq!(index.dirs[0].depth, 0);
@@ -100,7 +98,6 @@ fn from_entries_builds_tree() {
     assert_eq!(index.dirs[2].depth, 2);
 }
 
-/// 完全匹配 → 不脏。
 #[test]
 fn is_modified_clean_is_false() {
     let tmp = tempfile::tempdir().unwrap();
@@ -111,7 +108,7 @@ fn is_modified_clean_is_false() {
     assert!(!is_modified(&e, &st, &caps()));
 }
 
-/// fsize 不同 → 脏。文件写 1 字节内容，index 记录 fsize=0。
+/// fixture：文件写 1 字节，index 记录 fsize=0。
 #[test]
 fn is_modified_detects_size_change() {
     let tmp = tempfile::tempdir().unwrap();
@@ -123,7 +120,6 @@ fn is_modified_detects_size_change() {
     assert!(is_modified(&e, &st, &caps()));
 }
 
-/// ino 不同 → 脏。
 #[test]
 fn is_modified_detects_ino_change() {
     let tmp = tempfile::tempdir().unwrap();
@@ -152,7 +148,6 @@ fn is_modified_zero_nsec_ignores_nsec_mismatch() {
     assert!(is_modified(&e2, &st, &caps()));
 }
 
-/// stage 非 0（冲突条目）恒为候选。
 #[test]
 fn is_modified_conflict_stage_is_dirty() {
     let tmp = tempfile::tempdir().unwrap();
@@ -164,19 +159,16 @@ fn is_modified_conflict_stage_is_dirty() {
     assert!(is_modified(&e, &st, &caps()));
 }
 
-/// mode 规范化：仅可执行位参与比较。磁盘 0644 而 index 记录 0755
-/// （仅执行位不同）→ 规范化后不等 → 脏；完全一致 → 不脏。
+/// mode 规范化：仅可执行位参与比较（磁盘 0644、index 记录 0755 → 脏）。
 #[test]
 fn is_modified_exec_bit_only_differs() {
     let tmp = tempfile::tempdir().unwrap();
     let f = tmp.path().join("f");
     File::create(&f).unwrap();
     let st = lstat(&f);
-    // 仅执行位不同 → 脏
     let mut e = entry("f", &st);
     e.mode = 0o100755;
     assert!(is_modified(&e, &st, &caps()));
-    // 完全一致（含 mode）→ 不脏
     let e2 = entry("f", &st);
     assert!(!is_modified(&e2, &st, &caps()));
 }
@@ -194,7 +186,6 @@ fn scan_detects_modified_deleted_untracked() {
     // b：磁盘不存在（删除）——用 a 的 stat 伪造（比较只发生在磁盘存在时）
     let mut e_b = entry("b", &st_a);
     e_b.path = b"b\0".to_vec();
-    // c：干净
     File::create(root.join("c")).unwrap();
     let st_c = lstat(&root.join("c"));
     let e_c = entry("c", &st_c);
@@ -210,7 +201,6 @@ fn scan_detects_modified_deleted_untracked() {
     assert_eq!(out, vec![b"a".to_vec(), b"b".to_vec(), b"d".to_vec()]);
 }
 
-/// 分片单调性：splits 首 0、尾 dirs.len()、严格递增。
 #[test]
 fn splits_are_monotonic() {
     let fake = |i: usize| {
@@ -247,12 +237,10 @@ fn untracked_cache_probe_passes_on_local_fs() {
     let cache = p11k_gitstatus::untracked_cache::UntrackedCache::start_probe(tmp.path());
     // 结论未出时乐观 true
     assert!(cache.enabled());
-    // 轮询等探针完成（最多 5s）
     let start = std::time::Instant::now();
     while start.elapsed().as_secs() < 5 && cache.enabled() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    // 本地文件系统应当支持
     assert!(cache.enabled());
 }
 

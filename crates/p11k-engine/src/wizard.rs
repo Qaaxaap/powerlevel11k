@@ -3,7 +3,7 @@
 //! 对齐 p10k `p10k configure` 暴露给用户的问题集：字体检测（三个字形人眼确认）、
 //! 风格、字符集、颜色变体、时间、分隔符/端符、行数、连接线、帧、间距、图标、
 //! 前缀、transient。答案直接改 [`Config`] 字段，最后序列化成 KDL 落盘。
-//! 键位：`q` 退出（什么都不写）、`r` 从头再来、数字/字母选择。
+//! 键位：`q` 退出（不写入任何配置）、`r` 重新开始、数字/字母选择。
 
 use crate::config::{Color, Config, Element, Frame, IconMode, Prop, Segment, Separators};
 use crate::i18n::{msgid, t};
@@ -12,7 +12,6 @@ use crate::theme::HeaderInfo;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-/// 一步的答案：答案值 / 从头再来 / 退出。
 enum Step<T> {
     Answer(T),
     Restart,
@@ -163,7 +162,7 @@ fn line(out: &mut io::Stdout, s: &str) -> io::Result<()> {
     out.flush()
 }
 
-/// 读单键。`q`→Quit、`r`→Restart、其余原样返回；Ctrl-C/Esc 当 Quit。
+/// 读单键，返回读到的字节；EOF(读到 0 字节)返回 None。按键语义(`q`/`r`/`y`/`n`/数字)由调用方解释。
 fn key() -> io::Result<Option<u8>> {
     let mut b = [0u8; 1];
     loop {
@@ -189,7 +188,7 @@ fn goodbye(out: &mut io::Stdout) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 当前目录 + 一个让 exec/status 都可见的样例状态。
+/// 当前目录 + 一份能让 exec/status 段都渲染出内容的样例状态。
 fn sample_info() -> HeaderInfo {
     HeaderInfo {
         exit_code: None,
@@ -385,7 +384,6 @@ fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
     )
 }
 
-/// 时间：不显示 / 12 小时制 / 24 小时制。
 fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> io::Result<Step<()>> {
     ask_apply(
         out,
@@ -401,9 +399,9 @@ fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> io::Res
             _ => {
                 add_to_right(c, "time");
                 let fmt = if i == 1 { "12h" } else { "24h" };
-                // 底色要跟当前风格一致，否则新段会掉成透明/黑底（p10k 里 classic
+                // 底色必须与当前风格一致，否则新段会变成透明或黑底（p10k 里 classic
                 // 靠全局 `POWERLEVEL9K_BACKGROUND`、rainbow 是 `TIME_BACKGROUND=7`、
-                // lean/pure 透明）。先算好再借 entry（避免同时可变/不可变借用）。
+                // lean/pure 透明）。先算出底色再借 entry（避免可变与不可变借用并存）。
                 let bg = time_bg(kind, c);
                 let t = c.segments.entry("time".into()).or_insert_with(|| {
                     let mut s = Segment::default();
@@ -534,7 +532,6 @@ fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>>
     )
 }
 
-/// 连接线：Disconnected/Dotted/Solid。
 fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
@@ -548,8 +545,8 @@ fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> 
                 _ => "─",
             }
             .into();
-            // 有填充字符时给个灰前景（对齐 p10k 的
-            // MULTILINE_FIRST_PROMPT_GAP_FOREGROUND=240）；断开则清掉。
+            // 有填充字符时用灰色前景（对齐 p10k 的
+            // MULTILINE_FIRST_PROMPT_GAP_FOREGROUND=240）；Disconnected 时清空。
             c.separators.gap_foreground = if i == 0 {
                 None
             } else {
@@ -559,7 +556,6 @@ fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> 
     )
 }
 
-/// 帧：无/左/右/全。
 fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     use crate::config::FramePiece;
     ask_apply(
@@ -597,7 +593,6 @@ fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     )
 }
 
-/// 间距：Compact/Sparse。
 fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
@@ -608,7 +603,6 @@ fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>
     )
 }
 
-/// 图标：Few/Many。
 fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     ask_apply(
         out,
@@ -617,10 +611,10 @@ fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
         cfg,
         |c, i| {
             if i == 0 {
-                // 对齐 p10k 的 few：os 徽标整个不画，dir/vcs/branch/exec/time
-                // 图标清空。vcs 的远端图标（github/gitlab）走的是
-                // `vcs-remote-icons`，优先于 `icon{ git }`，所以要一并清掉，
-                // 否则 Few 下远端仓库仍带着 github 图标（p10k 是把
+                // 对齐 p10k 的 few：os 徽标整体不渲染，dir/vcs/branch/exec/time
+                // 图标置空。vcs 的远端图标（github/gitlab）走的是
+                // `vcs-remote-icons`，优先于 `icon{ git }`，因此必须一并清掉，
+                // 否则 Few 档下远端仓库仍会显示 github 图标（p10k 是把
                 // VCS_VISUAL_IDENTIFIER_EXPANSION 整体置空）。exec 图标对应
                 // p10k 的 COMMAND_EXECUTION_TIME_VISUAL_IDENTIFIER_EXPANSION，
                 // p10k 在 Few 下同样置空。
@@ -664,7 +658,6 @@ fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> 
     )
 }
 
-/// transient：y/n。
 fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     let b = ask_yn(
         out,
@@ -746,7 +739,7 @@ fn ask_apply(
     }
 }
 
-/// 是/否：y/n。`sample` 可选，展示一行字形样本。
+/// 是/否问答；`sample` 存在时在选项之前展示一行字形样本。
 fn ask_yn(
     out: &mut io::Stdout,
     title: &str,
@@ -876,7 +869,7 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
         out,
         &format!("  fish: if not set -q P11K_ENGINE; exec {exe} --shell fish --config {p}; end"),
     )?;
-    // pwsh 没有 exec：起引擎、等它退出再退出外层 pwsh。这行写进 $PROFILE。
+    // pwsh 没有 exec，只能启动引擎、等它退出后再退出外层 pwsh。这行写进 $PROFILE。
     line(
         out,
         &format!(

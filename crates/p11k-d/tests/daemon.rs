@@ -7,7 +7,6 @@ use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// 启动 p11k-d，返回子进程与 stdin/stdout。
 fn spawn(args: &[&str]) -> (Child, ChildStdin, ChildStdout) {
     let mut child = Command::new(env!("CARGO_BIN_EXE_p11k-d"))
         .args(args)
@@ -60,7 +59,6 @@ fn batched_requests_are_answered_in_order() {
     child.wait().unwrap();
 }
 
-/// EOF：关闭 stdin 后 daemon 正常退出（exit 0）。
 #[test]
 fn eof_exits_zero() {
     let (mut child, stdin, _stdout) = spawn(&[]);
