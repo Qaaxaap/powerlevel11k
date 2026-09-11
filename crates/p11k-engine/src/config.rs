@@ -88,7 +88,7 @@ impl Style {
                 "fg" => s.fg = Color::from_value(e.value()),
                 "bg" => s.bg = Color::from_value(e.value()),
                 "bold" => s.bold = bool_val(e.value()),
-                _ => {}
+                _ => warn_unknown_key(name.value()),
             }
         }
         s
@@ -649,7 +649,7 @@ impl Config {
                 }
                 "icon" => icon_overrides = parse_icon_table(node),
                 "dir-classes" => dir_classes = parse_dir_classes(node),
-                _ => {} // 未知顶层忽略(向前兼容)
+                _ => warn_unknown_key(node.name().value()),
             }
         }
         Ok(Config {
@@ -867,7 +867,7 @@ fn parse_icon_table(node: &KdlNode) -> BTreeMap<String, IconOverride> {
                         "nf" => ov.nf = Some(v),
                         "compat" => ov.compat = Some(v),
                         "ascii" => ov.ascii = Some(v),
-                        _ => {}
+                        _ => warn_unknown_key(f.name().value()),
                     }
                 }
             }
@@ -1024,7 +1024,7 @@ fn parse_frame(node: &KdlNode) -> Frame {
                 "newline-suffix" => f.newline_suffix = piece,
                 "last-prefix" => f.last_prefix = piece,
                 "last-suffix" => f.last_suffix = piece,
-                _ => {}
+                _ => warn_unknown_key(child.name().value()),
             }
         }
     }
@@ -1059,7 +1059,7 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
                         layout.right_indent = (*n).clamp(0, 9) as usize;
                     }
                 }
-                _ => {}
+                _ => warn_unknown_key(child.name().value()),
             }
         }
     }
@@ -1158,10 +1158,10 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                         "text-left" => seg.text_left = Some(attach),
                         "text-middle" => seg.text_middle = Some(attach),
                         "text-right" => seg.text_right = Some(attach),
-                        _ => {}
+                        _ => warn_unknown_key(child.name().value()),
                     }
                 }
-                _ => {}
+                _ => warn_unknown_key(child.name().value()),
             }
         }
     }
@@ -1200,6 +1200,12 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
     }
 }
 
+/// 配置里出现引擎不认识的键时提醒一句。静默忽略会让写错的键名毫无反馈 ——
+/// 测试里就曾把 `prompt-add-newline` 写成 `add-newline` 而一直没人发现。
+fn warn_unknown_key(name: &str) {
+    eprintln!("p11k: {}{name}", t("unknown config key: "));
+}
+
 /// 解析 `separators` 节点:字符子节点(`segment`/`sub`/`end`/`right-start`/`right-segment`/`right-sub`/`left-tail`/`right-tail`/`gap`),值按整串字符串读入。
 fn parse_separators(node: &KdlNode) -> Separators {
     let mut s = Separators::default();
@@ -1230,7 +1236,7 @@ fn parse_separators(node: &KdlNode) -> Separators {
                 "left-tail" => s.left_tail = ch,
                 "right-tail" => s.right_tail = ch,
                 "gap" => s.gap = ch,
-                _ => {}
+                _ => warn_unknown_key(child.name().value()),
             }
         }
     }
@@ -1324,7 +1330,6 @@ layout {
     right {
         line { status }
     }
-    add-newline #true
     prompt-add-newline #true
     transient-prompt #true
 }
@@ -1379,7 +1384,7 @@ icon {
     #[test]
     fn parses_layout_lines() {
         let c = Config::parse(
-            "layout {\n  left {\n    line { dir #true; vcs #true }\n    line { prompt_char #true }\n  }\n  right {\n    line { status #true }\n  }\n  add-newline #true\n}",
+            "layout {\n  left {\n    line { dir #true; vcs #true }\n    line { prompt_char #true }\n  }\n  right {\n    line { status #true }\n  }\n}",
         )
         .unwrap();
         assert_eq!(

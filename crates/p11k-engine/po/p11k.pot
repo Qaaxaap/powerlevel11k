@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/powerlevel11k/p11k/issues\n"
-"POT-Creation-Date: 2026-09-12 02:50+0800\n"
+"POT-Creation-Date: 2026-09-12 02:52+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -27,6 +27,10 @@ msgstr ""
 
 #: crates/p11k-engine/src/config.rs:1150
 msgid " needs text (a positional string)"
+msgstr ""
+
+#: crates/p11k-engine/src/config.rs:1206
+msgid "unknown config key: "
 msgstr ""
 
 #: crates/p11k-engine/src/main.rs:116

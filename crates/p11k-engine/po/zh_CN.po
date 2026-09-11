@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k\n"
 "Report-Msgid-Bugs-To: https://github.com/powerlevel11k/p11k/issues\n"
-"POT-Creation-Date: 2026-09-12 02:50+0800\n"
+"POT-Creation-Date: 2026-09-12 02:52+0800\n"
 "PO-Revision-Date: 2025-01-01 00:00+0000\n"
 "Last-Translator: p11k\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -31,6 +31,10 @@ msgstr "`state` 需要一个名字（位置字符串）"
 #: crates/p11k-engine/src/config.rs:1150
 msgid " needs text (a positional string)"
 msgstr " 需要文本（位置字符串）"
+
+#: crates/p11k-engine/src/config.rs:1206
+msgid "unknown config key: "
+msgstr "无法识别的配置键: "
 
 #: crates/p11k-engine/src/main.rs:116
 msgid "cannot read config, falling back to the built-in lean theme: "
