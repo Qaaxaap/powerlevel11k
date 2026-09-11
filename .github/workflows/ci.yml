@@ -10,20 +10,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 环境全部来自 flake.nix 的 devShell：rust 工具链、msgfmt、zsh、git，
-      # 以及经 LOCALE_ARCHIVE 暴露的 zh_CN.UTF-8。CI 与本地 `nix develop`
-      # 跑的是同一套东西，不存在"CI 上装了什么特别的东西"。
       - uses: cachix/install-nix-action@v31
         with:
-          # 缓存命中后能直接复用构建结果，而不是只省下载。
           extra_nix_config: |
             keep-env-derivations = true
             keep-outputs = true
 
-      # 缓存 /nix（store + db）：GitHub runner 之间没有状态，不然每次都得从
-      # cache.nixos.org 重拉工具链闭包。key 绑 flake.lock，换 nixpkgs 就重来。
-      # 这个 action 自己也提醒"可能反而变慢，请在你的场景里验证"，所以上限
-      # 压在 1G；真要嫌慢或出问题，退回 actions/cache 缓存 ~/.cache/nix 也能用。
       - uses: nix-community/cache-nix-action@v7
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}

@@ -4,35 +4,18 @@
 resolver = "2"
 members = ["crates/*"]
 
-# 所有 crate 共享的元数据。版本策略：p11k 整体发布（daemon 与 zsh shim 同版本号）。
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "LGPL-3.0-or-later"
-# 实测最低版本，不是 edition 2024 的名义下限 1.85：依赖链卡住了 —— kdl 6.7 要求
-# rustc 1.95、icu_* 2.3 要求 1.88、idna_adapter 要求 1.86，1.85 直接编不过，
-# 1.95 实测 `cargo check --all --locked` 通过。这个数跟着 Cargo.lock 走，
-# 动依赖版本（尤其 kdl）后必须重新实测。
 rust-version = "1.95"
 
-# workspace 级依赖（各 crate 按需启用，见各 crate 的 Cargo.toml）。
-#
-# - libc：性能内核需要 openat/fstatat/fcntl/kill 等系统调用，
-#   对应原版 gitstatusd 里 index.cc/repo.cc/request.cc 的 POSIX 调用。
-# - git2：M2 阶段引入，用于 git 对象模型（HEAD/分支/远端/tag/stash/
-#   commit summary/revwalk），对应原版对 libgit2 的使用。
-#   M1（协议层）暂不需要，先声明在此。
-#   （notify_cb / range_start / range_end，对齐原版 StartDirtyScan）。
 [workspace.dependencies]
 libc = "0.2"
 git2 = "0.20"
-# p11k-engine（B 架构：pty 宿主 + 透传 + prompt 窗口主题）用。
 portable-pty = "0.9"
 unicode-width = "0.2"
 
-# 发布构建对齐原版 gitstatusd 的编译配置：其 Makefile 使用 -O3 -std=c++14。
-# p11k 的性能契约（见 CONTRIBUTING.md）要求与 C++ 原版做基准对比，
-# 因此 release 配置从第一天起就按最高优化级别设定。
 [profile.release]
 opt-level = 3
 lto = "fat"
