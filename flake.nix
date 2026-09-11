@@ -45,6 +45,30 @@
         };
       });
 
+      checks = eachSystem (pkgs: {
+        default = pkgs.rustPlatform.buildRustPackage {
+          pname = "p11k-tests";
+          version = "0.1.0";
+          src = self;
+          cargoLock.lockFile = ./Cargo.lock;
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+            cmake
+            gettext
+            git
+          ];
+          buildInputs = with pkgs; [ openssl ];
+          nativeCheckInputs = with pkgs; [ zsh ];
+          preCheck = ''
+            export LANG=C.UTF-8
+            export LOCALE_ARCHIVE=${localesOf pkgs}/lib/locale/locale-archive
+            export HOME=$TMPDIR
+            git config --global user.email "ci@example.com"
+            git config --global user.name "CI"
+          '';
+        };
+      });
+
       packages = eachSystem (pkgs: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "p11k";
