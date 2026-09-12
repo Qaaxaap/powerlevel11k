@@ -54,6 +54,14 @@ extern "C" fn handle_sigwinch(_sig: libc::c_int) {
     RESIZE_FLAG.store(true, Ordering::Relaxed);
 }
 
+/// `p11k reload` flag: the command signals this engine and the main loop re-reads the theme
+/// file. Set from the handler, acted on by the loop (see `AnnMsg` handling).
+static RELOAD_FLAG: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn handle_sigusr1(_sig: libc::c_int) {
+    RELOAD_FLAG.store(true, Ordering::Relaxed);
+}
+
 use config::Config;
 use i18n::{msgid, t};
 use p11k_gitstatus::{options::Options, protocol::field, repo::RepoCache};
@@ -105,15 +113,19 @@ fn preset_from_args() -> Option<String> {
     args.get(pos + 1).cloned()
 }
 
+/// Read and parse one KDL theme file.
+fn load_config_file(path: &Path) -> Result<Config, String> {
+    std::fs::read_to_string(path)
+        .map_err(|e| e.to_string())
+        .and_then(|src| Config::parse(&src))
+}
+
 /// Load the theme: --config file > --preset built-in > default lean; the first two log and
 /// fall back on failure.
 fn load_config() -> Config {
     let fallback = || Config::default_lean().expect("built-in lean config should be valid");
     if let Some(path) = config_from_args() {
-        match std::fs::read_to_string(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|src| Config::parse(&src))
-        {
+        match load_config_file(&path) {
             Ok(c) => return c,
             Err(e) => eprintln!(
                 "p11k: {}{path:?}: {e}",
@@ -133,6 +145,47 @@ fn load_config() -> Config {
         );
     }
     fallback()
+}
+
+/// `p11k reload`: re-read the theme file of the session this shell belongs to.
+///
+/// The engine exports `P11K_CONFIG` and `P11K_ENGINE_PID` into the inner shell. The file is
+/// parsed here first, so a syntax error is reported by this command in the ordinary way
+/// instead of leaving the prompt silently unchanged; the engine then reads it again and keeps
+/// the theme it already has if the file stopped parsing in between.
+fn reload_engine() -> anyhow::Result<()> {
+    let pid = std::env::var("P11K_ENGINE_PID")
+        .ok()
+        .and_then(|p| p.parse::<libc::pid_t>().ok());
+    let Some(pid) = pid else {
+        eprintln!(
+            "p11k: {}",
+            t("not inside a p11k session (P11K_ENGINE_PID is unset)")
+        );
+        process::exit(1);
+    };
+    let path = std::env::var("P11K_CONFIG").unwrap_or_default();
+    if path.is_empty() {
+        eprintln!(
+            "p11k: {}",
+            t("this session has no theme file: it was started with --preset or the built-in theme")
+        );
+        process::exit(1);
+    }
+    let path = Path::new(&path);
+    if let Err(e) = load_config_file(path) {
+        eprintln!("p11k: {path:?}: {e}");
+        process::exit(1);
+    }
+    // SIGUSR1 only raises a flag; the engine re-reads the file on its next loop pass.
+    if unsafe { libc::kill(pid, libc::SIGUSR1) } != 0 {
+        eprintln!(
+            "p11k: {}",
+            t("cannot signal the engine (has this session already exited?)")
+        );
+        process::exit(1);
+    }
+    Ok(())
 }
 
 /// Fall back to $SHELL when no shell is given.
@@ -450,6 +503,7 @@ fn print_help() {
     for line in [
         msgid("usage: p11k [options]"),
         msgid("       p11k configure"),
+        msgid("       p11k reload"),
         "",
         msgid("Options:"),
         msgid("  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: $SHELL)"),
@@ -460,10 +514,12 @@ fn print_help() {
         "",
         msgid("Commands:"),
         msgid("  configure        interactive theme wizard"),
+        msgid("  reload           re-read the theme file of the running session"),
         "",
         msgid("Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"),
         msgid("P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"),
-        msgid("overrides the translation directory."),
+        msgid("overrides the translation directory. The engine exports P11K_CONFIG and"),
+        msgid("P11K_ENGINE_PID into the shell for `p11k reload`."),
         "",
         msgid("To use p11k as your theme, add one line to your shell rc — see README.md."),
     ] {
@@ -492,6 +548,10 @@ fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "configure") {
         return crate::wizard::run();
     }
+    // `p11k reload`: ask the engine of this session to re-read its theme file.
+    if std::env::args().any(|a| a == "reload") {
+        return reload_engine();
+    }
 
     // Recursion check: P11K_ENGINE set means this engine is a redundant instance started
     // again by the inner shell's rc bootstrap (the user rc bootstrap line is unguarded or
@@ -513,7 +573,12 @@ fn main() -> anyhow::Result<()> {
     let shell = detect_shell();
     // Load the config first to compute the input-line prefix width, then build a
     // placeholder of the same width.
-    let config = load_config();
+    let mut config = load_config();
+    // The file the theme came from, kept for `p11k reload` (None for a preset or the built-in
+    // theme; the engine then has nothing to re-read). Made absolute, because the reload
+    // command reads it from wherever the shell happens to be, not from the starting directory.
+    // A path that cannot be resolved is kept as it is: reloading then reports the real error.
+    let config_path = config_from_args().map(|p| p.canonicalize().unwrap_or(p));
     // Every prompt_char state (normal/ERROR) must be the same width.
     // Unequal widths are a config error: report on the real terminal, then exec a clean shell.
     if let Err(e) = crate::render::check_prompt_char_widths(&config) {
@@ -538,7 +603,7 @@ fn main() -> anyhow::Result<()> {
         eprintln!("p11k: {}{err}", t("cannot exec a clean shell: "));
         std::process::exit(1);
     }
-    let prefix = crate::render::input_prefix(&config, None);
+    let mut prefix = crate::render::input_prefix(&config, None);
     // The placeholder carries header_rows newlines so the shell's prompt geometry counts
     // the header rows too; only then can zsh fold transient cleanly with reset-prompt.
     // marker is the visible placeholder bytes after the newlines; bash/fish match it to
@@ -599,6 +664,15 @@ fn main() -> anyhow::Result<()> {
     }
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
+    // `p11k reload` runs in the inner shell: it needs to find this engine and the file the
+    // theme came from. An empty P11K_CONFIG means the theme is a preset or the built-in one,
+    // and there is nothing to re-read.
+    cmd.env("P11K_ENGINE_PID", process::id().to_string());
+    if let Some(path) = &config_path {
+        cmd.env("P11K_CONFIG", path);
+    } else {
+        cmd.env_remove("P11K_CONFIG");
+    }
     // portable-pty's spawn_command defaults current_dir to HOME; set the engine's startup
     // cwd explicitly so the inner shell lands where the user ran `exec p11k`.
     cmd.cwd(std::env::current_dir()?);
@@ -667,6 +741,11 @@ fn main() -> anyhow::Result<()> {
             libc::SIGWINCH,
             handle_sigwinch as extern "C" fn(libc::c_int) as usize,
         );
+        // `p11k reload` wakes the loop the same way a resize does.
+        libc::signal(
+            libc::SIGUSR1,
+            handle_sigusr1 as extern "C" fn(libc::c_int) as usize,
+        );
     }
 
     let mut ann_processed: u64 = 0; // bytes already consumed from the announce file
@@ -677,51 +756,9 @@ fn main() -> anyhow::Result<()> {
     // Async git status.
     // A worker thread owns the RepoCache and the main loop sends requests / receives
     // results over channels, so a 1-2s first scan of a large repo never stalls the prompt.
-    let (req_tx, req_rx) = mpsc::channel::<GitRequest>();
+    let (mut req_tx, req_rx) = mpsc::channel::<GitRequest>();
     let (res_tx, res_rx) = mpsc::channel::<GitResult>();
-    // The call follows p10k conventions; count caps and the dirty skip threshold come from
-    // vcs segment properties (in p10k these are the global POWERLEVEL9K_VCS_*_MAX_NUM and
-    // POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY, -1 = unlimited). Read the values before
-    // spawning so the whole config is not moved into the thread.
-    let dirty_cap = vcs_int_prop(&config, "max-index-size-dirty", -1);
-    let max_staged = vcs_int_prop(&config, "max-num-staged", -1);
-    let max_unstaged = vcs_int_prop(&config, "max-num-unstaged", -1);
-    let max_conflicted = vcs_int_prop(&config, "max-num-conflicted", -1);
-    let max_untracked = vcs_int_prop(&config, "max-num-untracked", -1);
-    let disabled_workdir = vcs_str_prop(&config, "disabled-workdir-pattern");
-    std::thread::spawn(move || {
-        let num_threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-            .min(32);
-        let opts = Options {
-            max_num_staged: max_staged,
-            max_num_unstaged: max_unstaged,
-            max_num_conflicted: max_conflicted,
-            max_num_untracked: max_untracked,
-            dirty_max_index_size: dirty_cap,
-            num_threads,
-            ..Default::default()
-        };
-        let mut cache = RepoCache::new(&opts);
-        while let Ok(req) = req_rx.recv() {
-            // Drain the queue and handle only the latest request (drop backlogged old cwds).
-            let mut latest = req;
-            while let Ok(newer) = req_rx.try_recv() {
-                latest = newer;
-            }
-            let status = git_status(&mut cache, &latest.cwd, &disabled_workdir);
-            if res_tx
-                .send(GitResult {
-                    generation: latest.generation,
-                    status,
-                })
-                .is_err()
-            {
-                break; // the main loop exited, channel closed
-            }
-        }
-    });
+    spawn_git_worker(&config, req_rx, res_tx.clone());
 
     let mut git_gen: u64 = 0; // request sequence number; only the latest result is used
     // Last git status for the current cwd.
@@ -788,6 +825,45 @@ fn main() -> anyhow::Result<()> {
     let mut instant_newlines = 0usize;
 
     loop {
+        // `p11k reload`: read the theme file again and repaint. A file that no longer parses
+        // keeps the theme already in use (the reload command reports that error itself); the
+        // git worker is respawned so the vcs properties follow the new theme too.
+        if RELOAD_FLAG.swap(false, Ordering::Relaxed) {
+            match config_path.as_deref().map(load_config_file) {
+                Some(Ok(new_config)) => {
+                    config = new_config;
+                    // The input-line prefix is written into the shell's PROMPT at startup, so
+                    // its width is fixed: a theme that changes the prompt char width would
+                    // desync the placeholder. Keep the old prefix and say so.
+                    let new_prefix = crate::render::input_prefix(&config, None);
+                    if new_prefix.width == prefix.width {
+                        prefix = new_prefix;
+                    } else {
+                        log(&format!(
+                            "reload: keeping the old prompt prefix (width {} -> {})",
+                            prefix.width, new_prefix.width
+                        ));
+                    }
+                    let (tx, rx) = mpsc::channel::<GitRequest>();
+                    req_tx = tx;
+                    spawn_git_worker(&config, rx, res_tx.clone());
+                    log("reload: theme reloaded");
+                    if at_prompt {
+                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                        theme::redraw_header_cfg(
+                            &mut stdout,
+                            last_size.1 as usize,
+                            &config,
+                            current_info.as_ref().unwrap_or(&instant_info),
+                            vcs,
+                        )?;
+                        stdout.flush()?;
+                    }
+                }
+                Some(Err(e)) => log(&format!("reload: keeping the current theme: {e}")),
+                None => log("reload: this session has no theme file"),
+            }
+        }
         // resize signal: sync the inner pty size (including pixels). zsh/bash/fish all
         // register signal hooks (TRAPWINCH / trap WINCH / --on-signal WINCH) that announce
         // `r` on receipt so the engine relayouts at the new width; pwsh cannot hook SIGWINCH
@@ -1405,6 +1481,52 @@ fn git_status(cache: &mut RepoCache, cwd: &str, disabled_workdir: &str) -> Optio
         index_size,
         remote_url: String::from_utf8_lossy(&f[field::REMOTE_URL]).into_owned(),
     })
+}
+
+/// Start the git worker. It owns the `RepoCache`; the main loop talks to it over channels.
+///
+/// The call follows p10k conventions: the count caps and the dirty skip threshold come from
+/// vcs segment properties (in p10k the global `POWERLEVEL9K_VCS_*_MAX_NUM` and
+/// `POWERLEVEL9K_VCS_MAX_INDEX_SIZE_DIRTY`, -1 = unlimited). `p11k reload` respawns the
+/// worker so a changed theme takes effect there too, at the cost of the warm repo cache.
+fn spawn_git_worker(
+    config: &Config,
+    req_rx: mpsc::Receiver<GitRequest>,
+    res_tx: mpsc::Sender<GitResult>,
+) {
+    let opts = Options {
+        max_num_staged: vcs_int_prop(config, "max-num-staged", -1),
+        max_num_unstaged: vcs_int_prop(config, "max-num-unstaged", -1),
+        max_num_conflicted: vcs_int_prop(config, "max-num-conflicted", -1),
+        max_num_untracked: vcs_int_prop(config, "max-num-untracked", -1),
+        dirty_max_index_size: vcs_int_prop(config, "max-index-size-dirty", -1),
+        num_threads: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(32),
+        ..Default::default()
+    };
+    let disabled_workdir = vcs_str_prop(config, "disabled-workdir-pattern");
+    std::thread::spawn(move || {
+        let mut cache = RepoCache::new(&opts);
+        while let Ok(req) = req_rx.recv() {
+            // Drain the queue and handle only the latest request (drop backlogged old cwds).
+            let mut latest = req;
+            while let Ok(newer) = req_rx.try_recv() {
+                latest = newer;
+            }
+            let status = git_status(&mut cache, &latest.cwd, &disabled_workdir);
+            if res_tx
+                .send(GitResult {
+                    generation: latest.generation,
+                    status,
+                })
+                .is_err()
+            {
+                break; // the main loop exited, channel closed
+            }
+        }
+    });
 }
 
 /// Read an integer property on the `vcs` segment (p10k's global `POWERLEVEL9K_VCS_*`

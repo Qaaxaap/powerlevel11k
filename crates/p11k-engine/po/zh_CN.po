@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k\n"
 "Report-Msgid-Bugs-To: https://github.com/powerlevel11k/p11k/issues\n"
-"POT-Creation-Date: 2026-09-12 10:32+0800\n"
+"POT-Creation-Date: 2026-09-12 11:19+0800\n"
 "PO-Revision-Date: 2025-01-01 00:00+0000\n"
 "Last-Translator: p11k\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -36,29 +36,47 @@ msgstr " 需要文本（位置字符串）"
 msgid "unknown config key: "
 msgstr "无法识别的配置键: "
 
-#: crates/p11k-engine/src/main.rs:120
+#: crates/p11k-engine/src/main.rs:132
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr "读取配置失败，回退内置 lean 主题: "
 
-#: crates/p11k-engine/src/main.rs:131
+#: crates/p11k-engine/src/main.rs:143
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr "未知预设，回退内置 lean 主题（可选 lean/classic/rainbow/pure）: "
 
-#: crates/p11k-engine/src/main.rs:451
+#: crates/p11k-engine/src/main.rs:163
+msgid "not inside a p11k session (P11K_ENGINE_PID is unset)"
+msgstr "当前不在 p11k 会话里（P11K_ENGINE_PID 未设置）"
+
+#: crates/p11k-engine/src/main.rs:171
+msgid ""
+"this session has no theme file: it was started with --preset or the built-in "
+"theme"
+msgstr "本会话没有主题文件：启动时用的是 --preset 或内置主题"
+
+#: crates/p11k-engine/src/main.rs:184
+msgid "cannot signal the engine (has this session already exited?)"
+msgstr "无法给引擎发信号（会话是不是已经退出了？）"
+
+#: crates/p11k-engine/src/main.rs:504
 msgid "usage: p11k [options]"
 msgstr "用法: p11k [选项]"
 
-#: crates/p11k-engine/src/main.rs:452
+#: crates/p11k-engine/src/main.rs:505
 msgid "       p11k configure"
 msgstr "       p11k configure"
 
-#: crates/p11k-engine/src/main.rs:454
+#: crates/p11k-engine/src/main.rs:506
+msgid "       p11k reload"
+msgstr "       p11k reload"
+
+#: crates/p11k-engine/src/main.rs:508
 msgid "Options:"
 msgstr "选项:"
 
-#: crates/p11k-engine/src/main.rs:455
+#: crates/p11k-engine/src/main.rs:509
 msgid ""
 "  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: "
 "$SHELL)"
@@ -66,65 +84,73 @@ msgstr ""
 "  --shell <名字>   被代理的内部 shell：zsh、bash、fish 或 pwsh（缺省取 "
 "$SHELL）"
 
-#: crates/p11k-engine/src/main.rs:456
+#: crates/p11k-engine/src/main.rs:510
 msgid "  --config <path>  KDL theme file (default: the built-in lean theme)"
 msgstr "  --config <路径>  KDL 主题文件（缺省用内置 lean 主题）"
 
-#: crates/p11k-engine/src/main.rs:457
+#: crates/p11k-engine/src/main.rs:511
 msgid "  --preset <name>  built-in theme: lean, classic, rainbow or pure"
 msgstr "  --preset <名字>  内置主题：lean、classic、rainbow 或 pure"
 
-#: crates/p11k-engine/src/main.rs:458
+#: crates/p11k-engine/src/main.rs:512
 msgid "  --version        print the version and exit"
 msgstr "  --version        打印版本后退出"
 
-#: crates/p11k-engine/src/main.rs:459
+#: crates/p11k-engine/src/main.rs:513
 msgid "  --help           print this help and exit"
 msgstr "  --help           打印本说明后退出"
 
-#: crates/p11k-engine/src/main.rs:461
+#: crates/p11k-engine/src/main.rs:515
 msgid "Commands:"
 msgstr "子命令:"
 
-#: crates/p11k-engine/src/main.rs:462
+#: crates/p11k-engine/src/main.rs:516
 msgid "  configure        interactive theme wizard"
 msgstr "  configure        交互式主题向导"
 
-#: crates/p11k-engine/src/main.rs:464
+#: crates/p11k-engine/src/main.rs:517
+msgid "  reload           re-read the theme file of the running session"
+msgstr "  reload           重新读取当前会话的主题文件"
+
+#: crates/p11k-engine/src/main.rs:519
 msgid "Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"
 msgstr "环境变量：P11K_ENGINE 用于防止递归加载；P11K_USER_ZSHRC 与"
 
-#: crates/p11k-engine/src/main.rs:465
+#: crates/p11k-engine/src/main.rs:520
 msgid "P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"
 msgstr "P11K_USER_PROFILE 用于覆盖所 source 的 rc；P11K_LOCALEDIR"
 
-#: crates/p11k-engine/src/main.rs:466
-msgid "overrides the translation directory."
-msgstr "用于覆盖翻译目录。"
+#: crates/p11k-engine/src/main.rs:521
+msgid "overrides the translation directory. The engine exports P11K_CONFIG and"
+msgstr "用于覆盖翻译目录。引擎会把 P11K_CONFIG 与"
 
-#: crates/p11k-engine/src/main.rs:468
+#: crates/p11k-engine/src/main.rs:522
+msgid "P11K_ENGINE_PID into the shell for `p11k reload`."
+msgstr "P11K_ENGINE_PID 导出给 shell，供 `p11k reload` 使用。"
+
+#: crates/p11k-engine/src/main.rs:524
 msgid ""
 "To use p11k as your theme, add one line to your shell rc — see README.md."
 msgstr "若做主题使用，请修改 shell rc，详见 README.zh.md"
 
 # ---- 引擎本体 ----
-#: crates/p11k-engine/src/main.rs:504
+#: crates/p11k-engine/src/main.rs:564
 msgid "recursive launch detected (p11k started inside a p11k session)"
 msgstr "检测到递归加载（已在 p11k 会话内又启动了 p11k）"
 
-#: crates/p11k-engine/src/main.rs:505
+#: crates/p11k-engine/src/main.rs:565
 msgid "make sure the bootstrap line in ~/.zshrc is guarded, e.g.:"
 msgstr "请确认 ~/.zshrc 里的引导行带判断，例如："
 
-#: crates/p11k-engine/src/main.rs:509
+#: crates/p11k-engine/src/main.rs:569
 msgid "cannot exec zsh -f: "
 msgstr "exec zsh -f 失败: "
 
-#: crates/p11k-engine/src/main.rs:520
+#: crates/p11k-engine/src/main.rs:583
 msgid "config error: "
 msgstr "配置错误: "
 
-#: crates/p11k-engine/src/main.rs:524
+#: crates/p11k-engine/src/main.rs:587
 msgid ""
 "every prompt_char state must be the same width (the prompt width is fixed at "
 "startup). Fix the config and start p11k again."
@@ -132,11 +158,11 @@ msgstr ""
 "prompt_char 各态提示符必须等宽（prompt 宽度在启动期固定）。请修改配置后重新启"
 "动 p11k。"
 
-#: crates/p11k-engine/src/main.rs:538
+#: crates/p11k-engine/src/main.rs:601
 msgid "cannot exec a clean shell: "
 msgstr "exec 干净 shell 失败: "
 
-#: crates/p11k-engine/src/main.rs:648
+#: crates/p11k-engine/src/main.rs:720
 msgid "the inner shell failed to start"
 msgstr "内部 shell 没能启动"
 

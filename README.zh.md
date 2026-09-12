@@ -91,6 +91,20 @@ if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 引擎 exec 覆盖启动 shell，继承其环境；内部 shell 会重新 source 用户配置
 （主题本身除外——引擎就是主题）。`P11K_ENGINE` 用于打破递归。
 
+### 重载主题
+
+`p11k reload` 让已运行的会话重新读取主题文件：
+
+```bash
+$EDITOR ~/.config/p11k/p11k.kdl
+p11k reload
+```
+
+引擎会重绘头部并重启 git worker，所以 `vcs` 相关属性也会跟着生效。文件解析
+失败时由该命令报错，当前主题保持不变。输入行宽度在引擎启动时就固定了，所以
+换了宽度的 `prompt_char` 会被忽略（引擎日志里有记录）；其余的颜色、布局、
+段、分隔符、边框都立即生效。
+
 ### 开发环境
 
 构建与测试需要的东西全部钉在 `flake.nix` 里：
@@ -148,13 +162,15 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 - instant / transient prompt、vi_mode、history、宽松布局
 - 80+ 段与 KDL 主题语言、图标三档 mode 与 `icon{}` 覆盖
 - `p11k configure` 向导、gettext 词条（zh_CN）、CI
+- `p11k reload`，以及截止到扩展状态（`OK_PIPE` / `ERROR_PIPE` /
+  `ERROR_SIGNAL`）与 `VCS_DISABLED_WORKDIR_PATTERN` 的 p10k 功能
 
 待办：
 
-- p10k 还没搬过来的开关：`STATUS_EXTENDED_STATES`（`OK_PIPE` /
-  `ERROR_PIPE` / `ERROR_SIGNAL`）、`VCS_DISABLED_WORKDIR_PATTERN`、
-  `ICON_PADDING` / `ICON_BEFORE_CONTENT` / `LEGACY_ICON_SPACING`、
-  `TRANSIENT_PROMPT` 剩下的模式、热重载、`DISABLE_RPROMPT` 一类开关。
+- p10k 还没搬过来的开关，且都是非默认取值才有差别的：`ICON_PADDING=moderate`、
+  显式的 `ICON_BEFORE_CONTENT` 覆盖、`TRANSIENT_PROMPT=same-dir`
+  （`transient-prompt #true` 相当于 p10k 的 `always`）、`LEGACY_ICON_SPACING`。
+  按 p10k 默认设置渲染时已经一致。
   `DIR_MAX_LENGTH` 与 `DIR_MIN_COMMAND_COLUMNS(_PCT)` 做不到：它们要读 zle
   的 buffer，而引擎根本看不到。
 - 打包与发布

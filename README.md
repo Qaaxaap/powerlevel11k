@@ -109,6 +109,22 @@ Pass `--shell` explicitly: `$SHELL` does not change when pwsh is started from
 zsh or bash. Without the flag the engine falls back to `$SHELL`, using
 `PSModulePath`/`PSHOME` to recognise PowerShell.
 
+### Reloading the theme
+
+`p11k reload` re-reads the theme file in an already running session:
+
+```bash
+$EDITOR ~/.config/p11k/p11k.kdl
+p11k reload
+```
+
+The engine repaints the header and restarts its git worker, so the `vcs`
+properties take effect as well. A file that no longer parses is reported by the
+command and the theme in use is kept. The width of the input line is fixed when
+the engine starts, so a `prompt_char` of a different width is ignored (the
+engine log says so); everything else — colours, layout, segments, separators,
+frame — applies right away.
+
 ### Development environment
 
 Everything the build and the tests need is pinned in `flake.nix`:
@@ -177,13 +193,15 @@ Done:
 - 80+ segments and the KDL theme language, three-mode icons + `icon{}`
   overrides
 - `p11k configure` wizard, gettext catalogues (zh_CN), CI
+- `p11k reload`, and the p10k feature set up to extended status states
+  (`OK_PIPE` / `ERROR_PIPE` / `ERROR_SIGNAL`) and `VCS_DISABLED_WORKDIR_PATTERN`
 
 Roadmap:
 
-- the p10k knobs that are still missing: `STATUS_EXTENDED_STATES`
-  (`OK_PIPE` / `ERROR_PIPE` / `ERROR_SIGNAL`), `VCS_DISABLED_WORKDIR_PATTERN`,
-  `ICON_PADDING` / `ICON_BEFORE_CONTENT` / `LEGACY_ICON_SPACING`, the remaining
-  `TRANSIENT_PROMPT` modes, hot reload, `DISABLE_RPROMPT`-style toggles.
+- the p10k knobs that are still missing, all of them non-default settings:
+  `ICON_PADDING=moderate`, explicit `ICON_BEFORE_CONTENT` overrides,
+  `TRANSIENT_PROMPT=same-dir` (`transient-prompt #true` is p10k's `always`) and
+  `LEGACY_ICON_SPACING`. Rendering under p10k's defaults already matches.
   `DIR_MAX_LENGTH` and `DIR_MIN_COMMAND_COLUMNS(_PCT)` cannot be implemented:
   they need zle's buffer, which the engine never sees.
 - packaging and releases
