@@ -21,6 +21,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::i18n::t;
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
@@ -386,6 +387,17 @@ pub struct DirClass {
     pub state: String,
     /// Icon character for the dir segment on a match; empty = use the default folder icon.
     pub icon: String,
+}
+
+/// Where the theme file lives: `$XDG_CONFIG_HOME/p11k/p11k.kdl`, falling back to
+/// `~/.config/p11k/p11k.kdl`. `p11k configure` writes there, and the engine reads from
+/// there when `--config` is not given.
+pub fn default_config_path() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("p11k").join("p11k.kdl")
 }
 
 impl Default for Config {

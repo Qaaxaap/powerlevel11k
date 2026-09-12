@@ -11,7 +11,6 @@ use crate::i18n::{msgid, t};
 use crate::presets::{self, PresetKind};
 use crate::theme::HeaderInfo;
 use std::io::{self, Write};
-use std::path::PathBuf;
 
 enum Step<T> {
     Answer(T),
@@ -833,16 +832,8 @@ fn preview(out: &mut io::Stdout, cfg: &Config) -> io::Result<()> {
     Ok(())
 }
 
-fn default_path() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("p11k").join("p11k.kdl")
-}
-
 fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
-    let path = default_path();
+    let path = crate::config::default_config_path();
     let p = path.display();
     if path.exists() {
         // p10k: `p11k config file already exists. Overwrite <path>?`

@@ -118,13 +118,16 @@ if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 ## 主题配置
 
 主题是 KDL v2 文件，语法见 [docs/config-language.zh.md](docs/config-language.zh.md)。
-`--config <path>` 指定主题文件，`--preset <name>` 选用内置主题
-（lean / classic / rainbow / pure），两者都不给时使用内置的 lean 主题。
+
+引擎默认读取 `$XDG_CONFIG_HOME/p11k/p11k.kdl`（通常是 `~/.config/p11k/p11k.kdl`），
+该文件不存在时使用内置的 lean 主题；`p11k configure` 向导会把配置写到那里。
+`--config <path>` 可指定其它文件，`--preset <name>` 可选用内置主题
+（lean / classic / rainbow / pure）。
 
 `p11k reload` 让正在运行的会话重新读取主题文件，无需重开 shell：
 
 ```bash
-$EDITOR path/to/theme.kdl
+$EDITOR ~/.config/p11k/p11k.kdl
 p11k reload
 ```
 

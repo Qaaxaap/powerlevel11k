@@ -120,8 +120,17 @@ fn load_config_file(path: &Path) -> Result<Config, String> {
         .and_then(|src| Config::parse(&src))
 }
 
-/// Load the theme: --config file > --preset built-in > default lean; the first two log and
-/// fall back on failure.
+/// The theme file the engine should read: `--config <path>` if given, otherwise the default
+/// location, when a theme was written there (by `p11k configure` or by hand).
+fn theme_file() -> Option<PathBuf> {
+    config_from_args().or_else(|| {
+        let path = crate::config::default_config_path();
+        path.is_file().then_some(path)
+    })
+}
+
+/// Load the theme: `--config` file > `--preset` > the theme file in the config directory >
+/// the built-in lean theme. The first three report and fall back on failure.
 fn load_config() -> Config {
     let fallback = || Config::default_lean().expect("built-in lean config should be valid");
     if let Some(path) = config_from_args() {
@@ -143,6 +152,16 @@ fn load_config() -> Config {
                 "unknown preset, falling back to the built-in lean theme (expected lean/classic/rainbow/pure): "
             )
         );
+    }
+    let default_path = crate::config::default_config_path();
+    if default_path.is_file() {
+        match load_config_file(&default_path) {
+            Ok(c) => return c,
+            Err(e) => eprintln!(
+                "p11k: {}{default_path:?}: {e}",
+                t("cannot read config, falling back to the built-in lean theme: ")
+            ),
+        }
     }
     fallback()
 }
@@ -507,7 +526,9 @@ fn print_help() {
         "",
         msgid("Options:"),
         msgid("  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: $SHELL)"),
-        msgid("  --config <path>  KDL theme file (default: the built-in lean theme)"),
+        msgid(
+            "  --config <path>  KDL theme file (default: ~/.config/p11k/p11k.kdl, else the built-in lean theme)",
+        ),
         msgid("  --preset <name>  built-in theme: lean, classic, rainbow or pure"),
         msgid("  --version        print the version and exit"),
         msgid("  --help           print this help and exit"),
@@ -583,7 +604,7 @@ fn main() -> anyhow::Result<()> {
     // theme; the engine then has nothing to re-read). Made absolute, because the reload
     // command reads it from wherever the shell happens to be, not from the starting directory.
     // A path that cannot be resolved is kept as it is: reloading then reports the real error.
-    let config_path = config_from_args().map(|p| p.canonicalize().unwrap_or(p));
+    let config_path = theme_file().map(|p| p.canonicalize().unwrap_or(p));
     // Every prompt_char state (normal/ERROR) must be the same width.
     // Unequal widths are a config error: report on the real terminal, then exec a clean shell.
     if let Err(e) = crate::render::check_prompt_char_widths(&config) {

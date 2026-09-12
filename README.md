@@ -136,15 +136,19 @@ prevents recursive startup.
 ## Theme configuration
 
 The theme is a KDL v2 file; the syntax is in
-[docs/config-language.md](docs/config-language.md). `--config <path>` names the
-theme file and `--preset <name>` selects a built-in theme (lean / classic /
-rainbow / pure); with neither, the built-in lean theme is used.
+[docs/config-language.md](docs/config-language.md).
+
+The engine reads `$XDG_CONFIG_HOME/p11k/p11k.kdl`, usually
+`~/.config/p11k/p11k.kdl`, and falls back to the built-in lean theme when that
+file does not exist; the `p11k configure` wizard writes its config there.
+`--config <path>` names a different file, and `--preset <name>` selects a
+built-in theme (lean / classic / rainbow / pure).
 
 `p11k reload` makes a running session re-read the theme file, with no need to
 restart the shell:
 
 ```bash
-$EDITOR path/to/theme.kdl
+$EDITOR ~/.config/p11k/p11k.kdl
 p11k reload
 ```
 

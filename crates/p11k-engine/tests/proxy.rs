@@ -27,6 +27,13 @@ struct Engine {
 /// the assertions), cwd `/tmp` (not a git directory, so git status scanning cannot
 /// jitter the prompt timing).
 fn spawn_engine() -> Engine {
+    spawn_engine_with_config_home("/nonexistent-p11k-config")
+}
+
+/// `config_home` becomes `$XDG_CONFIG_HOME`, where the engine looks for the theme when
+/// `--config` is not given. The default is a directory that does not exist, or the developer's
+/// own theme would decide what these assertions see.
+fn spawn_engine_with_config_home(config_home: &str) -> Engine {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -40,6 +47,7 @@ fn spawn_engine() -> Engine {
     cmd.arg("--shell");
     cmd.arg("zsh");
     cmd.env("P11K_USER_ZSHRC", "/dev/null");
+    cmd.env("XDG_CONFIG_HOME", config_home);
     cmd.cwd("/tmp");
     let child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
@@ -104,6 +112,34 @@ fn wait_ready(master: &dyn MasterPty, reader: &mut dyn Read) -> String {
         }
     }
     out
+}
+
+#[test]
+fn theme_is_read_from_the_config_home() {
+    // `p11k configure` writes the theme to $XDG_CONFIG_HOME/p11k/p11k.kdl; the engine has to
+    // pick it up from there, or that file would only ever be read when passed to --config.
+    let home = std::env::temp_dir().join(format!("p11k-config-home-{}", std::process::id()));
+    let dir = home.join("p11k");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("p11k.kdl"),
+        "layout { left { line { dir } } }\nframe { first-prefix \"FROM-CONFIG-HOME\" }\n",
+    )
+    .unwrap();
+
+    let mut eng = spawn_engine_with_config_home(home.to_str().unwrap());
+    let out = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "FROM-CONFIG-HOME",
+        Duration::from_secs(10),
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    assert!(
+        out.contains("FROM-CONFIG-HOME"),
+        "the theme in the config home should be used, got {out:?}"
+    );
 }
 
 #[test]
