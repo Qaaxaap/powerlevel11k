@@ -59,7 +59,7 @@ jobs:
             echo "Homepage: https://github.com/Qaaxaap/powerlevel11k"
             echo "Section: utils"
             echo "Priority: optional"
-            echo "Depends: libc6, libssl3 | libssl3t64"
+            echo "Depends: libc6, libgcc-s1, libssl3 | libssl3t64"
             echo "Description: powerlevel10k-compatible prompt engine"
             echo " p11k owns the terminal as a pty host and draws the prompt header while"
             echo " the shell keeps drawing the input line and announces when a prompt is"
