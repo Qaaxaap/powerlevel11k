@@ -93,19 +93,6 @@ in restrictions on, or a ban from, contributing to this repository.
   supervision is discouraged. Submissions with obvious defects, or that do not
   match what they claim to do, will be rejected.
 
-## Performance contract
-
-p11k exists for its speed. A change touching these paths must include
-before/after measurements:
-
-- git index parsing and dirty-state detection (against the C++ gitstatusd
-  baseline);
-- the render loop and anything on the precmd hot path.
-
-The benchmark suite does not exist yet (`p11k-d`'s benchmarks are still
-`todo!()`), so state how you measured and on what machine. A change without
-numbers on these paths will be held until they are provided.
-
 ## Releases
 
 A `v*` tag publishes: the workflow builds `p11k` and `p11k-d` and attaches a
@@ -124,8 +111,7 @@ to Discussions.
 ## Pull requests
 
 1. Fork, branch, and commit per the rules above.
-2. One PR carries one change. State the motivation in the description and, when
-   relevant, the measurements.
+2. One PR carries one change. State the motivation in the description.
 3. Test the patch locally at least once before submitting. A patch that does
    not compile or cannot run wastes review time; repeated low-quality
    submissions may lead to contribution restrictions.
