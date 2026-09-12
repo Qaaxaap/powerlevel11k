@@ -1,6 +1,6 @@
 # powerlevel11k (p11k)
 
-[English](README.md)
+[English](README.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml)
 
 用 Rust 重写的 powerlevel10k 提示符引擎。
 
@@ -192,7 +192,8 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 
 ## 许可证
 
-LGPL-3.0-or-later，见 [LICENSE](LICENSE)。
+LGPL-3.0-or-later：[COPYING.LESSER](COPYING.LESSER) 是许可证本身，[COPYING](COPYING)
+是它所扩展的 GPL-3.0。
 
 `compat/p10k` 分支 vendor 的 powerlevel10k 主题为 MIT（版权归 Roman
 Perepelitsa 及贡献者，原版权声明保留在

@@ -1,0 +1,53 @@
+name: Feature request
+description: Suggest a segment, a config option, or a behaviour change.
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Matching p10k is the goal, so a request that names the p10k setting or segment it
+        corresponds to is the easiest to act on. The knobs that are still missing are listed
+        in the README roadmap.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this has not been requested before.
+          required: true
+        - label: I checked the roadmap in the README.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What you would like
+      description: A concise description of the feature.
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why
+      description: What problem does it solve, or what does it make possible?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How it might work
+      description: If this corresponds to a p10k setting or segment, name it.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Examples, mockups, related issues.
+    validations:
+      required: false

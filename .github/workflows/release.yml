@@ -38,7 +38,7 @@ jobs:
           rm -rf "$stage" debroot
           mkdir -p "$stage/bin" "$stage/share/locale/zh_CN/LC_MESSAGES"
           cp target/release/p11k target/release/p11k-d "$stage/bin/"
-          cp README.md README.zh.md LICENSE "$stage/"
+          cp README.md README.zh.md COPYING COPYING.LESSER "$stage/"
           msgfmt -o "$stage/share/locale/zh_CN/LC_MESSAGES/p11k.mo" \
             crates/p11k-engine/po/zh_CN.po
           tar czf "$tarball.tar.gz" "$stage"

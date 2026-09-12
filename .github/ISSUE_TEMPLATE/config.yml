@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Configuration questions
+    url: https://github.com/Qaaxaap/powerlevel11k/discussions
+    about: How to style a segment, which icon to use, sharing a theme — ask here, not in an issue.
+  - name: Config language reference
+    url: https://github.com/Qaaxaap/powerlevel11k/blob/main/docs/config-language.md
+    about: Every node and property the theme file accepts, with examples.

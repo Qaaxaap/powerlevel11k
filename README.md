@@ -1,6 +1,6 @@
 # powerlevel11k (p11k)
 
-[中文](README.zh.md)
+[中文](README.zh.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml)
 
 A prompt engine that continues powerlevel10k, written in Rust.
 
@@ -225,7 +225,8 @@ the release process are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-LGPL-3.0-or-later, see [LICENSE](LICENSE).
+LGPL-3.0-or-later: [COPYING.LESSER](COPYING.LESSER) is the license itself,
+[COPYING](COPYING) is the GPL-3.0 it extends.
 
 The powerlevel10k theme vendored on the `compat/p10k` branch is MIT (c) Roman
 Perepelitsa and contributors; the original copyright notice is kept in

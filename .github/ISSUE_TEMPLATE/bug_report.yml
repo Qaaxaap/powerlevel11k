@@ -1,0 +1,112 @@
+name: Bug report
+description: The prompt renders wrong, the engine crashes, or something else misbehaves.
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Configuration questions — how to style a segment, which icon to use — belong in
+        [Discussions](https://github.com/Qaaxaap/powerlevel11k/discussions), not here.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues and this is not a duplicate.
+          required: true
+        - label: I am running the latest release (`p11k --version`).
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: p11k version
+      description: Output of `p11k --version`.
+      placeholder: p11k 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: shell
+    attributes:
+      label: Shell being proxied
+      options:
+        - zsh
+        - bash
+        - fish
+        - pwsh
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How p11k was installed
+      options:
+        - Nix flake (nix profile install)
+        - Nix flake (home-manager)
+        - .deb
+        - tarball
+        - cargo install
+        - built from source
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS and terminal
+      description: Distribution and version, and the terminal emulator.
+      placeholder: Arch Linux, kitty 0.48
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open a shell with ...
+        2. Run ...
+        3. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Minimal config
+      description: |
+        The smallest theme file that reproduces it. `p11k configure` writes to
+        `~/.config/p11k/p11k.kdl`, and the engine reads it from there unless `--config`
+        says otherwise.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Engine log
+      description: The last lines of `/tmp/p11k-engine.log`.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Screenshots, related issues, anything else that helps.
+    validations:
+      required: false
