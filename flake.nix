@@ -9,9 +9,8 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
       ];
+      version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
       eachSystem = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
       localesOf =
         pkgs:
@@ -48,7 +47,7 @@
       checks = eachSystem (pkgs: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "p11k-tests";
-          version = "0.1.0";
+          inherit version;
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
           nativeBuildInputs = with pkgs; [
@@ -72,7 +71,7 @@
       packages = eachSystem (pkgs: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "p11k";
-          version = "0.1.0";
+          inherit version;
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
           nativeBuildInputs = with pkgs; [
@@ -82,9 +81,19 @@
           ];
           buildInputs = with pkgs; [ openssl ];
           doCheck = false;
+          P11K_LOCALEDIR = "${placeholder "out"}/share/locale";
+          postInstall = ''
+            for po in crates/p11k-engine/po/*.po; do
+              lang=$(basename "$po" .po)
+              mkdir -p "$out/share/locale/$lang/LC_MESSAGES"
+              msgfmt -o "$out/share/locale/$lang/LC_MESSAGES/p11k.mo" "$po"
+            done
+          '';
           meta = {
             description = "powerlevel10k-compatible prompt engine (pty host + gitstatusd-compatible daemon)";
+            homepage = "https://github.com/Qaaxaap/powerlevel11k";
             license = nixpkgs.lib.licenses.lgpl3Plus;
+            platforms = pkgs.lib.platforms.linux;
             mainProgram = "p11k";
           };
         };

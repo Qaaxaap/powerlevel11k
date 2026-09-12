@@ -2,6 +2,9 @@
 //!
 //! At runtime `i18n::init` uses it to call `bindtextdomain`; when installed on the system
 //! the same-named environment variable can point at `/usr/share/locale` and the like.
+//! A packager that installs the catalogs elsewhere sets `P11K_LOCALEDIR` at build time to
+//! the final prefix, so the binary does not carry a build directory that is about to vanish;
+//! the catalogs still land in `$OUT_DIR` for running straight out of `target/`.
 //! Without `msgfmt` (or without po files) it only warns, never errors: the program still
 //! runs, it just does no translation (gettext returns the msgid when it finds none).
 
@@ -12,10 +15,15 @@ fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let po_dir = manifest.join("po");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
-    let locale_dir = out_dir.join("locale");
+    let mo_dir = out_dir.join("locale");
+    let embedded = match std::env::var("P11K_LOCALEDIR") {
+        Ok(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => mo_dir.clone(),
+    };
 
     println!("cargo:rerun-if-changed=po");
-    println!("cargo:rustc-env=P11K_LOCALEDIR={}", locale_dir.display());
+    println!("cargo:rerun-if-env-changed=P11K_LOCALEDIR");
+    println!("cargo:rustc-env=P11K_LOCALEDIR={}", embedded.display());
 
     let Ok(entries) = std::fs::read_dir(&po_dir) else {
         println!("cargo:warning=no po/ directory, building without translations");
@@ -30,7 +38,7 @@ fn main() {
         let Some(lang) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        let target_dir = locale_dir.join(lang).join("LC_MESSAGES");
+        let target_dir = mo_dir.join(lang).join("LC_MESSAGES");
         if let Err(e) = std::fs::create_dir_all(&target_dir) {
             println!("cargo:warning=cannot create {}: {e}", target_dir.display());
             continue;
