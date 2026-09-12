@@ -1,10 +1,8 @@
 //! Protocol-layer tests (golden tests, byte-for-byte comparison).
 //!
 //! Test data source: the actual byte-stream semantics of romkatv/gitstatus v1.5.5.
-//! All fixture bytes match the research report
-//! `.cache/p11k-research/gitstatus-report.md` — the protocol requires
-//! **byte-for-byte compatibility**, and a golden test is the only reliable way
-//! to verify it.
+//! The protocol requires **byte-for-byte compatibility**, and a golden test is the
+//! only reliable way to verify it.
 
 use p11k_gitstatus::protocol::{self, Request, Response, field};
 
