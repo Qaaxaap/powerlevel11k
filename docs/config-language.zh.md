@@ -172,7 +172,10 @@
     `max-num-staged` / `max-num-unstaged` / `max-num-untracked` /
     `max-num-conflicted`（p10k `VCS_*_MAX_NUM`：计数上限，-1 = 不限）、
     `max-index-size-dirty`（p10k `VCS_MAX_INDEX_SIZE_DIRTY`：索引超过它就跳过
-    dirty 扫描，此时按 p10k 画 `─`）。
+    dirty 扫描，此时按 p10k 画 `─`）、`disabled-workdir-pattern`
+    （p10k `VCS_DISABLED_WORKDIR_PATTERN`：仓库根目录匹配该模式的仓库
+    视为不存在；`~` 展开为 `$HOME`，`|` 分隔多个模式，如
+    `~(|/foo)|/bar/baz/*`）。
     计数顺序也照抄 p10k：`⇣behind⇡ahead` → `*stash` → 进行中的操作词
     （`merge`/`rebase`，用 conflicted 色）→ `~冲突` → `+暂存` → `!未暂存`
     → `?未跟踪`；ahead 与 behind 之间不加空格。

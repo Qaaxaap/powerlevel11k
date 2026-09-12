@@ -941,6 +941,92 @@ fn glob_match(pat: &str, text: &str) -> bool {
     go(&p, &t)
 }
 
+/// Whether a repo whose workdir is `workdir` must be ignored (p10k
+/// `VCS_DISABLED_WORKDIR_PATTERN`). p10k tests `[[ $VCS_STATUS_WORKDIR == $~pattern ]]`, so
+/// the pattern is a zsh pattern and an unset one disables nothing.
+pub(crate) fn workdir_is_disabled(pattern: &str, workdir: &str) -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    workdir_matches(pattern, workdir, &home)
+}
+
+/// `workdir_is_disabled` with an explicit home directory.
+fn workdir_matches(pattern: &str, workdir: &str, home: &str) -> bool {
+    if pattern.is_empty() {
+        return false;
+    }
+    pattern_alternatives(pattern)
+        .iter()
+        .any(|p| glob_match_path(p, workdir, home))
+}
+
+/// Rewrites a zsh pattern as the equivalent set of globs, expanding top-level `|` and every
+/// `(...)` group: `~(|/foo)|/bar/baz/*` becomes `~`, `~/foo` and `/bar/baz/*`.
+fn pattern_alternatives(pat: &str) -> Vec<String> {
+    split_top_level(pat, '|')
+        .into_iter()
+        .flat_map(|branch| expand_groups(&branch))
+        .collect()
+}
+
+/// Splits on `delim` at the top level, ignoring `|` inside `(...)` and `[...]`.
+fn split_top_level(s: &str, delim: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0usize;
+    let mut bracket = false;
+    for c in s.chars() {
+        match c {
+            '[' if !bracket => bracket = true,
+            ']' if bracket => bracket = false,
+            '(' if !bracket => depth += 1,
+            ')' if !bracket && depth > 0 => depth -= 1,
+            _ => {}
+        }
+        if c == delim && depth == 0 && !bracket {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            cur.push(c);
+        }
+    }
+    out.push(cur);
+    out
+}
+
+/// Expands the first top-level `(...)` group, then any group that follows it. An unbalanced
+/// `(` is left alone, like a literal.
+fn expand_groups(s: &str) -> Vec<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut depth = 0usize;
+    let mut bracket = false;
+    let mut open = 0usize;
+    for (i, c) in chars.iter().enumerate() {
+        match *c {
+            '[' if !bracket => bracket = true,
+            ']' if bracket => bracket = false,
+            '(' if !bracket => {
+                if depth == 0 {
+                    open = i;
+                }
+                depth += 1;
+            }
+            ')' if !bracket && depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    let prefix: String = chars[..open].iter().collect();
+                    let inner: String = chars[open + 1..i].iter().collect();
+                    let suffix: String = chars[i + 1..].iter().collect();
+                    return pattern_alternatives(&inner)
+                        .into_iter()
+                        .flat_map(|alt| expand_groups(&format!("{prefix}{alt}{suffix}")))
+                        .collect();
+                }
+            }
+            _ => {}
+        }
+    }
+    vec![s.to_string()]
+}
+
 /// p10k `DIR_SHOW_WRITABLE` values: `#true`=1, `"v2"`=2, `"v3"`=3 (as in p10k only these are
 /// valid; p11k additionally accepts an integer). Returns 0 for no check.
 fn dir_show_writable(seg: &crate::config::Segment) -> i64 {
@@ -3653,6 +3739,29 @@ mod tests {
             Some("ERROR")
         );
         assert_eq!(prompt_state(&plain, Some(&info_with(0, &[0, 1]))), None);
+    }
+
+    #[test]
+    fn disabled_workdir_pattern_follows_p10k() {
+        // p10k's VCS_DISABLED_WORKDIR_PATTERN: the pattern is a zsh pattern matched against
+        // the repo's workdir, `~` is $HOME, and an unset pattern disables nothing.
+        assert!(!workdir_matches("", "/home/u/repo", "/home/u"));
+        assert!(workdir_matches("~", "/home/u", "/home/u"));
+        // `~` alone is not a prefix match: $HOME/.git stays visible.
+        assert!(!workdir_matches("~", "/home/u/.git", "/home/u"));
+        assert!(!workdir_matches("~", "/tmp/repo", "/home/u"));
+        // Alternation, and a group with an empty branch (p10k's own README example).
+        assert_eq!(
+            pattern_alternatives("~(|/foo)|/bar/baz/*"),
+            ["~", "~/foo", "/bar/baz/*"]
+        );
+        assert!(workdir_matches("~(|/foo)", "/home/u/foo", "/home/u"));
+        assert!(!workdir_matches("~(|/foo)", "/home/u/bar", "/home/u"));
+        assert!(workdir_matches("/tmp|/var", "/var", "/home/u"));
+        // A pattern ending in `/` covers the subdirectories; `|` inside `[...]` is literal.
+        assert!(workdir_matches("~/work/", "/home/u/work/a/b", "/home/u"));
+        assert_eq!(pattern_alternatives("[a|b]"), ["[a|b]"]);
+        assert_eq!(pattern_alternatives("a(|b)c"), ["ac", "abc"]);
     }
 
     #[test]

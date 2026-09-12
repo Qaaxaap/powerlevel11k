@@ -207,7 +207,10 @@ through `icon {}`.
     `max-num-unstaged` / `max-num-untracked` / `max-num-conflicted`
     (p10k `VCS_*_MAX_NUM`, counting cap, -1 = unlimited) and
     `max-index-size-dirty` (p10k `VCS_MAX_INDEX_SIZE_DIRTY`: above it the
-    dirty scan is skipped and p10k's `─` is drawn). The order matches
+    dirty scan is skipped and p10k's `─` is drawn); `disabled-workdir-pattern`
+    (p10k `VCS_DISABLED_WORKDIR_PATTERN`: a repo whose workdir matches is
+    treated as if it did not exist, `~` expands to `$HOME` and `|` separates
+    alternatives, e.g. `~(|/foo)|/bar/baz/*`). The order matches
     p10k too: `⇣behind⇡ahead` → push counts → `*stash` → in-progress
     action word (`merge`/`rebase`, colored as conflicted) →
     `~conflicts` → `+staged` → `!unstaged` → `?untracked`, with no space

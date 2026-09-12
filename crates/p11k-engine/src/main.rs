@@ -688,6 +688,7 @@ fn main() -> anyhow::Result<()> {
     let max_unstaged = vcs_int_prop(&config, "max-num-unstaged", -1);
     let max_conflicted = vcs_int_prop(&config, "max-num-conflicted", -1);
     let max_untracked = vcs_int_prop(&config, "max-num-untracked", -1);
+    let disabled_workdir = vcs_str_prop(&config, "disabled-workdir-pattern");
     std::thread::spawn(move || {
         let num_threads = std::thread::available_parallelism()
             .map(|n| n.get())
@@ -709,7 +710,7 @@ fn main() -> anyhow::Result<()> {
             while let Ok(newer) = req_rx.try_recv() {
                 latest = newer;
             }
-            let status = git_status(&mut cache, &latest.cwd);
+            let status = git_status(&mut cache, &latest.cwd, &disabled_workdir);
             if res_tx
                 .send(GitResult {
                     generation: latest.generation,
@@ -1373,8 +1374,16 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// `RepoCache` is reused within the process: repo handles are cached by gitdir and
 /// `build_fields` reuses the staged-diff cache (while HEAD is unchanged) and libgit2's
 /// internal caches, avoiding a full rescan on every prompt.
-fn git_status(cache: &mut RepoCache, cwd: &str) -> Option<GitStatus> {
+///
+/// A repo whose workdir matches `disabled_workdir` is reported as if it did not exist
+/// (p10k `VCS_DISABLED_WORKDIR_PATTERN`). The test comes before `build_fields` so an
+/// ignored repo also skips the dirty scan.
+fn git_status(cache: &mut RepoCache, cwd: &str, disabled_workdir: &str) -> Option<GitStatus> {
     let repo = cache.get_or_open(cwd.as_bytes(), false)?;
+    let workdir = String::from_utf8_lossy(&repo.workdir).into_owned();
+    if crate::render::workdir_is_disabled(disabled_workdir, &workdir) {
+        return None;
+    }
     let f = repo.build_fields(false);
     let index_size = parse_field(&f[field::INDEX_SIZE]);
     Some(GitStatus {
@@ -1404,6 +1413,15 @@ fn vcs_int_prop(config: &Config, key: &str, default: i64) -> i64 {
     match config.segment("vcs").prop(key) {
         Some(crate::config::Prop::Int(n)) => *n,
         _ => default,
+    }
+}
+
+/// Read a string property on the `vcs` segment; an unset one is the empty string, which is
+/// also p10k's default for these parameters.
+fn vcs_str_prop(config: &Config, key: &str) -> String {
+    match config.segment("vcs").prop(key) {
+        Some(crate::config::Prop::Str(s)) => s.clone(),
+        _ => String::new(),
     }
 }
 
