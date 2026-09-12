@@ -108,16 +108,31 @@ inputs.p11k.url = "github:Qaaxaap/powerlevel11k";
 home.packages = [ inputs.p11k.packages.${pkgs.system}.default ];
 ```
 
-不用 Nix：
+Debian / Ubuntu 用挂在 [release](https://github.com/Qaaxaap/powerlevel11k/releases)
+上的 `.deb`：
+
+```bash
+sudo apt install ./p11k_0.1.0_amd64.deb
+```
+
+其它发行版解压 tar 包即可。`bin/` 与 `share/` 是可重定位的——词条既会在系统
+目录找，也会在可执行文件旁边找——所以解压到哪都能跑：
+
+```bash
+tar xzf p11k-0.1.0-x86_64-linux.tar.gz -C ~/.local
+~/.local/p11k-0.1.0-x86_64-linux/bin/p11k --shell zsh
+```
+
+不用 Nix，从源码装：
 
 ```bash
 cargo install --path crates/p11k-engine
 ```
 
-构建时需要 `msgfmt`（gettext）来编翻译，运行时要被代理的那个 shell。
-包里带 `p11k` 和 `p11k-d`（可独立替换 gitstatusd 的守护进程）；`p11k`
-本身不需要那个 daemon。目前只支持 Linux：git index 扫描仍然按 Linux 的
-`stat` 语义写。
+构建时需要 `msgfmt`（gettext）来编翻译；运行时要被代理的那个 shell，tar 包
+与 `.deb` 还需要 `libssl3`。包里带 `p11k` 和 `p11k-d`（可独立替换
+gitstatusd 的守护进程）；`p11k` 本身不需要那个 daemon。目前只支持 Linux：
+git index 扫描仍然按 Linux 的 `stat` 语义写。
 
 ### 重载主题
 

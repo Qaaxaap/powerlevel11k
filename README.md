@@ -125,16 +125,33 @@ inputs.p11k.url = "github:Qaaxaap/powerlevel11k";
 home.packages = [ inputs.p11k.packages.${pkgs.system}.default ];
 ```
 
-Without Nix:
+On Debian and Ubuntu, from the `.deb` attached to a
+[release](https://github.com/Qaaxaap/powerlevel11k/releases):
+
+```bash
+sudo apt install ./p11k_0.1.0_amd64.deb
+```
+
+Anywhere else, unpack the tarball. `bin/` and `share/` are relocatable — the
+catalogs are looked up next to the executables as well as in the system
+directory — so it runs from wherever it lands:
+
+```bash
+tar xzf p11k-0.1.0-x86_64-linux.tar.gz -C ~/.local
+~/.local/p11k-0.1.0-x86_64-linux/bin/p11k --shell zsh
+```
+
+Without Nix, from a checkout:
 
 ```bash
 cargo install --path crates/p11k-engine
 ```
 
-The build wants `msgfmt` (gettext) for the translations, the run time wants
-whichever shell gets proxied. The package carries `p11k` and `p11k-d`, the
-standalone gitstatusd replacement; `p11k` does not need the daemon. Linux only
-so far: the git index scan still assumes Linux `stat` semantics.
+The build wants `msgfmt` (gettext) for the translations; the run time wants
+whichever shell gets proxied, and the tarball and `.deb` builds expect
+`libssl3`. The package carries `p11k` and `p11k-d`, the standalone gitstatusd
+replacement; `p11k` does not need the daemon. Linux only so far: the git index
+scan still assumes Linux `stat` semantics.
 
 ### Reloading the theme
 
