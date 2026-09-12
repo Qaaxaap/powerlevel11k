@@ -1,74 +1,98 @@
 # powerlevel11k (p11k)
 
-用 Rust 延续 powerlevel10k 生命的提示符。
+[English](README.md)
 
-架构天然跨 shell。当前支持 bash/fish/pwsh/zsh。
+用 Rust 重写的 powerlevel10k 提示符引擎。
 
-powerlevel10k 于 2024 年进入纯维护模式：不新增功能、多数 bug 不再修、求助被
-忽略、仓库不会移交。它今天依然好用，但想要 v1.20.0 之外东西的人没有去处。
-p11k 从这里接手——保持 p10k 的外观与"快"，但全链路换成 Rust。
+powerlevel10k 在 2024 年进入纯维护模式：不再新增功能，多数 bug 不再修，
+issue 无人回应，仓库也不会移交。它今天依然好用，但想要 v1.20.0 之后东西的
+人没有去处。p11k 从这里接手：保住 p10k 的外观与速度，把整条链路换成 Rust。
 
-项目目前的两个主要分支：
+它不再是传统的 shell 主题。引擎直接占住终端（pty 宿主 + 透明代理），在 pty
+里跑一个未加载主题的 shell，字节原样透传，只在提示符出现的瞬间接管绘制。
+同一套主题因此可以跑在 zsh、bash、fish 和 pwsh 上——这是 p10k 做不到的。
 
-- **`main`：完整主题引擎。** 自行渲染，不依赖 shell 主题，为任意 shell 以简单可控的方式渲染提示符。
-- **`compat/p10k`：p10k 即插即用后端。** vendor 原版 p10k 主题，只把内核
-  `gitstatusd` 换成 Rust 的 `p11k-d`，配置、外观、vcs 一切照旧。
+## 引擎原理
 
-## powerlevel11k 引擎
+引擎是 pty 宿主兼透明代理：它在 pty 中启动一个未加载主题的 shell，原样转发
+字节，仅在提示符出现的时刻接管绘制。
 
-引擎是一个 pty 宿主与透明代理，在 pty 里跑一个无主题 shell，字节原样
-透传，只在 prompt 时刻短暂接管。
+shell 钩子宣告提示符就绪后，引擎绘制主题头部，绘制完成即交还控制。输入行仍
+由 shell 自己的行编辑器绘制，补全、历史、vi 模式的几何因此保持自洽。
 
-shell 钩子宣告 prompt 后，引擎绘制主题 header，画完交还。输入行由 shell 自己的行
-编辑器画，补全、历史、vi 模式的几何自洽。
+几何由占位协议保证：shell 渲染的是由占位符构成的主题骨架，引擎在骨架渲染
+完成后回填真实头部。引擎不解析 pty 输出中的 ANSI 序列，也不修改用户输入。
 
-几何靠"占位协议"保证：让 shell 渲染由无意义占位符组成的主题，引擎等占位渲染完再
-回填真实 header。引擎不解析 pty 输出里的 ANSI，也不碰用户输入的内容。
+## 功能
 
-### 能力
+- **多行头部**：p10k 风格，由 KDL v2 配置生成。
+- **instant header**：终端打开即显示提示符，不等待 shell 加载完配置。
+- **transient prompt**（仅 zsh）：命令提交后头部折叠为单行 `❯`，对应 p10k 的
+  `TRANSIENT_PROMPT`。其它 shell 不支持。
+- **vi_mode / history / 宽松布局**：vi 模式指示、历史命令号、
+  `prompt-add-newline` 空行等，随配置启用。
+- **80+ 内置段**：dir、vcs、status、time、command_execution_time、后台任务；
+  语言版本（go/rust/node/php/java/dotnet/swift/…）；云（aws/azure/gcloud/kube/
+  terraform）；网络（ip/vpn/wifi/public_ip）；系统（load/ram/swap/battery/disk）；
+  环境指示器（virtualenv/pyenv/rvm/nvm/…）。与 p10k 的段基本一一对应。
+- **git 状态**：仓库状态在后台线程计算，nixpkgs 规模的大仓库也不会阻塞提示符。
+- **主题语言 KDL v2**：`layout` / `segments` / `defaults` / `separators` /
+  `frame` / `vcs-remote-icons` / `mode` / `icon`，语法见
+  [docs/config-language.zh.md](docs/config-language.zh.md)。视觉不硬编码在
+  引擎里，换配置即换主题。
+- **三套图标**：`nerdfont` / `compatible` / `ascii`，按实际字体选用；locale 非
+  UTF-8 时自动降级为 `ascii`。顶层 `icon{}` 可按图标名逐档覆盖字符。
 
-如果需要一句话形容这个项目的价值，我会说
+## 安装
 
-> 它让 powerlevel10k 走向了 bash/fish 乃至任意shell
-
-- 多行主题 header：p10k 样式，按 KDL v2 配置生成，配置文件人类友好。
-- **instant header**：打开终端立刻见 prompt，不等 shell 慢悠悠加载配置。
-- **transient prompt**（zsh）：提交命令后 header 折叠成单行 `❯`（对应 p10k
-  `TRANSIENT_PROMPT`）；bash/fish/pwsh 没有 zle，此功能不生效。
-- **vi_mode / history / 宽松布局**：vi 模式指示、历史命令号、`prompt-add-newline`
-  空行等，跟随配置开合。
-- **80+ 内置段**：dir、vcs、status、time、command_execution_time、后台任务、
-  语言版本（go/rust/node/php/java/dotnet/swift/…）、云（aws/azure/gcloud/kube/
-  terraform）、网络（ip/vpn/wifi/public_ip）、系统（load/ram/swap/battery/disk）、
-  环境指示器（virtualenv/pyenv/rvm/nvm/…）……与 p10k 的段几乎一一对齐。
-- **git 状态**：Rust 实现的 gitstatus 内核（index 解析、`fstatat` 扫描、并行
-  分片、untracked cache）在后台线程算，nixpkgs 级大仓库也不卡 prompt。
-- 主题用 **KDL v2** 表达（[docs/config-language.md](docs/config-language.md)）：
-  `layout` / `segments` / `defaults` / `separators` / `frame` /
-  `vcs-remote-icons` / `mode` / `icon`。换配置即换主题，引擎不硬编码视觉。
-- **图标/字体模式** 提供三套图标：`nerdfont` / `compatible` / `ascii`，可根据实际字体选用。
-  locale 非 UTF-8（控制台/C locale）时自动降级
-  `ascii`，避免任何非 ASCII 都渲染成方块。顶层 `icon{}` 可按**图标名**逐档
-  覆盖字符。
-
-
-### 快速开始
-
-**请清除掉原本的 shell 主题，再行加载 p11k**
-
-p11k 并非传统的 shell 主题，如果不清除原有 shell 主题则会叠加显示。
+Nix flake：
 
 ```bash
-cargo build -p p11k-engine
-
-# 开发：直接启动主题引擎（让 P11K_USER_ZSHRC 指向一个去掉了主题的配置副本）。
-P11K_USER_ZSHRC=/path/to/your/rc target/debug/p11k --shell <bash/fish/pwsh/zsh>
-
-# 带主题文件（缺省用内置 lean 主题）。
-target/debug/p11k --shell zsh --config path/to/theme.kdl
+nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # 不安装，直接运行
+nix profile install github:Qaaxaap/powerlevel11k
 ```
 
-当"主题"用：在 shell 的 rc 里加一行 exec：
+作为 home-manager input：
+
+```nix
+inputs.p11k.url = "github:Qaaxaap/powerlevel11k";
+home.packages = [ inputs.p11k.packages.${pkgs.system}.default ];
+```
+
+Debian / Ubuntu，从 [release](https://github.com/Qaaxaap/powerlevel11k/releases)
+下载 `.deb`：
+
+```bash
+sudo apt install ./p11k_0.1.0_amd64.deb
+```
+
+其它发行版解压 tar 包。`bin/` 与 `share/` 可重定位：词条既在系统目录中查找，
+也在可执行文件旁查找。
+
+```bash
+tar xzf p11k-0.1.0-x86_64-linux.tar.gz -C ~/.local
+~/.local/p11k-0.1.0-x86_64-linux/bin/p11k --shell zsh
+```
+
+tar 包需要系统已安装 OpenSSL 3 运行库，常见发行版默认提供。
+
+从源码构建并安装：
+
+```bash
+cargo install --path crates/p11k-engine
+```
+
+需要 Rust 工具链。`msgfmt`（gettext）用于生成翻译，缺失时构建仍然成功，界面
+只是没有翻译。
+
+以上构建均为 x86_64 Linux。
+
+## 接入 shell
+
+若原先使用其它 shell 主题，必须先移除：p11k 不是传统 shell 主题，两者会叠加
+显示。
+
+在 shell 的 rc 文件中加入一行：
 
 ```bash
 # zsh
@@ -79,147 +103,89 @@ target/debug/p11k --shell zsh --config path/to/theme.kdl
 if not set -q P11K_ENGINE; exec /path/to/p11k --shell fish; end
 ```
 
-PowerShell 写进 `$PROFILE`（pwsh 没有 exec，引擎退出后再退出外层 pwsh）：
+PowerShell 写入 `$PROFILE`：
 
 ```powershell
 if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 ```
 
-`--shell` 建议显式给：从 zsh/bash 里起 pwsh 时 `$SHELL` 不会变，引擎也不看别的
-线索来认它。
+必须显式给出 `--shell`：从 zsh 或 bash 启动 pwsh 时 `$SHELL` 不会改变，引擎
+不使用其它线索判断。
 
-引擎 exec 覆盖启动 shell，继承其环境；内部 shell 会重新 source 用户配置
-（主题本身除外——引擎就是主题）。`P11K_ENGINE` 用于打破递归。
+引擎以 exec 覆盖启动它的 shell，并继承其环境；内层 shell 会重新加载用户配置
+（主题除外）。`P11K_ENGINE` 用于防止递归启动。
 
-### 安装
+## 主题配置
 
-用 Nix，直接从 flake 装：
+主题是 KDL v2 文件，语法见 [docs/config-language.zh.md](docs/config-language.zh.md)。
+`--config <path>` 指定主题文件，`--preset <name>` 选用内置主题
+（lean / classic / rainbow / pure），两者都不给时使用内置的 lean 主题。
 
-```bash
-nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # 先试不装
-nix profile install github:Qaaxaap/powerlevel11k
-```
-
-作为 home-manager input：
-
-```nix
-inputs.p11k.url = "github:Qaaxaap/powerlevel11k";
-# 然后在某个 module 里：
-home.packages = [ inputs.p11k.packages.${pkgs.system}.default ];
-```
-
-Debian / Ubuntu 用挂在 [release](https://github.com/Qaaxaap/powerlevel11k/releases)
-上的 `.deb`：
+`p11k reload` 让正在运行的会话重新读取主题文件，无需重开 shell：
 
 ```bash
-sudo apt install ./p11k_0.1.0_amd64.deb
-```
-
-其它发行版解压 tar 包即可。`bin/` 与 `share/` 是可重定位的——词条既会在系统
-目录找，也会在可执行文件旁边找——所以解压到哪都能跑：
-
-```bash
-tar xzf p11k-0.1.0-x86_64-linux.tar.gz -C ~/.local
-~/.local/p11k-0.1.0-x86_64-linux/bin/p11k --shell zsh
-```
-
-不用 Nix，从源码装：
-
-```bash
-cargo install --path crates/p11k-engine
-```
-
-构建时需要 `msgfmt`（gettext）来编翻译；运行时要被代理的那个 shell，tar 包
-与 `.deb` 还需要 `libssl3`。包里带 `p11k` 和 `p11k-d`（可独立替换
-gitstatusd 的守护进程）；`p11k` 本身不需要那个 daemon。目前只支持 Linux：
-git index 扫描仍然按 Linux 的 `stat` 语义写。
-
-### 重载主题
-
-`p11k reload` 让已运行的会话重新读取主题文件：
-
-```bash
-$EDITOR ~/.config/p11k/p11k.kdl
+$EDITOR path/to/theme.kdl
 p11k reload
 ```
 
-引擎会重绘头部并重启 git worker，所以 `vcs` 相关属性也会跟着生效。文件解析
-失败时由该命令报错，当前主题保持不变。输入行宽度在引擎启动时就固定了，所以
-换了宽度的 `prompt_char` 会被忽略（引擎日志里有记录）；其余的颜色、布局、
-段、分隔符、边框都立即生效。
+引擎重绘头部并重启 git worker，`vcs` 相关属性同样生效。文件解析失败时由该
+命令报错，当前主题保持不变。输入行的宽度在引擎启动时固定，改变了宽度的
+`prompt_char` 会被忽略并在引擎日志中记录；颜色、布局、段、分隔符与边框立即
+生效。
 
-### 开发环境
+## 界面语言
 
-构建与测试需要的东西全部钉在 `flake.nix` 里：
-
-```bash
-nix develop        # rust（cargo/clippy/rustfmt）+ msgfmt + zsh + zh_CN.UTF-8
-cargo test --all
-nix build          # 两个二进制：p11k 与 p11k-d
-```
-
-devShell 同时导出 `LOCALE_ARCHIVE`：否则 `setlocale("zh_CN.UTF-8")` 会失败、
-i18n 的翻译测试只能跳过——跳过的测试等于没测。CI 跑的就是这几条
-`nix develop` 命令，不存在另一套需要同步的 CI 环境。
-
-### 语言
-
-引擎本身和 `p11k configure` 的用户可见文案走 gettext。英文是源语言：代码里的
-msgid 就是英文，找不到翻译时原样输出。翻译放在
-`crates/p11k-engine/po/<lang>.po`，由 `build.rs` 用 `msgfmt` 编成 `.mo`
-（没有 `msgfmt` 时只警告不报错，编出的程序就是英文的）。语言按标准环境变量取
-（`LANG`、`LC_ALL`、`LANGUAGE`）：
+界面文案支持中文与英文，更多翻译欢迎您贡献。按标准环境变量（`LANG`、`LC_ALL`、`LANGUAGE`）选择，
+默认英文：
 
 ```bash
-LANG=zh_CN.UTF-8 target/debug/p11k --shell zsh   # 中文界面
-target/debug/p11k --shell zsh                    # 英文（默认）
+LANG=zh_CN.UTF-8 p11k --shell zsh   # 中文界面
+p11k --shell zsh                    # 英文（默认）
 ```
 
-`P11K_LOCALEDIR` 可覆盖翻译目录（缺省用构建期写进二进制的那个），例如装到系统
-后用 `P11K_LOCALEDIR=/usr/share/locale`。加一门语言就是加一个文件再重新构建：
-把 `po/zh_CN.po` 复制成 `po/<lang>.po`，改 `msgstr`，`cargo build -p p11k-engine`。
-词条与代码的同步由 `tools/i18n.sh extract|update` 负责，源码、`po/p11k.pot`、
-各语言词条三者只要对不上，单元测试就会失败。
+`P11K_LOCALEDIR` 可指定词条目录，通过安装包或 flake 安装时无需设置。
 
-## compat/p10k：gitstatusd 即插即用
+## compat/p10k：替换 gitstatusd
 
-p10k 的 zsh 渲染是十年打磨，不该重写。`compat/p10k` 分支 vendor 原版 p10k
-主题，只替换内核：`p11k-d`（Rust 守护进程）按 gitstatusd 线上协议逐字节
-应答，给原版 `gitstatus.plugin.zsh` 当后端：
+`compat/p10k` 分支把原版 p10k 主题 vendor 进来，只替换内核：`p11k-d` 按 gitstatusd 线上协议逐字节应答，可直接作为原版 `gitstatus.plugin.zsh` 的后端。
 
-```zsh
+```bash
 export GITSTATUS_DAEMON=/path/to/p11k-d
 ```
 
-配置、外观、status、vcs 与 p10k 完全一致。热 git 请求在 nixpkgs 级仓库
-（54k 文件 / 38k 目录，22 核）约 100ms，C++ 原版约 65ms（并行扫描修复前
-约 320ms）。
+配置、外观、status 与 vcs 与 p10k 完全一致。
+
+该分支不是主要开发方向，主线是 `main` 上的引擎，但仍会保证维护。
 
 ## 状态与路线
 
 已完成：
 
-- gitstatusd 兼容内核（v1.5.5 协议）与性能核心：index 解析、`fstatat`
-  扫描、并行分片、untracked cache
-- 引擎占位协议：多行 header 几何自洽，zsh/bash/fish/pwsh 四 shell
+- gitstatusd 兼容内核（v1.5.5 协议）与性能核心：index 解析、`fstatat` 扫描、
+  并行分片、untracked cache
+- 占位协议：多行头部几何自洽，覆盖 zsh / bash / fish / pwsh
 - instant / transient prompt、vi_mode、history、宽松布局
-- 80+ 段与 KDL 主题语言、图标三档 mode 与 `icon{}` 覆盖
+- 80+ 段、KDL 主题语言、三档图标与 `icon{}` 覆盖
 - `p11k configure` 向导、gettext 词条（zh_CN）、CI
-- `p11k reload`，以及截止到扩展状态（`OK_PIPE` / `ERROR_PIPE` /
-  `ERROR_SIGNAL`）与 `VCS_DISABLED_WORKDIR_PATTERN` 的 p10k 功能
-- Nix flake 打包：`nix run` / `nix profile install` / home-manager input，
-  词条随包安装，版本号从 `Cargo.toml` 读
+- `p11k reload`；p10k 功能已对齐至扩展状态（`OK_PIPE` / `ERROR_PIPE` /
+  `ERROR_SIGNAL`）与 `VCS_DISABLED_WORKDIR_PATTERN`
+- 发布产物：Nix flake、`.deb` 与 tar 包
 
 待办：
 
-- p10k 还没搬过来的开关，且都是非默认取值才有差别的：`ICON_PADDING=moderate`、
+- p10k 尚未实现的开关，均只在非默认取值下才有差异：`ICON_PADDING=moderate`、
   显式的 `ICON_BEFORE_CONTENT` 覆盖、`TRANSIENT_PROMPT=same-dir`
-  （`transient-prompt #true` 相当于 p10k 的 `always`）、`LEGACY_ICON_SPACING`。
-  按 p10k 默认设置渲染时已经一致。
-  `DIR_MAX_LENGTH` 与 `DIR_MIN_COMMAND_COLUMNS(_PCT)` 做不到：它们要读 zle
-  的 buffer，而引擎根本看不到。
+  （`transient-prompt #true` 等价于 p10k 的 `always`）、`LEGACY_ICON_SPACING`。
+  按 p10k 默认配置渲染时已经一致。`DIR_MAX_LENGTH` 与
+  `DIR_MIN_COMMAND_COLUMNS(_PCT)` 无法实现：它们需要读取 zle 的 buffer，而
+  引擎看不到。
 - macOS 支持
-- daemon / 引擎的长期维护与加固（这正是 p11k 存在的意义）
+- daemon 与引擎的长期维护和加固
+
+## 参与开发
+
+构建与测试环境、提交规范、翻译流程与发布流程见
+[CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)。
 
 ## 许可证
 
