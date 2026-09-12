@@ -196,7 +196,7 @@ fn reload_engine() -> anyhow::Result<()> {
     if unsafe { libc::kill(pid, libc::SIGUSR1) } != 0 {
         eprintln!(
             "p11k: {}",
-            t("cannot signal the engine (has this session already exited?)")
+            t("cannot signal the engine (the session may have exited)")
         );
         process::exit(1);
     }

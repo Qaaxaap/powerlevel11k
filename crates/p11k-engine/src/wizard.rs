@@ -862,7 +862,7 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
     // p10k: `New config: <path>.`
     line(out, &format!("{} {p}.", t("New config:")))?;
     line(out, "")?;
-    line(out, &t("Add the engine to your shell rc (pick yours):"))?;
+    line(out, &t("Add one of these to your shell rc:"))?;
     line(
         out,
         &format!("  zsh:  [[ -z \"$P11K_ENGINE\" ]] && exec {exe} --shell zsh --config {p}"),

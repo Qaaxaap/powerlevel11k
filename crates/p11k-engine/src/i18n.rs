@@ -258,7 +258,7 @@ mod tests {
 
         assert_eq!(gettext("Yes."), "是。");
         assert_eq!(gettext("Prompt Style"), "提示符风格");
-        assert_eq!(gettext("Restart from the beginning."), "从头再来。");
+        assert_eq!(gettext("Restart from the beginning."), "重新开始。");
         // A msgid with no catalog entry is returned unchanged (English is the default language).
         let unknown = String::from("no such msgid");
         assert_eq!(gettext(&unknown), unknown);
