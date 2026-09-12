@@ -1,9 +1,33 @@
 # Contributing to powerlevel11k
 
-Thanks for the interest. The project is in early development; these rules
-are deliberately small so they can grow with the codebase. p11k's comments
-and scaffolding are written with AI assistance, which makes the review
-rules below more important, not less.
+[中文](CONTRIBUTING.zh.md)
+
+Thanks for your interest.
+
+The project is in early development. These rules are deliberately small and
+will grow with the codebase.
+
+## Development environment
+
+Everything the build and the tests need is pinned in `flake.nix`:
+
+```bash
+nix develop        # rust (cargo/clippy/rustfmt) + msgfmt + zsh + zh_CN.UTF-8
+cargo test --all
+nix build          # the binaries: p11k and p11k-d
+```
+
+The devShell exports `LOCALE_ARCHIVE`; without it `setlocale("zh_CN.UTF-8")`
+fails and the i18n test has to skip. CI runs exactly these `nix develop`
+commands, so there is no second environment to keep in sync — plus one check
+that the nix package still builds and carries its catalogs.
+
+To run the engine straight from a build:
+
+```bash
+P11K_USER_ZSHRC=/path/to/your/rc target/debug/p11k --shell <bash/fish/pwsh/zsh>
+target/debug/p11k --shell zsh --config path/to/theme.kdl
+```
 
 ## Commit conventions
 
@@ -11,196 +35,103 @@ rules below more important, not less.
   (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, ...).
   A `!` marks breaking changes.
 - Commit messages in English.
-- One commit = one logical change. Do not bundle unrelated work. A commit
-  that mixes a refactor with a feature will be asked to be split.
-- The subject line is short (≤72 chars) and completes the sentence
-  "if applied, this commit will ...". The body explains *why*, not what the
-  diff shows.
+- One commit carries one logical change; unrelated work must not be bundled.
+  A commit mixing a refactor with a feature will be asked to be split.
+- The subject is at most 72 characters and completes the sentence
+  "if applied, this commit will ...". The body states *why*, and does not
+  restate the diff.
 
 ## Code style
 
-- `cargo fmt` before every commit; CI will check it.
-- `cargo clippy --all-targets -- -D warnings` must pass.
-- No `unsafe` unless there is a comment explaining why and a benchmark or
-  test backing it up. The git status core may need `unsafe` for raw
-  `fstatat`/`MetadataExt` access; that is the sanctioned exception, not a
+- Run `cargo fmt --all` before every commit; CI checks the formatting.
+- `cargo clippy --all-targets --locked -- -D warnings` and
+  `cargo test --all --locked` must pass.
+- `unsafe` is not permitted unless a comment justifies it and a test or
+  benchmark backs it up. The git status core may need it for direct
+  `fstatat`/`MetadataExt` access; that is a sanctioned exception, not a
   precedent for the rest of the crate.
-- Public API needs doc comments. The gitstatus protocol code must document
-  the wire format next to the parsing code, because byte-level compatibility
-  with the original daemon is a hard requirement.
+- Public API requires doc comments. The gitstatus protocol code must document
+  the wire format next to the parsing code: byte-level compatibility with the
+  original daemon is a hard requirement.
 
 ## Config language
 
-The theme config language has its own spec, kept in sync with the engine:
-[docs/config-language.md](docs/config-language.md). Follow it when
-changing config parsing or rendering.
+The theme config language has its own spec, maintained in step with the
+engine: [docs/config-language.md](docs/config-language.md). Changing config
+parsing or rendering must follow it.
 
 ## Translations
 
-User-facing text is gettext: English msgids in the code, catalogs in
-`crates/p11k-engine/po/`. When you add, remove or reword user-facing text:
+User-facing text uses gettext: English msgids in the code, catalogs in
+`crates/p11k-engine/po/`. When adding, removing or rewording user-facing text:
 
 ```bash
 tools/i18n.sh extract   # xgettext -> po/p11k.pot
 tools/i18n.sh update    # msgmerge the new entries into every po/*.po
 ```
 
-then fill in the new `msgstr`s. Two rules the test suite enforces:
+then fill in the new `msgstr`s. Three rules are enforced by the test suite:
 
-- Text that is translated right where it is written goes through
-  `t("…")`; text that is collected and translated later (wizard question
-  titles and options) is wrapped in `msgid("…")` so the extractor sees it.
-  Both must be plain string literals.
+- Text translated where it is written uses `t("…")`; text collected and
+  translated later (wizard question titles and options) must be wrapped in
+  `msgid("…")` so the extractor sees it. Both must be plain string literals.
 - `cargo test -p p11k-engine` fails if the sources, `po/p11k.pot` and the
-  catalogs disagree in either direction, so a forgotten extract/update or
-  a stale entry cannot slip through.
+  catalogs disagree in either direction. A missing extract/update or a stale
+  entry cannot pass.
+- Adding a language: copy `po/zh_CN.po` to `po/<lang>.po`, translate the
+  `msgstr`s and rebuild. The nix package compiles everything under `po/`, so
+  `flake.nix` needs no change.
 
 ## AI policy
 
-Production code in this repository is written by humans. The maintainer
-implements everything by hand, working from comments that are detailed
-enough to serve as an implementation spec — more detailed than the
-documentation itself. Once the implementation lands, those comments may be
-simplified back into ordinary comments.
+This repository embraces AI, on the following terms. Ignoring them may result
+in restrictions on, or a ban from, contributing to this repository.
 
-AI assistance is fine for two things, and neither requires an AI
-disclosure:
-
-- writing comments, including the detailed implementation guides above;
-- setting up scaffolding — module layout, function and type signatures,
-  `todo!()` stubs — without implementations.
-
-Anything else generated by AI, production code in particular, must be
-marked as AI-assisted in the PR description. Submitting such code is a
-statement that you have fully understood every line of it and take
-responsibility for it. Unreviewed machine output is not acceptable.
+- Contributors must understand, and take responsibility for, every line they
+  submit. Pointless or harmful submissions are not allowed.
+- Understanding the code is not enough: developing with generative AI without
+  supervision is discouraged. Submissions with obvious defects, or that do not
+  match what they claim to do, will be rejected.
 
 ## Performance contract
 
-p11k exists because of speed. Pull requests that touch these paths must
-include before/after numbers from the benchmark suite:
+p11k exists for its speed. A change touching these paths must include
+before/after measurements:
 
-- git index parsing and dirty-state detection (compared against the C++
-  gitstatusd baseline);
+- git index parsing and dirty-state detection (against the C++ gitstatusd
+  baseline);
 - the render loop and anything on the precmd hot path.
 
-A PR without numbers on these paths will be held until numbers exist.
+The benchmark suite does not exist yet (`p11k-d`'s benchmarks are still
+`todo!()`), so state how you measured and on what machine. A change without
+numbers on these paths will be held until they are provided.
+
+## Releases
+
+A `v*` tag publishes: the workflow builds `p11k` and `p11k-d` and attaches a
+tarball and a `.deb` to that tag's GitHub release.
+
+The tag must match `[workspace.package] version` in `Cargo.toml`; the workflow
+checks this and fails otherwise.
 
 ## Reporting issues
 
-Be specific. A good report contains: OS and shell versions (`zsh --version`),
-p11k version, terminal emulator, and the smallest `.p10k.zsh`/config that
-reproduces the problem. Reports that are configuration questions will be
-redirected to Discussions; p10k's history is why this rule exists.
+Reports must be specific. A good report contains: OS and shell versions
+(`zsh --version`), the p11k version, the terminal emulator, and the smallest
+config that reproduces the problem. Configuration questions will be redirected
+to Discussions.
 
 ## Pull requests
 
-1. Fork, branch, commit per the rules above.
-2. One PR = one change. Include the motivation in the description and, when
-   relevant, benchmark numbers.
-3. Test your patch locally at least once before submitting. A patch that
-   does not compile or cannot run wastes review time; repeated low-quality
+1. Fork, branch, and commit per the rules above.
+2. One PR carries one change. State the motivation in the description and, when
+   relevant, the measurements.
+3. Test the patch locally at least once before submitting. A patch that does
+   not compile or cannot run wastes review time; repeated low-quality
    submissions may lead to contribution restrictions.
 4. Follow the [AI policy](#ai-policy) above.
-5. By submitting a PR you license your contribution under LGPL-3.0-or-later.
+5. Submitting a PR licenses the contribution under LGPL-3.0-or-later.
 
 ## License
 
-Everything in this repository is LGPL-3.0-or-later, including contributions.
-
----
-
-# 为 powerlevel11k 做贡献
-
-感谢关注。项目处于早期开发阶段，以下规则刻意保持精简，随代码库一起
-成长。p11k 的注释与框架由 AI 辅助编写，这使得下面的审查规则更重要，
-而不是更宽松。
-
-## 提交约定
-
-- [约定式提交](https://www.conventionalcommits.org/zh-hans/v1.0.0/)
-  （`feat:`、`fix:`、`chore:`、`docs:`、`refactor:`、`test:`、`perf:`
-  等），破坏性变更用 `!` 标记。
-- 提交信息用英文。
-- 一个提交只做一件事，不要把无关改动混在一起。把重构和功能塞进同
-  一个提交的 PR 会被要求拆分。
-- 标题简短（≤72 字符），能接在"应用此提交后将会……"后面；正文解释
-  *为什么*，而不是复述 diff。
-
-## 代码风格
-
-- 每次提交前跑 `cargo fmt`，CI 会检查。
-- `cargo clippy --all-targets -- -D warnings` 必须通过。
-- 除非有注释说明理由并有测试或基准支撑，否则不用 `unsafe`。git 状态
-  核心可能因裸 `fstatat`/`MetadataExt` 访问而需要 `unsafe`——那是被
-  允许的例外，不是其他代码效仿的先例。
-- 公开 API 需要文档注释。gitstatus 协议代码必须在解析代码旁写明线上
-  格式，因为与原版守护进程的字节级兼容是硬性要求。
-
-## 配置语言
-
-主题配置语言规范在独立文档，随引擎同步维护:
-[docs/config-language.md](docs/config-language.md)。改动配置解析或渲染时遵守。
-
-## 文案翻译
-
-用户可见文案走 gettext：代码里写英文 msgid，词条放在
-`crates/p11k-engine/po/`。新增/删除/改写用户可见文案时：
-
-```bash
-tools/i18n.sh extract   # xgettext → po/p11k.pot
-tools/i18n.sh update    # msgmerge 把新条目并进每个 po/*.po
-```
-
-再补上新条目的 `msgstr`。有两条由测试兜底的规矩：
-
-- 就地翻译的文案写 `t("…")`；先收集、稍后统一翻译的（wizard 的问题标题
-  与选项）包一层 `msgid("…")`，好让提取器看得见。两者都必须是纯字符串
-  字面量。
-- 源码、`po/p11k.pot`、各语言词条三者只要有一处对不上，
-  `cargo test -p p11k-engine` 就失败——忘了 extract/update 或留下过时条目
-  都混不过去。
-
-## AI 政策
-
-本仓库的生产代码由人编写。维护者以注释为实现规格手工写代码，这些注释
-详细到比文档本身还细，足以指导实现。实现落地后，可以再把这些注释简化
-回常规注释的样子。
-
-AI 辅助允许用于两类事情，且均无需标明 AI：
-
-- 写注释，包括上述详细的实现指南；
-- 搭建框架——模块布局、函数与类型签名、`todo!()` 桩——不含实现。
-
-除此之外由 AI 生成的内容（尤其是生产代码），必须在 PR 描述中声明
-AI 辅助。提交此类代码即表明：你已完全理解其中的每一行，并为之负责。
-未经审查的机器输出不可接受。
-
-## 性能契约
-
-p11k 存在的理由是快。触及以下路径的 PR 必须附上基准套件的改动前后
-数据：
-
-- git index 解析与脏状态检测（以 C++ 版 gitstatusd 为基线对比）；
-- 渲染循环及 precmd 热路径上的任何改动。
-
-没有数据的 PR 会被扣住，直到数据补齐。
-
-## 报告问题
-
-请具体。一份好的报告包含：操作系统与 shell 版本（`zsh --version`）、
-p11k 版本、终端模拟器，以及能复现问题的最小 `.p10k.zsh`/配置。配置类
-提问会被转去 Discussions——这条规则源于 p10k 的历史教训。
-
-## Pull Request 流程
-
-1. Fork、建分支、按上述约定提交。
-2. 一个 PR 只做一件事。描述里写清动机，涉及性能时附基准数据。
-3. 提交前至少在本地测试一次补丁。不能编译、不能运行的补丁浪费审查
-   时间；持续提交低质量补丁可能导致贡献受限。
-4. 遵守上述 [AI 政策](#ai-政策)。
-5. 提交 PR 即表示你同意贡献以 LGPL-3.0-or-later 授权。
-
-## 许可证
-
-本仓库所有内容（包括贡献）均为 LGPL-3.0-or-later。
+Everything in this repository, contributions included, is LGPL-3.0-or-later.
