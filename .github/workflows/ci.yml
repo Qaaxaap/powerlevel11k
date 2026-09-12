@@ -30,3 +30,13 @@ jobs:
 
       - name: Test
         run: nix develop --command cargo test --all --locked
+
+      - name: Package
+        run: |
+          out=$(nix build --no-link --print-out-paths)
+          for bin in p11k p11k-d; do
+            test -x "$out/bin/$bin"
+          done
+          test -f "$out/share/locale/zh_CN/LC_MESSAGES/p11k.mo"
+          grep -aq "$out/share/locale" "$out/bin/p11k"
+          "$out/bin/p11k" --version
