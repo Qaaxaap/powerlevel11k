@@ -7,6 +7,7 @@
 //! The catalog directory defaults to the build-time `$OUT_DIR/locale` and can be
 //! overridden with `P11K_LOCALEDIR` (`/usr/share/locale` for a system install).
 
+use std::path::{Path, PathBuf};
 use std::sync::Once;
 
 use gettextrs::{LocaleCategory, bindtextdomain, gettext, setlocale, textdomain};
@@ -18,11 +19,44 @@ pub fn init() {
     INIT.call_once(|| {
         // An empty string means: take the locale from the environment.
         let _ = setlocale(LocaleCategory::LcAll, "");
-        let dir =
-            std::env::var("P11K_LOCALEDIR").unwrap_or_else(|_| env!("P11K_LOCALEDIR").to_string());
-        let _ = bindtextdomain("p11k", dir);
+        let _ = bindtextdomain("p11k", catalog_dir());
         let _ = textdomain("p11k");
     });
+}
+
+/// Where the catalogs are. `P11K_LOCALEDIR` wins, then the directory baked in at build time.
+///
+/// A release binary is built for `/usr/share/locale`, which exists on the target machine
+/// whether or not p11k was installed there — so an empty directory has to fall through to
+/// the catalogs shipped beside the executable (`<prefix>/share/locale`), which is what an
+/// unpacked tarball looks like. Finding nothing just means no translation.
+fn catalog_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("P11K_LOCALEDIR") {
+        return PathBuf::from(dir);
+    }
+    let compiled = PathBuf::from(env!("P11K_LOCALEDIR"));
+    if has_catalog(&compiled) {
+        return compiled;
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(beside) = exe.parent().and_then(Path::parent)
+    {
+        let beside = beside.join("share/locale");
+        if has_catalog(&beside) {
+            return beside;
+        }
+    }
+    compiled
+}
+
+/// Whether `dir` holds a `p11k.mo` for at least one language.
+fn has_catalog(dir: &Path) -> bool {
+    let Ok(langs) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    langs
+        .flatten()
+        .any(|lang| lang.path().join("LC_MESSAGES/p11k.mo").is_file())
 }
 
 /// Translate one msgid. Returns the original text when no translation exists.
@@ -44,6 +78,20 @@ pub const fn msgid(s: &'static str) -> &'static str {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn catalog_detection_needs_the_mo_file() {
+        // The fallback must not accept a directory that merely exists: `/usr/share/locale`
+        // is present on most systems and holds no p11k catalog.
+        let root = std::env::temp_dir().join(format!("p11k-catalog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!has_catalog(&root), "a missing directory has no catalog");
+        std::fs::create_dir_all(root.join("zh_CN/LC_MESSAGES")).unwrap();
+        assert!(!has_catalog(&root), "an empty language directory has none");
+        std::fs::write(root.join("zh_CN/LC_MESSAGES/p11k.mo"), b"").unwrap();
+        assert!(has_catalog(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// Source files carrying text (the same set tools/i18n.sh scans; i18n.rs itself
     /// does not count, it holds only wrappers, no text).
