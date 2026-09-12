@@ -532,6 +532,11 @@ fn print_help() {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Rust starts every program with SIGPIPE ignored, so a write to a closed pipe comes back
+    // as EPIPE and `println!` panics: `p11k --help | head -3` printed a backtrace instead of
+    // just stopping. Dying on the signal is what every other Unix tool does, and the engine's
+    // own stdout is a terminal, which is not affected either way.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     // Text is translated by locale (English by default; Chinese in po/zh_CN.po).
     i18n::init();
     // `--version`/`--help` are handled before touching any terminal state so they work in
