@@ -14,7 +14,8 @@
 
 use std::io::{self, Write};
 
-/// Information the prompt window needs, parsed from the announcement line (`h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`).
+/// Information the prompt window needs, parsed from the announcement line
+/// (`h\t<exit>\t<cwd>[\t<jobs>][\t<history>][\t<pipestatus>]`).
 pub struct HeaderInfo {
     pub exit_code: Option<i32>,
     pub cwd: String,
@@ -25,6 +26,10 @@ pub struct HeaderInfo {
     /// `HistoryInfo.Id` (also a monotonically increasing session number); bash/fish
     /// have no such column and use 0.
     pub history: usize,
+    /// Exit code of every command in the pipeline (`$pipestatus` in zsh/fish,
+    /// `$PIPESTATUS` in bash), comma-separated on the wire. Empty when the shell has
+    /// none (pwsh). Drives the extended status states, see `prompt_state`.
+    pub pipestatus: Vec<i32>,
 }
 
 /// git status of the current directory (computed by the p11k-gitstatus API, drawn with the header).

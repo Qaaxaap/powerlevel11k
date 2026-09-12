@@ -222,6 +222,11 @@
   可为任意字符串，纯字面（不做环境变量展开）；`state ERROR`（上次退出码
   非 0）可覆盖字符与样式。各态的提示符必须等宽（宽度启动期定死，占位符
   协议依赖它）；不等宽 → 引擎报错，进入干净 shell 而不是加载主题。
+  扩展状态对齐 p10k 的 `STATUS_EXTENDED_STATES`，判据来自管道的各段退出码：
+  `OK_PIPE`（前段失败、最后一段成功）、`ERROR_PIPE`（管道失败）、
+  `ERROR_SIGNAL`（被信号杀死，即退出码 > 128 且不是管道）。配置里没声明的
+  状态回退到 `ERROR`，`OK_PIPE` 回退到无状态，所以只认 `ERROR` 的配置不受
+  影响。各 shell 上报 `$pipestatus`；pwsh 没有这一列，因此不会进入这三个状态。
 - `os` — 发行版徽标。
 - `context` — SSH 下 `user@host`，本地 root 显示 `user`，否则隐藏。
 - `user` — 当前用户名。

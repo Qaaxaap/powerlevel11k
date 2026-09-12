@@ -278,6 +278,14 @@ What the built-in segments render:
   glyph and style. All states' glyphs must share one width (prompt
   geometry is fixed at startup); on mismatch the engine reports the
   error and drops into a clean shell instead of theming.
+  Extended states follow p10k's `STATUS_EXTENDED_STATES`, driven by the
+  pipeline's exit codes: `OK_PIPE` (an earlier stage failed, the last one
+  succeeded), `ERROR_PIPE` (the pipeline failed), `ERROR_SIGNAL` (killed by
+  a signal, i.e. exit code above 128, and not a pipeline). A state the
+  config does not declare falls back to `ERROR`, and `OK_PIPE` falls back to
+  no state, so a config that only knows `ERROR` is unaffected. The shells
+  report `$pipestatus`; pwsh has no such column, so it never reaches these
+  three states.
 - `os` — distro badge.
 - `context` — `user@host` in SSH, `user` as local root, hidden otherwise.
 - `user` — current username.

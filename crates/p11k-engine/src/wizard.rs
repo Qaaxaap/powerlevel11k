@@ -205,6 +205,7 @@ fn sample_info() -> HeaderInfo {
         exec_seconds: 3.5,
         jobs: 1,
         history: 0,
+        pipestatus: Vec::new(),
     }
 }
 

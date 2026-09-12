@@ -170,10 +170,12 @@ _p11k_pwd=$PWD
 
 _p11k_precmd() {
   _p11k_status=$?
+  # Capture $pipestatus right away: any command below resets it.
+  _p11k_pipes="${pipestatus}"
   _p11k_pwd=$PWD
   # Used to restore PROMPT after the transient fold
   PROMPT='__'
-  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD" >> "$P11K_ANNOUNCE"
+  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
 }
@@ -286,7 +288,9 @@ PS1='__'
 # then wait for the engine ack before returning.
 _p11k_prompt_command() {
   local _st=$?
-  printf 'h\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" >> "$P11K_ANNOUNCE"
+  # Capture $PIPESTATUS right away: any command below resets it.
+  local _pipes="${PIPESTATUS[*]}"
+  printf 'h\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
 }
@@ -332,6 +336,8 @@ set -g _p11k_last_rows $LINES
 # - normal prompt: announce `h`, then wait for the engine ack before returning.
 function fish_prompt
     set -l _st $status
+    # Capture $pipestatus right away: any command below resets it.
+    set -l _pipes "$pipestatus"
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
@@ -339,7 +345,7 @@ function fish_prompt
         printf '__'
         return
     end
-    printf 'h\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) >> $P11K_ANNOUNCE
+    printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
     end
@@ -359,6 +365,8 @@ set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 function fish_prompt
     set -l _st $status
+    # Capture $pipestatus right away: any command below resets it.
+    set -l _pipes "$pipestatus"
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
@@ -366,7 +374,7 @@ function fish_prompt
         printf '__'
         return
     end
-    printf 'h\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) >> $P11K_ANNOUNCE
+    printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
     end
@@ -754,6 +762,7 @@ fn main() -> anyhow::Result<()> {
         exec_seconds: 0.0,
         jobs: 0,
         history: 0,
+        pipestatus: Vec::new(),
     };
     // The return value is the display width of each line: if the terminal is narrower than
     // the pty when drawing (a fresh window whose size has not synced yet), content wraps and
@@ -953,11 +962,7 @@ fn main() -> anyhow::Result<()> {
                         vcs,
                     )?;
                     // The prefix is generated dynamically from the current exit code.
-                    let text = crate::render::input_prefix(
-                        &config,
-                        current_info.as_ref().and_then(|i| i.exit_code),
-                    )
-                    .text;
+                    let text = crate::render::input_prefix(&config, current_info.as_ref()).text;
                     theme::render_prompt(&mut stdout, &text)?;
                     stdout.flush()?;
                     at_prompt = true; // input line ready
@@ -1091,11 +1096,8 @@ fn main() -> anyhow::Result<()> {
                                 info,
                                 vcs,
                             )?;
-                            let text = crate::render::input_prefix(
-                                &config,
-                                current_info.as_ref().and_then(|i| i.exit_code),
-                            )
-                            .text;
+                            let text =
+                                crate::render::input_prefix(&config, current_info.as_ref()).text;
                             theme::render_prompt(&mut stdout, &text)?;
                             stdout.write_all(&placeholder_buf[end..])?;
                             placeholder_buf.clear();
@@ -1150,11 +1152,7 @@ fn main() -> anyhow::Result<()> {
             && std::time::Instant::now() >= deadline
         {
             resize_prompt_at = None;
-            let text = crate::render::input_prefix(
-                &config,
-                current_info.as_ref().and_then(|i| i.exit_code),
-            )
-            .text;
+            let text = crate::render::input_prefix(&config, current_info.as_ref()).text;
             theme::render_prompt(&mut stdout, &text)?;
             stdout.flush()?;
             log("deferred prompt drawn");
@@ -1295,12 +1293,24 @@ fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
                     .next()
                     .and_then(|s| s.trim().parse::<usize>().ok())
                     .unwrap_or(0);
+                // `$pipestatus` as sent by the shell, space- or comma-separated; absent
+                // for shells without one (pwsh) and for shells whose column is empty.
+                let pipestatus = parts
+                    .next()
+                    .map(|s| {
+                        s.split(|c: char| c == ',' || c.is_whitespace())
+                            .filter(|p| !p.is_empty())
+                            .filter_map(|p| p.parse::<i32>().ok())
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 out.push(AnnMsg::Header(HeaderInfo {
                     exit_code: code,
                     cwd,
                     exec_seconds: 0.0, // filled in by the main loop from last_enter
                     jobs,
                     history,
+                    pipestatus,
                 }));
             }
             Some("p") => out.push(AnnMsg::Prompt),

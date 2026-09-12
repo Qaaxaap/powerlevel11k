@@ -47,7 +47,11 @@ fn vi_state() -> Option<&'static str> {
 /// prompt_char state. vi mode wins (p10k
 /// `PROMPT_CHAR_{OK,ERROR}_{VIINS,VICMD,VIVIS,VIOWR}`)—but only when a char is really
 /// configured for that state; otherwise the exit code decides: non-zero → ERROR, else normal.
-fn prompt_state(config: &Config, exit_code: Option<i32>) -> Option<&'static str> {
+/// State for the input-line prefix: the vi mode's own state when it has one, otherwise the
+/// status state. Extended states mirror p10k's `STATUS_EXTENDED_STATES`: a failing pipeline
+/// is `ERROR_PIPE`, death by signal is `ERROR_SIGNAL`, and a pipeline whose last stage
+/// succeeded while an earlier one failed is `OK_PIPE`.
+fn prompt_state(config: &Config, info: Option<&HeaderInfo>) -> Option<&'static str> {
     if let Some(st) = vi_state() {
         let configured = config
             .segment("prompt_char")
@@ -59,10 +63,38 @@ fn prompt_state(config: &Config, exit_code: Option<i32>) -> Option<&'static str>
             return Some(st);
         }
     }
-    match exit_code {
-        Some(0) | None => None,
-        Some(_) => Some("ERROR"),
+    let info = info?;
+    let Some(code) = info.exit_code else {
+        return None; // first prompt: nothing has run yet
+    };
+    let pipes = &info.pipestatus;
+    let state = if code == 0 {
+        if pipes.len() > 1 && pipes.iter().any(|&c| c != 0) {
+            "OK_PIPE"
+        } else {
+            return None;
+        }
+    } else if pipes.len() > 1 {
+        "ERROR_PIPE"
+    } else if code > 128 {
+        "ERROR_SIGNAL"
+    } else {
+        "ERROR"
+    };
+    // p10k gives every state its own toggle (`STATUS_ERROR_PIPE` and friends). Here a state
+    // the config defines wins; otherwise fall back to the plain failure state.
+    if segment_has_state(config, state) {
+        Some(state)
+    } else if state.starts_with("ERROR") {
+        Some("ERROR")
+    } else {
+        None
     }
+}
+
+/// Whether the `prompt_char` segment declares this state at all.
+fn segment_has_state(config: &Config, state: &str) -> bool {
+    config.segment("prompt_char").states.contains_key(state)
 }
 
 /// Input line prefix text for a state (frame last_prefix + prompt_char char + space).
@@ -86,8 +118,8 @@ fn prefix_width(config: &Config, state: Option<&str>) -> usize {
 /// Computes the input line prefix (e.g. `╰─❯`). `last_prefix` (frame style) and the prompt
 /// char (prompt_char style, entering ERROR state from `exit_code`) are colored; `width` is
 /// the ANSI-stripped display width.
-pub fn input_prefix(config: &Config, exit_code: Option<i32>) -> InputPrefix {
-    let state = prompt_state(config, exit_code);
+pub fn input_prefix(config: &Config, info: Option<&HeaderInfo>) -> InputPrefix {
+    let state = prompt_state(config, info);
     let text = prefix_text(config, state);
     let width = display_width(&text);
     InputPrefix { text, width }
@@ -318,7 +350,7 @@ fn render_segment(
             status_text(info, &ok, &err, seg, &style)
         }
         "prompt_char" => {
-            let state = prompt_state(config, info.exit_code);
+            let state = prompt_state(config, Some(info));
             style = seg.effective_style(state, &config.defaults);
             paint(seg.char_for(state, "❯"), &style)
         }
@@ -2727,6 +2759,7 @@ mod tests {
             exec_seconds: 0.0,
             jobs: 0,
             history: 0,
+            pipestatus: Vec::new(),
         }
     }
 
@@ -3576,6 +3609,53 @@ mod tests {
     }
 
     #[test]
+    fn extended_status_states_follow_p10k() {
+        // p10k's STATUS_EXTENDED_STATES: $pipestatus distinguishes a pipeline from a plain
+        // failure, and an exit code above 128 means death by signal.
+        let cfg = Config::parse(
+            "segments { prompt_char {\n\
+               state \"OK_PIPE\" fg=70\n\
+               state \"ERROR_PIPE\" fg=160\n\
+               state \"ERROR_SIGNAL\" fg=160\n\
+             } }",
+        )
+        .unwrap();
+        let info_with = |code: i32, pipes: &[i32]| {
+            let mut i = info("/tmp", Some(code));
+            i.pipestatus = pipes.to_vec();
+            i
+        };
+        // Last stage succeeded while an earlier one failed.
+        assert_eq!(
+            prompt_state(&cfg, Some(&info_with(0, &[0, 1]))),
+            Some("OK_PIPE")
+        );
+        // Plain success has no state at all.
+        assert_eq!(prompt_state(&cfg, Some(&info_with(0, &[0]))), None);
+        // The pipeline failed.
+        assert_eq!(
+            prompt_state(&cfg, Some(&info_with(1, &[0, 1]))),
+            Some("ERROR_PIPE")
+        );
+        // Killed by a signal, and not a pipeline.
+        assert_eq!(
+            prompt_state(&cfg, Some(&info_with(130, &[130]))),
+            Some("ERROR_SIGNAL")
+        );
+        // Plain failure.
+        assert_eq!(prompt_state(&cfg, Some(&info_with(1, &[1]))), Some("ERROR"));
+
+        // Undeclared extended states fall back to ERROR (and OK_PIPE to no state), so a
+        // config that only knows OK/ERROR keeps behaving as before.
+        let plain = Config::parse("segments { prompt_char { state \"ERROR\" fg=196 } }").unwrap();
+        assert_eq!(
+            prompt_state(&plain, Some(&info_with(1, &[0, 1]))),
+            Some("ERROR")
+        );
+        assert_eq!(prompt_state(&plain, Some(&info_with(0, &[0, 1]))), None);
+    }
+
+    #[test]
     fn prompt_char_configurable_with_error_state() {
         // The char prop sets the prompt char; state ERROR overrides char and color for the
         // error state (non-zero exit code).
@@ -3584,7 +3664,7 @@ mod tests {
              segments { prompt_char char=\">\" fg=76 {\n  state ERROR char=\"✘\" fg=196\n} }",
         )
         .unwrap();
-        let ok = input_prefix(&cfg, Some(0));
+        let ok = input_prefix(&cfg, Some(&info("/tmp", Some(0))));
         assert!(
             ok.text.contains("\x1b[38;5;76m>"),
             "ok state should show char (>) with fg=76, got: {:?}",
@@ -3594,7 +3674,7 @@ mod tests {
             !ok.text.contains('❯'),
             "with char configured the default ❯ should not be used"
         );
-        let err = input_prefix(&cfg, Some(1));
+        let err = input_prefix(&cfg, Some(&info("/tmp", Some(1))));
         assert!(
             err.text.contains("\x1b[38;5;196m✘"),
             "error state should show the state ERROR char/color, got: {:?}",
