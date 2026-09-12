@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libssl-dev gettext
+          export P11K_LOCALEDIR=/usr/share/locale
+          cargo build --release --locked
+
+      - name: Stage
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          cargo_version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          if [ "$version" != "$cargo_version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml ($cargo_version)" >&2
+            exit 1
+          fi
+          arch=amd64
+          tarball="p11k-$version-x86_64-linux"
+          stage="$tarball"
+          rm -rf "$stage" debroot
+          mkdir -p "$stage/bin" "$stage/share/locale/zh_CN/LC_MESSAGES"
+          cp target/release/p11k target/release/p11k-d "$stage/bin/"
+          cp README.md README.zh.md LICENSE "$stage/"
+          msgfmt -o "$stage/share/locale/zh_CN/LC_MESSAGES/p11k.mo" \
+            crates/p11k-engine/po/zh_CN.po
+          tar czf "$tarball.tar.gz" "$stage"
+
+          root=debroot
+          mkdir -p "$root/DEBIAN" "$root/usr/bin" \
+            "$root/usr/share/locale/zh_CN/LC_MESSAGES" \
+            "$root/usr/share/doc/p11k"
+          cp target/release/p11k target/release/p11k-d "$root/usr/bin/"
+          cp "$stage/share/locale/zh_CN/LC_MESSAGES/p11k.mo" \
+            "$root/usr/share/locale/zh_CN/LC_MESSAGES/"
+          gzip -9 -c README.md > "$root/usr/share/doc/p11k/README.md.gz"
+          {
+            echo "Package: p11k"
+            echo "Version: $version"
+            echo "Architecture: $arch"
+            echo "Maintainer: Qaaxaap <Qaaxaap@users.noreply.github.com>"
+            echo "Homepage: https://github.com/Qaaxaap/powerlevel11k"
+            echo "Section: utils"
+            echo "Priority: optional"
+            echo "Depends: libc6, libssl3 | libssl3t64"
+            echo "Description: powerlevel10k-compatible prompt engine"
+            echo " p11k owns the terminal as a pty host and draws the prompt header while"
+            echo " the shell keeps drawing the input line and announces when a prompt is"
+            echo " ready. It also ships p11k-d, a byte-compatible gitstatusd replacement."
+          } > "$root/DEBIAN/control"
+          dpkg-deb --root-owner-group --build "$root" "p11k_${version}_${arch}.deb"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" \
+              --title "p11k ${GITHUB_REF_NAME#v}" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" p11k-*.tar.gz p11k_*.deb --clobber
