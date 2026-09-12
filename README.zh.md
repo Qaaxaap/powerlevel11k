@@ -85,8 +85,8 @@ PowerShell 写进 `$PROFILE`（pwsh 没有 exec，引擎退出后再退出外层
 if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 ```
 
-`--shell` 建议显式给：从 zsh/bash 里起 pwsh 时 `$SHELL` 不会变。省略时引擎回退
-到 `$SHELL`，并用 `PSModulePath`/`PSHOME` 认 PowerShell。
+`--shell` 建议显式给：从 zsh/bash 里起 pwsh 时 `$SHELL` 不会变，引擎也不看别的
+线索来认它。
 
 引擎 exec 覆盖启动 shell，继承其环境；内部 shell 会重新 source 用户配置
 （主题本身除外——引擎就是主题）。`P11K_ENGINE` 用于打破递归。

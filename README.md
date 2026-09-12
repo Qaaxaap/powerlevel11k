@@ -106,8 +106,7 @@ if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 ```
 
 Pass `--shell` explicitly: `$SHELL` does not change when pwsh is started from
-zsh or bash. Without the flag the engine falls back to `$SHELL`, using
-`PSModulePath`/`PSHOME` to recognise PowerShell.
+zsh or bash, and the engine reads nothing else to recognise it.
 
 ### Reloading the theme
 
