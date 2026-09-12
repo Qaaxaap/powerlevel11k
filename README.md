@@ -148,7 +148,7 @@ $EDITOR path/to/theme.kdl
 p11k reload
 ```
 
-The engine repaints the header and recomputes the git status, so `vcs`
+The engine repaints the header and restarts its git worker, so `vcs`
 properties take effect as well. A file that fails to parse is reported by the
 command and the theme in use is kept. The width of the input line is fixed when
 the engine starts, so a `prompt_char` of a different width is ignored and
@@ -157,9 +157,9 @@ apply immediately.
 
 ## Interface language
 
-The interface is available in Chinese and English, selected through the
-standard environment variables (`LANG`, `LC_ALL`, `LANGUAGE`) and defaulting to
-English:
+The interface is available in Chinese and English, and more translations are
+welcome. The language is selected through the standard environment variables
+(`LANG`, `LC_ALL`, `LANGUAGE`) and defaults to English:
 
 ```bash
 LANG=zh_CN.UTF-8 p11k --shell zsh   # Chinese interface
@@ -171,22 +171,18 @@ package or the flake need no such setting.
 
 ## compat/p10k: replacing gitstatusd
 
-p10k's zsh rendering is the result of ten years of work and there is no reason
-to rewrite it. The `compat/p10k` branch vendors the original p10k theme and
-replaces only its core: `p11k-d` answers on the gitstatusd wire protocol,
-byte for byte, and works as the backend of the original
-`gitstatus.plugin.zsh`.
+The `compat/p10k` branch vendors the original p10k theme and replaces only its
+core: `p11k-d` answers on the gitstatusd wire protocol, byte for byte, and
+works as the backend of the original `gitstatus.plugin.zsh`.
 
 ```zsh
 export GITSTATUS_DAEMON=/path/to/p11k-d
 ```
 
-Configuration, appearance, status and vcs are identical to p10k. A hot git
-request on a nixpkgs-scale repository (54k files / 38k dirs, 22 cores) takes
-about 100ms, against about 65ms for the C++ original (about 320ms before the
-parallel scan fix).
+Configuration, appearance, status and vcs are identical to p10k.
 
-That branch is not the main line of development; `main` carries the engine.
+That branch is not the main line of development; `main` carries the engine, but
+it will still be maintained.
 
 ## Status & roadmap
 
