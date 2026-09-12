@@ -344,11 +344,7 @@ fn render_segment(
                 vcs_text(vcs, &branch, &commit, seg, &style)
             }
         }
-        "status" => {
-            let ok = icon_str(config, "ok").unwrap_or_default();
-            let err = icon_str(config, "error").unwrap_or_default();
-            status_text(info, &ok, &err, seg, &style)
-        }
+        "status" => status_text(info, seg, &style),
         "prompt_char" => {
             let state = prompt_state(config, Some(info));
             style = seg.effective_style(state, &config.defaults);
@@ -512,15 +508,25 @@ fn render_segment(
     // Segments with empty text: only "icon is content" segments (env indicators, os badges)
     // draw the icon; the rest hide entirely—matching p10k: no vcs icon outside a git repo, no
     // gear when jobs=0.
-    let icon = resolve_icon(config, name, vcs, &info.cwd);
+    // Icon: p10k resolves a segment's visual identifier separately from its text, and for
+    // `status` the identifier is the state's icon (OK_ICON / FAIL_ICON) — that is what puts it
+    // after the content in the right column instead of before it.
+    let icon = if name == "status" {
+        status_icon_key(info, seg).and_then(|k| icon_str(config, k))
+    } else {
+        resolve_icon(config, name, vcs, &info.cwd)
+    };
     // Icon color: `visual-identifier-color` (p10k `SEG_VISUAL_IDENTIFIER_COLOR`) wins; the vcs
     // segment falls back to `clean-foreground` when unset—the icon indicates the repo and p10k
     // also defaults it to green (icons do not inherit the segment default, or the default
-    // theme would render them in the terminal default color).
+    // theme would render them in the terminal default color). `status` falls back to the
+    // foreground of its state.
     let icon_style = if seg.prop("visual-identifier-color").is_some() {
         prop_style(seg, &style, "visual-identifier-color")
     } else if name == "vcs" {
         prop_style(seg, &style, "clean-foreground")
+    } else if name == "status" {
+        prop_style(seg, &style, status_foreground(info))
     } else {
         style.clone()
     };
@@ -654,11 +660,16 @@ const fn icon(n: &'static str, c: &'static str, a: &'static str) -> IconEntry {
 /// users can override them by icon name in the top-level `icon{}`.
 fn icon_default(key: &str) -> Option<IconEntry> {
     match key {
-        "folder" => Some(icon("\u{f07c}", "", "")), // 
+        // p10k's three directory icons (HOME_ICON / HOME_SUB_ICON / FOLDER_ICON): the dir
+        // segment picks one through its built-in classes, see `default_dir_icon_key`.
+        "folder" => Some(icon("\u{f115}", "", "")), // p10k FOLDER_ICON
+        "home" => Some(icon("\u{f015}", "", "")),   // p10k HOME_ICON
+        "home-sub" => Some(icon("\u{f07c}", "", "")), // p10k HOME_SUB_ICON
+        "etc" => Some(icon("\u{f013}", "\u{2699}", "")), // p10k ETC_ICON ⚙
         "git" => Some(icon("\u{f1d3}", "", "")),
-        "commit" => Some(icon("\u{e821}", "", "")), // p10k VCS_COMMIT_ICON    // 
-        "time" => Some(icon("\u{f017}", "", "")),   // clock
-        "date" => Some(icon("\u{f073}", "", "")),   // calendar
+        "commit" => Some(icon("\u{e729}", "", "@")), // p10k VCS_COMMIT_ICON
+        "time" => Some(icon("\u{f017}", "", "")),    // clock
+        "date" => Some(icon("\u{f073}", "", "")),    // calendar
         // p10k EXECUTION_TIME_ICON: U+F252 (hourglass) in the nerdfont tier,
         // empty in compatible/ascii since p10k itself has none.
         "execution-time" => Some(icon("\u{f252}", "", "")),
@@ -860,6 +871,13 @@ fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>, cwd: &str)
         if dir_writable_state(config.segment("dir"), cwd).is_some() {
             return icon_str(config, "lock");
         }
+        // p10k ships four `DIR_CLASSES` of its own and uses them whenever the config declares
+        // none (`if (( $+_POWERLEVEL9K_DIR_CLASSES ))` ... else). Only the icon is resolved
+        // here: p10k's default class names would otherwise shadow ANCHOR/SHORTENED, which
+        // p11k derives from the shortened path instead.
+        if config.dir_classes.is_empty() {
+            return icon_str(config, default_dir_icon_key(cwd));
+        }
         // p10k `DIR_CLASSES`: the matched rule's icon; an empty icon in p10k means no icon at
         // all, not a fallback to the default folder icon (measured: with HOME's icon='', p10k
         // draws nothing).
@@ -873,6 +891,26 @@ fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>, cwd: &str)
     }
     let key = segment_icon_key(name)?;
     icon_str(config, key)
+}
+
+/// p10k's built-in `DIR_CLASSES`, in their order: `/etc|/etc/*`, `~`, `~/*`, and the
+/// catch-all. Returns the icon name of the first match.
+///
+/// `*` is written as `**` because zsh matches a pattern's `*` against `/` too, while p11k's
+/// glob stops at a separator: p10k gives every directory below $HOME the HOME_SUB_ICON, not
+/// just the direct children (measured on `~/Projects/powerlevel11k`).
+fn default_dir_icon_key(cwd: &str) -> &'static str {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let hit = |pattern: &str| glob_match_path(pattern, cwd, &home);
+    if hit("/etc") || hit("/etc/**") {
+        "etc"
+    } else if !home.is_empty() && hit("~") {
+        "home"
+    } else if !home.is_empty() && hit("~/**") {
+        "home-sub"
+    } else {
+        "folder"
+    }
 }
 
 /// Matches cwd against `dir-classes` in order and returns the first hit (p10k `DIR_CLASSES`).
@@ -1076,6 +1114,8 @@ fn icon_is_content(name: &str) -> bool {
             | "chezmoi_shell"
             | "os"
             | "os_icon"
+            // A verbose, successful status is its icon alone (p10k draws `✔` with no text).
+            | "status"
     )
 }
 
@@ -2551,29 +2591,38 @@ fn shorten_branch(branch: &str, seg: &Segment) -> String {
     }
 }
 
-/// Exit code status. The OK/ERROR icon chars are passed in by the caller, resolved from the
-/// `ok`/`error` icon names (users can override them in the top-level `icon{}`); colors come
-/// from `ok-foreground`/`error-foreground`. With `verbose #false` success is not shown
-/// (matching p10k's `STATUS_OK`).
-fn status_text(info: &HeaderInfo, ok: &str, err: &str, seg: &Segment, style: &Style) -> String {
+/// p10k's `status` visual identifier: FAIL_ICON on a failed command, OK_ICON on a successful
+/// one when the segment is verbose, and none without an exit code — a silent success draws
+/// neither text nor icon. The icon chars come from the `ok`/`error` icon names (users can
+/// override them in the top-level `icon{}`).
+fn status_icon_key(info: &HeaderInfo, seg: &Segment) -> Option<&'static str> {
     match info.exit_code {
-        None => String::new(),
+        None => None,
         Some(0) => {
             let verbose = matches!(seg.prop("verbose"), Some(crate::config::Prop::Bool(true)));
-            if verbose {
-                paint(ok, &prop_style(seg, style, "ok-foreground"))
-            } else {
-                String::new()
-            }
+            verbose.then_some("ok")
         }
-        Some(n) => {
-            let text = if err.is_empty() {
-                n.to_string()
-            } else {
-                format!("{err} {n}")
-            };
-            paint(&text, &prop_style(seg, style, "error-foreground"))
-        }
+        Some(_) => Some("error"),
+    }
+}
+
+/// Foreground property of the `status` state the last command left the segment in.
+fn status_foreground(info: &HeaderInfo) -> &'static str {
+    match info.exit_code {
+        Some(n) if n != 0 => "error-foreground",
+        _ => "ok-foreground",
+    }
+}
+
+/// The `status` text: the exit code on failure. The icon is not part of it (see
+/// [`status_icon_key`]), so the right column draws `1 ✘` rather than `✘ 1`.
+fn status_text(info: &HeaderInfo, seg: &Segment, style: &Style) -> String {
+    match info.exit_code {
+        Some(n) if n != 0 => paint(
+            &n.to_string(),
+            &prop_style(seg, style, status_foreground(info)),
+        ),
+        _ => String::new(),
     }
 }
 
@@ -3825,23 +3874,25 @@ mod tests {
 
     #[test]
     fn icon_mode_switches_default_icons() {
-        // status_text takes the ok/err icon chars; the default chars themselves come from the
-        // icon{} table / built-in defaults.
+        // The status icon is the segment's visual identifier, not part of its text (p10k draws
+        // `1 ✘`, not `✘ 1`, in the right column).
         let mut seg = Segment::default();
         seg.props
             .insert("verbose".into(), crate::config::Prop::Bool(true));
         let style = Style::default();
-        assert!(
-            status_text(&info("/tmp", Some(0)), "\u{f00c}", "\u{f00d}", &seg, &style)
-                .contains("\u{f00c}"),
-            "OK should show the ok icon"
-        );
-        assert!(
-            status_text(&info("/tmp", Some(1)), "ok", "err", &seg, &style).contains("err 1"),
-            "ERROR should show the err icon + exit code"
-        );
-        // Icon defaults follow mode: folder has a glyph in nf and is empty in compat/ascii;
-        // go has text in all three tiers.
+        assert_eq!(status_icon_key(&info("/tmp", Some(0)), &seg), Some("ok"));
+        assert_eq!(status_icon_key(&info("/tmp", Some(1)), &seg), Some("error"));
+        assert_eq!(status_icon_key(&info("/tmp", None), &seg), None);
+        // A non-verbose success draws neither icon nor text.
+        let mut quiet = Segment::default();
+        quiet
+            .props
+            .insert("verbose".into(), crate::config::Prop::Bool(false));
+        assert_eq!(status_icon_key(&info("/tmp", Some(0)), &quiet), None);
+        assert!(status_text(&info("/tmp", Some(0)), &seg, &style).is_empty());
+        assert!(status_text(&info("/tmp", Some(1)), &seg, &style).contains('1'));
+        // Icon defaults follow mode: the dir icons are p10k's FOLDER_ICON and are empty in
+        // compat/ascii; go has text in all three tiers.
         let mk = |m: &str| {
             Config::parse(&format!(
                 "mode \"{m}\"\nlayout {{ left {{ line {{ dir #true }} }} }}"
@@ -3850,7 +3901,7 @@ mod tests {
         };
         assert_eq!(
             icon_str(&mk("nerdfont-complete"), "folder").unwrap(),
-            "\u{f07c}"
+            "\u{f115}"
         );
         assert_eq!(icon_str(&mk("compatible"), "folder").unwrap(), "");
         assert_eq!(icon_str(&mk("ascii"), "folder").unwrap(), "");
@@ -3930,7 +3981,7 @@ mod tests {
         .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         let li = h.find('L').expect("text-left should render");
-        let ii = h.find("\u{f07c}").expect("folder icon should render");
+        let ii = h.find("\u{f115}").expect("folder icon should render");
         let mi = h.find('M').expect("text-middle should render");
         let ci = h.find("02:49:19").expect("content should render");
         let ri = h.find('R').expect("text-right should render");
@@ -4124,16 +4175,16 @@ mod tests {
             "non-writable dir should show the lock icon, got {locked:?}"
         );
         assert!(
-            !locked.contains("\u{f07c}"),
+            !locked.contains("\u{f115}"),
             "the folder icon should not be shown as well, got {locked:?}"
         );
         // A writable directory behaves as usual.
         let normal = render("/tmp", "show-writable=v3");
-        assert!(normal.contains("\u{f07c}"), "got {normal:?}");
+        assert!(normal.contains("\u{f115}"), "got {normal:?}");
         assert!(!normal.contains("\u{f023}"), "got {normal:?}");
         // Unset means no check at all.
         let off = render("/proc", "");
-        assert!(off.contains("\u{f07c}"), "got {off:?}");
+        assert!(off.contains("\u{f115}"), "got {off:?}");
     }
 
     #[test]
@@ -4231,7 +4282,7 @@ mod tests {
         );
         assert_eq!(
             plain(&render("/", "omit-first-character=#true")).trim(),
-            "\u{f07c} /"
+            "\u{f115} /"
         );
         // p10k DIR_PATH_HIGHLIGHT_FOREGROUND/BOLD: recolor/bold the last component only.
         let h = render(

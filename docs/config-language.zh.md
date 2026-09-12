@@ -318,6 +318,9 @@
   还会拼上 `_NOT_WRITABLE` / `_NON_EXISTENT` 后缀（p10k 规则）。
   模式方言与 p10k 的 zsh 扩展 glob 不同：`~` 展开成 $HOME、`*` `?` `[…]`
   不跨 `/`、`**` 跨目录、模式以 `/` 结尾表示整棵子树。
+- 不写 `dir-classes` 时，dir 图标走 p10k 自带的四条规则：`/etc` 及其下级 →
+  `etc`、`$HOME` → `home`、它下面的任意目录 → `home-sub`、其余 → `folder`。
+  它们就是普通图标表条目，可以用 `icon { home-sub { all "H" } }` 覆盖。
 
 ## 涉及配置的检查单
 

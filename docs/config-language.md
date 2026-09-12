@@ -388,6 +388,11 @@ accumulate.
   dialect differs from p10k's zsh extended globs: `~` expands to $HOME,
   `*` `?` `[…]` stay within one path component, `**` crosses directories,
   and a trailing `/` matches the whole subtree.
+- With no `dir-classes` node, the dir icon follows p10k's own four
+  built-in classes: `/etc` and below → `etc`, `$HOME` → `home`, any
+  directory below it → `home-sub`, everything else → `folder`. They are
+  icon-table entries like any other, so `icon { home-sub { all "H" } }`
+  overrides one.
 
 ## Checklist for config changes
 
