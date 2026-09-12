@@ -376,6 +376,9 @@ pub struct Config {
     /// `dir-classes { class "pattern" state="WORK" icon="…" }`:
     /// switch the dir segment's state / icon by path pattern (aligns with p10k `DIR_CLASSES`).
     pub dir_classes: Vec<DirClass>,
+    /// `shell "zsh"`: the shell to proxy. `--shell` overrides it, and `$SHELL` is used when
+    /// neither is given.
+    pub shell: Option<String>,
 }
 
 /// One directory classification rule (the triple of p10k `DIR_CLASSES`).
@@ -413,6 +416,7 @@ impl Default for Config {
             mode: IconMode::NerdfontComplete,
             icon_overrides: BTreeMap::new(),
             dir_classes: Vec::new(),
+            shell: None,
         }
     }
 }
@@ -492,6 +496,11 @@ impl Config {
                 }
                 ch.nodes_mut().push(cn);
             }
+            doc.nodes_mut().push(n);
+        }
+        if let Some(shell) = &self.shell {
+            let mut n = KdlNode::new("shell");
+            n.entries_mut().push(KdlEntry::new(shell.clone()));
             doc.nodes_mut().push(n);
         }
         doc
@@ -654,6 +663,7 @@ impl Config {
         };
         let mut icon_overrides: BTreeMap<String, IconOverride> = BTreeMap::new();
         let mut dir_classes: Vec<DirClass> = Vec::new();
+        let mut shell: Option<String> = None;
 
         for node in doc.nodes() {
             match node.name().value() {
@@ -686,6 +696,7 @@ impl Config {
                 }
                 "icon" => icon_overrides = parse_icon_table(node),
                 "dir-classes" => dir_classes = parse_dir_classes(node),
+                "shell" => shell = first_value(node).and_then(str_val),
                 _ => warn_unknown_key(node.name().value()),
             }
         }
@@ -699,6 +710,7 @@ impl Config {
             mode,
             icon_overrides,
             dir_classes,
+            shell,
         })
     }
 }
@@ -1340,6 +1352,14 @@ fn prop_val(v: &KdlValue) -> Prop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_node_is_read_and_round_trips() {
+        let c = Config::parse("layout { left { line { dir } } }\nshell \"bash\"").unwrap();
+        assert_eq!(c.shell.as_deref(), Some("bash"));
+        let again = Config::parse(&c.to_kdl()).unwrap();
+        assert_eq!(again.shell.as_deref(), Some("bash"));
+    }
 
     #[test]
     fn to_kdl_roundtrips_presets() {

@@ -87,16 +87,12 @@ impl Shell {
     }
 }
 
-fn shell_from_args() -> Option<Shell> {
+/// The `--shell <name>` argument, verbatim: an unrecognised name has to fall through to the
+/// config and `$SHELL`, so the caller cannot resolve it here.
+fn shell_name_from_args() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     let pos = args.iter().position(|a| a == "--shell")?;
-    match args.get(pos + 1).map(|s| s.as_str()) {
-        Some("zsh") => Some(Shell::Zsh),
-        Some("bash") => Some(Shell::Bash),
-        Some("fish") => Some(Shell::Fish),
-        Some("pwsh") | Some("powershell") => Some(Shell::Pwsh),
-        _ => None,
-    }
+    args.get(pos + 1).cloned()
 }
 
 /// Read the KDL theme file from `--config <path>`.
@@ -207,23 +203,46 @@ fn reload_engine() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Fall back to $SHELL when no shell is given.
+/// Which shell to proxy: `--shell <name>` if given, else the `shell` node of the theme,
+/// else `$SHELL`.
 ///
-/// Only `$SHELL` is read. Detecting PowerShell via `PSModulePath`/`PSHOME` was tried
-/// before (pwsh does not change `$SHELL`, so starting pwsh from zsh still reports
-/// /bin/zsh), but CI runner environments happen to carry such variables, which made every
-/// default-shell launch look like pwsh and fail to start. The install line always writes
-/// `--shell <name>` explicitly; this is only the fallback when it is missing.
-fn detect_shell() -> Shell {
-    if let Some(s) = shell_from_args() {
-        return s;
+/// An unrecognised name from the theme is reported and ignored, so a typo falls back to
+/// `$SHELL` rather than silently proxying the wrong shell. Detecting PowerShell via
+/// `PSModulePath`/`PSHOME` was tried before (pwsh does not change `$SHELL`, so starting pwsh
+/// from zsh still reports /bin/zsh), but CI runner environments happen to carry such
+/// variables, which made every default-shell launch look like pwsh and fail to start.
+fn detect_shell(config: &Config) -> Shell {
+    let cli = shell_name_from_args();
+    if let Some(name) = config.shell.as_deref()
+        && shell_by_name(name).is_none()
+    {
+        eprintln!(
+            "p11k: {}{name:?}",
+            t(
+                "unknown shell in the config, falling back to $SHELL (expected zsh/bash/fish/pwsh): "
+            )
+        );
     }
-    let she = std::env::var("SHELL").unwrap_or_default();
-    match she.rsplit('/').next().unwrap_or("") {
-        "bash" => Shell::Bash,
-        "fish" => Shell::Fish,
-        "pwsh" | "powershell" => Shell::Pwsh,
-        _ => Shell::Zsh,
+    let env = std::env::var("SHELL").unwrap_or_default();
+    pick_shell(cli.as_deref(), config.shell.as_deref(), &env).unwrap_or(Shell::Zsh)
+}
+
+/// The three sources of the shell name, in order of precedence. `None` when not one of them
+/// names a shell p11k can proxy; the caller then warns and picks a default.
+fn pick_shell(cli: Option<&str>, configured: Option<&str>, env: &str) -> Option<Shell> {
+    cli.and_then(shell_by_name)
+        .or_else(|| configured.and_then(shell_by_name))
+        .or_else(|| shell_by_name(env.rsplit('/').next().unwrap_or("")))
+}
+
+/// Shell name → kind. `None` for a name p11k cannot proxy.
+fn shell_by_name(name: &str) -> Option<Shell> {
+    match name {
+        "zsh" => Some(Shell::Zsh),
+        "bash" => Some(Shell::Bash),
+        "fish" => Some(Shell::Fish),
+        "pwsh" | "powershell" => Some(Shell::Pwsh),
+        _ => None,
     }
 }
 
@@ -525,7 +544,9 @@ fn print_help() {
         msgid("       p11k reload"),
         "",
         msgid("Options:"),
-        msgid("  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: $SHELL)"),
+        msgid(
+            "  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: the `shell` config node, else $SHELL)",
+        ),
         msgid(
             "  --config <path>  KDL theme file (default: ~/.config/p11k/p11k.kdl, else the built-in lean theme)",
         ),
@@ -596,10 +617,10 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(1);
     }
 
-    let shell = detect_shell();
-    // Load the config first to compute the input-line prefix width, then build a
-    // placeholder of the same width.
+    // The config comes first: it may name the shell, and it decides the input-line prefix
+    // width, from which the placeholder is built.
     let mut config = load_config();
+    let shell = detect_shell(&config);
     // The file the theme came from, kept for `p11k reload` (None for a preset or the built-in
     // theme; the engine then has nothing to re-read). Made absolute, because the reload
     // command reads it from wherever the shell happens to be, not from the starting directory.
@@ -1643,6 +1664,32 @@ mod tests {
         assert_eq!(Shell::Bash.name(), "bash");
         assert_eq!(Shell::Fish.name(), "fish");
         assert_eq!(Shell::Pwsh.name(), "pwsh");
+    }
+
+    #[test]
+    fn shell_precedence_puts_the_command_line_first() {
+        // The three sources name three different shells, so whichever wins is unambiguous.
+        assert_eq!(
+            pick_shell(Some("bash"), Some("zsh"), "/usr/bin/fish"),
+            Some(Shell::Bash)
+        );
+        assert_eq!(
+            pick_shell(None, Some("zsh"), "/usr/bin/fish"),
+            Some(Shell::Zsh)
+        );
+        assert_eq!(pick_shell(None, None, "/usr/bin/fish"), Some(Shell::Fish));
+        // `$SHELL` is a path; only the file name counts.
+        assert_eq!(pick_shell(None, None, "/bin/bash"), Some(Shell::Bash));
+        // A name p11k cannot proxy falls through to the next source instead of failing.
+        assert_eq!(
+            pick_shell(Some("tcsh"), Some("zsh"), "/usr/bin/fish"),
+            Some(Shell::Zsh)
+        );
+        assert_eq!(
+            pick_shell(None, Some("tcsh"), "/usr/bin/fish"),
+            Some(Shell::Fish)
+        );
+        assert_eq!(pick_shell(None, None, "/usr/bin/tcsh"), None);
     }
 
     /// pwsh has no zle: the engine byte-matches the placeholder in the pass-through stream,

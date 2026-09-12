@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k 0.1.0\n"
 "Report-Msgid-Bugs-To: https://github.com/powerlevel11k/p11k/issues\n"
-"POT-Creation-Date: 2026-09-12 15:59+0800\n"
+"POT-Creation-Date: 2026-09-12 16:09+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,146 +17,152 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/p11k-engine/src/config.rs:423
+#: crates/p11k-engine/src/config.rs:427
 msgid "KDL parse error: "
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1171
+#: crates/p11k-engine/src/config.rs:1183
 msgid "`state` needs a name (a positional string)"
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1189
+#: crates/p11k-engine/src/config.rs:1201
 msgid " needs text (a positional string)"
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1244
+#: crates/p11k-engine/src/config.rs:1256
 msgid "unknown config key: "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:141 crates/p11k-engine/src/main.rs:162
+#: crates/p11k-engine/src/main.rs:135 crates/p11k-engine/src/main.rs:156
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:152
+#: crates/p11k-engine/src/main.rs:146
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:182
+#: crates/p11k-engine/src/main.rs:176
 msgid "not inside a p11k session (P11K_ENGINE_PID is unset)"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:190
+#: crates/p11k-engine/src/main.rs:184
 msgid ""
 "this session has no theme file: it was started with --preset or the built-in "
 "theme"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:203
+#: crates/p11k-engine/src/main.rs:197
 msgid "cannot signal the engine (has this session already exited?)"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:523
+#: crates/p11k-engine/src/main.rs:221
+msgid ""
+"unknown shell in the config, falling back to $SHELL (expected zsh/bash/fish/"
+"pwsh): "
+msgstr ""
+
+#: crates/p11k-engine/src/main.rs:533
 msgid "usage: p11k [options]"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:524
+#: crates/p11k-engine/src/main.rs:534
 msgid "       p11k configure"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:525
+#: crates/p11k-engine/src/main.rs:535
 msgid "       p11k reload"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:527
+#: crates/p11k-engine/src/main.rs:537
 msgid "Options:"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:528
+#: crates/p11k-engine/src/main.rs:538
 msgid ""
 "  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: "
-"$SHELL)"
+"the `shell` config node, else $SHELL)"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:529
+#: crates/p11k-engine/src/main.rs:540
 msgid ""
 "  --config <path>  KDL theme file (default: ~/.config/p11k/p11k.kdl, else "
 "the built-in lean theme)"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:530
+#: crates/p11k-engine/src/main.rs:542
 msgid "  --preset <name>  built-in theme: lean, classic, rainbow or pure"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:531
+#: crates/p11k-engine/src/main.rs:543
 msgid "  --version        print the version and exit"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:532
+#: crates/p11k-engine/src/main.rs:544
 msgid "  --help           print this help and exit"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:534
+#: crates/p11k-engine/src/main.rs:546
 msgid "Commands:"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:535
+#: crates/p11k-engine/src/main.rs:547
 msgid "  configure        interactive theme wizard"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:536
+#: crates/p11k-engine/src/main.rs:548
 msgid "  reload           re-read the theme file of the running session"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:538
+#: crates/p11k-engine/src/main.rs:550
 msgid "Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:539
+#: crates/p11k-engine/src/main.rs:551
 msgid "P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:540
+#: crates/p11k-engine/src/main.rs:552
 msgid "overrides the translation directory. The engine exports P11K_CONFIG and"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:541
+#: crates/p11k-engine/src/main.rs:553
 msgid "P11K_ENGINE_PID into the shell for `p11k reload`."
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:543
+#: crates/p11k-engine/src/main.rs:555
 msgid ""
 "To use p11k as your theme, add one line to your shell rc — see README.md."
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:588
+#: crates/p11k-engine/src/main.rs:600
 msgid "recursive launch detected (p11k started inside a p11k session)"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:589
+#: crates/p11k-engine/src/main.rs:601
 msgid "make sure the bootstrap line in ~/.zshrc is guarded, e.g.:"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:593
+#: crates/p11k-engine/src/main.rs:605
 msgid "cannot exec zsh -f: "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:609
+#: crates/p11k-engine/src/main.rs:621
 msgid "config error: "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:613
+#: crates/p11k-engine/src/main.rs:625
 msgid ""
 "every prompt_char state must be the same width (the prompt width is fixed at "
 "startup). Fix the config and start p11k again."
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:627
+#: crates/p11k-engine/src/main.rs:639
 msgid "cannot exec a clean shell: "
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:746
+#: crates/p11k-engine/src/main.rs:758
 msgid "the inner shell failed to start"
 msgstr ""
 

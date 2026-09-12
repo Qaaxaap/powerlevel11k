@@ -17,7 +17,11 @@
 ## 结构
 
 目前的顶层节点：`layout`（必写）、`segments`、`defaults`、`separators`、
-`frame`、`vcs-remote-icons`、`mode`、`icon`。未识别的顶层节点会被忽略并跳过渲染。
+`frame`、`vcs-remote-icons`、`mode`、`icon`、`dir-classes`、`shell`。未识别的
+顶层节点会被忽略并跳过渲染。
+
+`shell "zsh"` 指定引擎代理哪个 shell，这样 rc 里的启动行不必再写 `--shell`；
+命令行的 `--shell` 优先级更高，两者都没有时回退到 `$SHELL`。
 
 ## 图标模式
 

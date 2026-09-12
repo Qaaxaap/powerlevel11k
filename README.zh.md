@@ -109,8 +109,8 @@ PowerShell 写入 `$PROFILE`：
 if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 ```
 
-必须显式给出 `--shell`：从 zsh 或 bash 启动 pwsh 时 `$SHELL` 不会改变，引擎
-不使用其它线索判断。
+`--shell` 允许省略，在主题配置里写 `shell "zsh"` 即可。两者都没有时引擎回退到
+`$SHELL`。
 
 引擎以 exec 覆盖启动它的 shell，并继承其环境；内层 shell 会重新加载用户配置
 （主题除外）。`P11K_ENGINE` 用于防止递归启动。

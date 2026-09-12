@@ -126,8 +126,10 @@ For PowerShell, put this in `$PROFILE`:
 if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 ```
 
-`--shell` is required: `$SHELL` does not change when pwsh is started from zsh or
-bash, and the engine uses no other clue.
+`--shell` may be left out: `shell "zsh"` in the theme config names the shell
+instead. With neither, the engine falls back to `$SHELL` — but `$SHELL` does not
+change when pwsh is started from zsh or bash, so naming it explicitly is more
+reliable.
 
 The engine execs over the shell that started it and inherits its environment;
 the inner shell re-sources the user config, except for the theme. `P11K_ENGINE`

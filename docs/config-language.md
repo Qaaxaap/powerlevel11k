@@ -20,8 +20,12 @@ config reference.
 ## Structure
 
 Top-level nodes today: `layout` (required), `segments`, `defaults`,
-`separators`, `frame`, `vcs-remote-icons`, `mode`, `icon`. Unrecognized
-top-level nodes are ignored and skipped.
+`separators`, `frame`, `vcs-remote-icons`, `mode`, `icon`, `dir-classes`,
+`shell`. Unrecognized top-level nodes are ignored and skipped.
+
+`shell "zsh"` names the shell the engine proxies, so the rc bootstrap line does
+not have to spell out `--shell`; `--shell` on the command line still wins, and
+`$SHELL` is the fallback when neither is given.
 
 ## Icon mode
 
