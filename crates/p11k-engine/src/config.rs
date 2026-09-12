@@ -83,7 +83,20 @@ pub struct Style {
 }
 
 impl Style {
-    fn from_entries(entries: &[kdl::KdlEntry]) -> Style {
+    /// Style of a node whose properties are all style properties (`defaults`, `frame` and its
+    /// pieces): anything else is a typo, so report it.
+    fn from_style_entries(entries: &[kdl::KdlEntry]) -> Style {
+        Style::parse(entries, true)
+    }
+
+    /// Style of a node that also carries non-style properties (a segment, a `state`): only
+    /// fg/bg/bold are style here and the remaining names belong to the caller, so they are
+    /// picked up by its own loop instead of being reported as unknown.
+    fn from_mixed_entries(entries: &[kdl::KdlEntry]) -> Style {
+        Style::parse(entries, false)
+    }
+
+    fn parse(entries: &[kdl::KdlEntry], warn: bool) -> Style {
         let mut s = Style::default();
         for e in entries {
             let Some(name) = e.name() else { continue };
@@ -91,7 +104,8 @@ impl Style {
                 "fg" => s.fg = Color::from_value(e.value()),
                 "bg" => s.bg = Color::from_value(e.value()),
                 "bold" => s.bold = bool_val(e.value()),
-                _ => warn_unknown_key(name.value()),
+                _ if warn => warn_unknown_key(name.value()),
+                _ => {}
             }
         }
         s
@@ -649,7 +663,7 @@ impl Config {
                         }
                     }
                 }
-                "defaults" => defaults = Style::from_entries(node.entries()),
+                "defaults" => defaults = Style::from_style_entries(node.entries()),
                 "separators" => separators = parse_separators(node),
                 "frame" => frame = parse_frame(node),
                 "vcs-remote-icons" => vcs_remote_icons = parse_remote_icons(node),
@@ -1013,7 +1027,7 @@ fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
 /// prefix/suffix of first/newline/last (child nodes, value a string; a child's own fg/bg/bold overrides the frame level).
 fn parse_frame(node: &KdlNode) -> Frame {
     let mut f = Frame {
-        style: Style::from_entries(node.entries()),
+        style: Style::from_style_entries(node.entries()),
         ..Frame::default()
     };
     if let Some(ch) = node.children() {
@@ -1022,7 +1036,7 @@ fn parse_frame(node: &KdlNode) -> Frame {
                 continue;
             };
             let Some(text) = str_val(v) else { continue };
-            let st = Style::from_entries(child.entries());
+            let st = Style::from_style_entries(child.entries());
             // A child with no style properties → None (fall back to frame level); with them → Some (override).
             let style = if st == Style::default() {
                 None
@@ -1119,7 +1133,7 @@ fn parse_line(node: &KdlNode) -> Vec<Element> {
 /// Parse one segment node: properties (style/text/visibility/behavior) + `state <NAME> …` child overrides.
 fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
     let mut seg = Segment {
-        style: Style::from_entries(node.entries()),
+        style: Style::from_mixed_entries(node.entries()),
         shown: true,
         ..Default::default()
     };
@@ -1144,7 +1158,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                     let Some(nm) = first_state_name(child) else {
                         return Err(t("`state` needs a name (a positional string)"));
                     };
-                    let st = Style::from_entries(child.entries());
+                    let st = Style::from_mixed_entries(child.entries());
                     let ch = named_str(child, "char");
                     seg.states.insert(
                         nm,
