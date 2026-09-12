@@ -108,6 +108,34 @@ if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 Pass `--shell` explicitly: `$SHELL` does not change when pwsh is started from
 zsh or bash, and the engine reads nothing else to recognise it.
 
+### Installing
+
+With Nix, from the flake:
+
+```bash
+nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # try it without installing
+nix profile install github:Qaaxaap/powerlevel11k
+```
+
+As a home-manager input:
+
+```nix
+inputs.p11k.url = "github:Qaaxaap/powerlevel11k";
+# then in a module:
+home.packages = [ inputs.p11k.packages.${pkgs.system}.default ];
+```
+
+Without Nix:
+
+```bash
+cargo install --path crates/p11k-engine
+```
+
+The build wants `msgfmt` (gettext) for the translations, the run time wants
+whichever shell gets proxied. The package carries `p11k` and `p11k-d`, the
+standalone gitstatusd replacement; `p11k` does not need the daemon. Linux only
+so far: the git index scan still assumes Linux `stat` semantics.
+
 ### Reloading the theme
 
 `p11k reload` re-reads the theme file in an already running session:
@@ -194,6 +222,8 @@ Done:
 - `p11k configure` wizard, gettext catalogues (zh_CN), CI
 - `p11k reload`, and the p10k feature set up to extended status states
   (`OK_PIPE` / `ERROR_PIPE` / `ERROR_SIGNAL`) and `VCS_DISABLED_WORKDIR_PATTERN`
+- Nix flake package: `nix run` / `nix profile install` / home-manager input,
+  with the catalogs installed and the version read from `Cargo.toml`
 
 Roadmap:
 
@@ -203,7 +233,6 @@ Roadmap:
   `LEGACY_ICON_SPACING`. Rendering under p10k's defaults already matches.
   `DIR_MAX_LENGTH` and `DIR_MIN_COMMAND_COLUMNS(_PCT)` cannot be implemented:
   they need zle's buffer, which the engine never sees.
-- packaging and releases
 - macOS support
 - long-term maintenance and hardening of the daemon and engine (the point of
   p11k)

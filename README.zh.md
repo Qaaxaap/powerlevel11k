@@ -91,6 +91,34 @@ if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 引擎 exec 覆盖启动 shell，继承其环境；内部 shell 会重新 source 用户配置
 （主题本身除外——引擎就是主题）。`P11K_ENGINE` 用于打破递归。
 
+### 安装
+
+用 Nix，直接从 flake 装：
+
+```bash
+nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # 先试不装
+nix profile install github:Qaaxaap/powerlevel11k
+```
+
+作为 home-manager input：
+
+```nix
+inputs.p11k.url = "github:Qaaxaap/powerlevel11k";
+# 然后在某个 module 里：
+home.packages = [ inputs.p11k.packages.${pkgs.system}.default ];
+```
+
+不用 Nix：
+
+```bash
+cargo install --path crates/p11k-engine
+```
+
+构建时需要 `msgfmt`（gettext）来编翻译，运行时要被代理的那个 shell。
+包里带 `p11k` 和 `p11k-d`（可独立替换 gitstatusd 的守护进程）；`p11k`
+本身不需要那个 daemon。目前只支持 Linux：git index 扫描仍然按 Linux 的
+`stat` 语义写。
+
 ### 重载主题
 
 `p11k reload` 让已运行的会话重新读取主题文件：
@@ -164,6 +192,8 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 - `p11k configure` 向导、gettext 词条（zh_CN）、CI
 - `p11k reload`，以及截止到扩展状态（`OK_PIPE` / `ERROR_PIPE` /
   `ERROR_SIGNAL`）与 `VCS_DISABLED_WORKDIR_PATTERN` 的 p10k 功能
+- Nix flake 打包：`nix run` / `nix profile install` / home-manager input，
+  词条随包安装，版本号从 `Cargo.toml` 读
 
 待办：
 
@@ -173,7 +203,6 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
   按 p10k 默认设置渲染时已经一致。
   `DIR_MAX_LENGTH` 与 `DIR_MIN_COMMAND_COLUMNS(_PCT)` 做不到：它们要读 zle
   的 buffer，而引擎根本看不到。
-- 打包与发布
 - macOS 支持
 - daemon / 引擎的长期维护与加固（这正是 p11k 存在的意义）
 
