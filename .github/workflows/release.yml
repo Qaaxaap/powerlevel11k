@@ -33,6 +33,7 @@ jobs:
             exit 1
           fi
           arch=amd64
+          deb_version="${version//-/\~}"
           tarball="p11k-$version-x86_64-linux"
           stage="$tarball"
           rm -rf "$stage" debroot
@@ -53,7 +54,7 @@ jobs:
           gzip -9 -c README.md > "$root/usr/share/doc/p11k/README.md.gz"
           {
             echo "Package: p11k"
-            echo "Version: $version"
+            echo "Version: $deb_version"
             echo "Architecture: $arch"
             echo "Maintainer: Qaaxaap <Qaaxaap@users.noreply.github.com>"
             echo "Homepage: https://github.com/Qaaxaap/powerlevel11k"
@@ -65,14 +66,19 @@ jobs:
             echo " the shell keeps drawing the input line and announces when a prompt is"
             echo " ready. It also ships p11k-d, a byte-compatible gitstatusd replacement."
           } > "$root/DEBIAN/control"
-          dpkg-deb --root-owner-group --build "$root" "p11k_${version}_${arch}.deb"
+          dpkg-deb --root-owner-group --build "$root" "p11k_${deb_version}_${arch}.deb"
 
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
+          version="${GITHUB_REF_NAME#v}"
+          prerelease=""
+          case "$version" in
+            *-*) prerelease="--prerelease" ;;
+          esac
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" \
-              --title "p11k ${GITHUB_REF_NAME#v}" --generate-notes
+              --title "p11k $version" $prerelease --generate-notes
           gh release upload "$GITHUB_REF_NAME" p11k-*.tar.gz p11k_*.deb --clobber

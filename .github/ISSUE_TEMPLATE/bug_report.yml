@@ -24,7 +24,6 @@ body:
     attributes:
       label: p11k version
       description: Output of `p11k --version`.
-      placeholder: p11k 0.1.0
     validations:
       required: true
 

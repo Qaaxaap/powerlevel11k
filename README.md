@@ -78,7 +78,7 @@ On Debian and Ubuntu, from the `.deb` attached to a
 [release](https://github.com/Qaaxaap/powerlevel11k/releases):
 
 ```bash
-sudo apt install ./p11k_0.1.0_amd64.deb
+sudo apt install ./p11k_<version>_amd64.deb
 ```
 
 Anywhere else, unpack the tarball. `bin/` and `share/` are relocatable: the
@@ -86,8 +86,8 @@ catalogs are looked up in the system directory and next to the executables
 alike.
 
 ```bash
-tar xzf p11k-0.1.0-x86_64-linux.tar.gz -C ~/.local
-~/.local/p11k-0.1.0-x86_64-linux/bin/p11k --shell zsh
+tar xzf p11k-<version>-x86_64-linux.tar.gz -C ~/.local
+~/.local/p11k-<version>-x86_64-linux/bin/p11k --shell zsh
 ```
 
 The tarball needs the OpenSSL 3 runtime, which common distributions ship by

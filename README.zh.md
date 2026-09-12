@@ -63,15 +63,15 @@ Debian / Ubuntu，从 [release](https://github.com/Qaaxaap/powerlevel11k/release
 下载 `.deb`：
 
 ```bash
-sudo apt install ./p11k_0.1.0_amd64.deb
+sudo apt install ./p11k_<version>_amd64.deb
 ```
 
 其它发行版解压 tar 包。`bin/` 与 `share/` 可重定位：词条既在系统目录中查找，
 也在可执行文件旁查找。
 
 ```bash
-tar xzf p11k-0.1.0-x86_64-linux.tar.gz -C ~/.local
-~/.local/p11k-0.1.0-x86_64-linux/bin/p11k --shell zsh
+tar xzf p11k-<version>-x86_64-linux.tar.gz -C ~/.local
+~/.local/p11k-<version>-x86_64-linux/bin/p11k --shell zsh
 ```
 
 tar 包需要系统已安装 OpenSSL 3 运行库，常见发行版默认提供。
