@@ -1,8 +1,19 @@
 # powerlevel11k (p11k)
 
-[English](README.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml)
+[English](README.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml) · [![LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](COPYING.LESSER) · ![x86_64 Linux](https://img.shields.io/badge/platform-x86__64%20Linux-lightgrey)
 
 用 Rust 重写的 powerlevel10k 提示符引擎。
+
+![p11k 在 zsh 中：git 状态、失败的测试、后台任务、transient prompt](docs/images/demo.gif)
+
+一段 zsh 会话，使用 [`tools/demo/demo.kdl`](tools/demo/demo.kdl) 中的主题：
+终端打开时头部已经在屏幕上；`dir` 与 `vcs` 跟随工作区状态；失败的
+`cargo test` 点亮 status 与执行耗时；`sleep 30 &` 点亮后台任务计数；每次提交的
+命令都折叠成单行 `❯`。这些图由
+[`tools/demo/capture.sh`](tools/demo/capture.sh) 录制生成。
+
+p11k 仍在开发中（1.0.0-alpha.1）：功能已完整、日常在用，但尚未定型——配置
+语言仍可能变动。
 
 powerlevel10k 在 2024 年进入纯维护模式：不再新增功能，多数 bug 不再修，
 issue 无人回应，仓库也不会移交。它今天依然好用，但想要 v1.20.0 之后东西的
@@ -12,16 +23,29 @@ issue 无人回应，仓库也不会移交。它今天依然好用，但想要 v
 里跑一个未加载主题的 shell，字节原样透传，只在提示符出现的瞬间接管绘制。
 同一套主题因此可以跑在 zsh、bash、fish 和 pwsh 上——这是 p10k 做不到的。
 
-## 引擎原理
+## 试一下
 
-引擎是 pty 宿主兼透明代理：它在 pty 中启动一个未加载主题的 shell，原样转发
-字节，仅在提示符出现的时刻接管绘制。
+```bash
+nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # 不安装、不配置
+```
 
-shell 钩子宣告提示符就绪后，引擎绘制主题头部，绘制完成即交还控制。输入行仍
-由 shell 自己的行编辑器绘制，补全、历史、vi 模式的几何因此保持自洽。
+其它安装方式见[安装](#安装)。
 
-几何由占位协议保证：shell 渲染的是由占位符构成的主题骨架，引擎在骨架渲染
-完成后回填真实头部。引擎不解析 pty 输出中的 ANSI 序列，也不修改用户输入。
+## 一套主题，所有 shell
+
+头部由引擎绘制而非 shell，因此同一个主题文件在 zsh、bash、fish 下渲染出完全
+相同的提示符。pwsh 走同一套协议层，没有出现在图中只是因为录制用的机器没有
+安装 pwsh。
+
+![同一主题在 zsh、bash、fish 下的渲染](docs/images/shells.png)
+
+## 内置主题
+
+`--preset lean|classic|rainbow|pure` 可以不用写配置就选定起点，`p11k configure`
+则像 p10k 的向导那样逐项询问并写出 KDL。四者都是普通主题，其中任何内容都可
+以改：
+
+![lean、classic、rainbow、pure](docs/images/presets.png)
 
 ## 功能
 
@@ -42,6 +66,17 @@ shell 钩子宣告提示符就绪后，引擎绘制主题头部，绘制完成�
   引擎里，换配置即换主题。
 - **三套图标**：`nerdfont` / `compatible` / `ascii`，按实际字体选用；locale 非
   UTF-8 时自动降级为 `ascii`。顶层 `icon{}` 可按图标名逐档覆盖字符。
+
+## 引擎原理
+
+引擎是 pty 宿主兼透明代理：它在 pty 中启动一个未加载主题的 shell，原样转发
+字节，仅在提示符出现的时刻接管绘制。
+
+shell 钩子宣告提示符就绪后，引擎绘制主题头部，绘制完成即交还控制。输入行仍
+由 shell 自己的行编辑器绘制，补全、历史、vi 模式的几何因此保持自洽。
+
+几何由占位协议保证：shell 渲染的是由占位符构成的主题骨架，引擎在骨架渲染
+完成后回填真实头部。引擎不解析 pty 输出中的 ANSI 序列，也不修改用户输入。
 
 ## 安装
 
@@ -110,7 +145,7 @@ if (-not $env:P11K_ENGINE) { & '/path/to/p11k' --shell pwsh; exit }
 ```
 
 `--shell` 允许省略，在主题配置里写 `shell "zsh"` 即可。两者都没有时引擎回退到
-`$SHELL`。
+`$SHELL`——但从 zsh/bash 启动 pwsh 时 `$SHELL` 不会变化，因此显式写出更可靠。
 
 引擎以 exec 覆盖启动它的 shell，并继承其环境；内层 shell 会重新加载用户配置
 （主题除外）。`P11K_ENGINE` 用于防止递归启动。
@@ -184,6 +219,16 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
   引擎看不到。
 - macOS 支持
 - daemon 与引擎的长期维护和加固
+
+## 演示图片
+
+`docs/images/` 里的图片是生成的，不是画出来的：
+[`tools/demo/capture.sh`](tools/demo/capture.sh) 先搭一个小 git 仓库（暂存、
+未暂存、未跟踪与 stash 各一处），再在固定尺寸的 pty 中运行引擎，录下终端本来
+会显示的内容。镜头脚本是
+[`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json)（一串带延时的按键），
+主题是 [`tools/demo/demo.kdl`](tools/demo/demo.kdl)。重新生成需要已构建的
+`p11k`，以及 `zsh`、`bash`、`fish`、`python3`、`tmux`、`agg` 和 ImageMagick。
 
 ## 参与开发
 
