@@ -8,7 +8,7 @@
 #
 # Needs: a built p11k (cargo build --release -p p11k-engine), zsh, bash, fish,
 # python3, tmux, agg (asciinema/agg) and ImageMagick. cargo is only needed to
-# record the execution-time part of the demo.
+# build the demo project the recording steps through.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -21,7 +21,7 @@ P11K=${P11K:-$root/target/release/p11k}
 AGG=${AGG:-agg}
 TMUX=${TMUX:-tmux}
 MAGICK=${MAGICK:-magick}
-FONT=${FONT:-"JetBrainsMono Nerd Font Mono"}
+FONT=${FONT:-"Maple Mono Normal NL NF CN"}
 # ImageMagick wants a font file, agg wants the family name.
 if [ -z "${FONT_FILE:-}" ] && command -v fc-match >/dev/null; then
     FONT_FILE=$(fc-match -f "%{file}" "$FONT")
@@ -29,7 +29,7 @@ fi
 COLS=${COLS:-94}
 LABEL_WIDTH=${LABEL_WIDTH:-1350}
 
-export DEMO_HOME=${DEMO_HOME:-$here/home}
+export DEMO_HOME=${DEMO_HOME:-${TMPDIR:-/tmp}/p11k-demo-home}
 export DEMO_THEME=${DEMO_THEME:-$here/demo.kdl}
 export P11K
 

@@ -2,7 +2,8 @@
 # Build the demo environment used to record the README assets.
 #
 #   REAL_HOME=<dir>  the real home, for the cargo/rustup symlinks (default: $HOME)
-#   HOME_DIR=<dir>   the isolated home the recording runs in (default: ./home)
+#   HOME_DIR=<dir>   the isolated home the recording runs in
+#                    (default: ${TMPDIR:-/tmp}/p11k-demo-home)
 #
 # Creates a miniature Rust workspace under $HOME_DIR/dev/p11k whose git state has
 # one of everything the vcs segment can show: a branch ahead of and behind its
@@ -12,7 +13,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-HOME_DIR=${HOME_DIR:-$HERE/home}
+HOME_DIR=${HOME_DIR:-${TMPDIR:-/tmp}/p11k-demo-home}
 REPO=$HOME_DIR/dev/p11k
 REAL_HOME=${REAL_HOME:-$HOME}
 
@@ -83,8 +84,9 @@ mod tests {
 
     #[test]
     fn fib_matches_its_table() {
+        // Stands in for a slow test: command_execution_time has a 3s threshold.
         std::thread::sleep(Duration::from_millis(3200));
-        assert_eq!(fib(10), 56);
+        assert_eq!(fib(10), 55);
     }
 }
 RS
@@ -150,6 +152,10 @@ git add crates/p11k-gitstatus/src/helper.rs
 printf 'notes\n' > NOTES.md
 printf 'scratch\n' > scratch.txt
 printf 'log\n' > tmp.log
+
+# Warm the build: the recording should show a test run, not `Compiling ...`
+# with the recorder's absolute paths in it.
+(cd "$REPO" && cargo test --no-run -q -p p11k-engine >/dev/null 2>&1) || true
 
 echo "demo repo at $REPO"
 git -C "$REPO" status --short --branch

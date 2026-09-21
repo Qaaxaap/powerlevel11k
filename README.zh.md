@@ -4,13 +4,13 @@
 
 用 Rust 重写的 powerlevel10k 提示符引擎。
 
-![p11k 在 zsh 中：git 状态、失败的测试、后台任务、transient prompt](docs/images/demo.gif)
+![p11k 在 zsh 中：git 状态、测试运行、后台任务、transient prompt](docs/images/demo.gif)
 
 一段 zsh 会话，使用 [`tools/demo/demo.kdl`](tools/demo/demo.kdl) 中的主题：
-终端打开时头部已经在屏幕上；`dir` 与 `vcs` 跟随工作区状态；失败的
-`cargo test` 点亮 status 与执行耗时；`sleep 30 &` 点亮后台任务计数；每次提交的
-命令都折叠成单行 `❯`。这些图由
-[`tools/demo/capture.sh`](tools/demo/capture.sh) 录制生成。
+终端打开时头部已经在屏幕上；`dir` 与 `vcs` 跟随工作区状态；`cargo test`
+点亮 status 与执行耗时；`sleep 30 &` 点亮后台任务计数；每次提交的命令都折叠成
+单行 `❯`。这些图由 [`tools/demo/capture.sh`](tools/demo/capture.sh) 录制生成，
+字体为 Maple Mono NF。
 
 p11k 仍在开发中（1.0.0-alpha.1）：功能已完整、日常在用，但尚未定型——配置
 语言仍可能变动。
@@ -228,7 +228,8 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 会显示的内容。镜头脚本是
 [`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json)（一串带延时的按键），
 主题是 [`tools/demo/demo.kdl`](tools/demo/demo.kdl)。重新生成需要已构建的
-`p11k`，以及 `zsh`、`bash`、`fish`、`python3`、`tmux`、`agg` 和 ImageMagick。
+`p11k`，以及 `zsh`、`bash`、`fish`、`python3`、`tmux`、`agg`、ImageMagick，
+以及图中使用的 Maple Mono Nerd Font。
 
 ## 参与开发
 

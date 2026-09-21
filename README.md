@@ -4,14 +4,14 @@
 
 A prompt engine that continues powerlevel10k, written in Rust.
 
-![p11k in zsh: git status, a failing test, a background job, the transient prompt](docs/images/demo.gif)
+![p11k in zsh: git status, a test run, a background job, the transient prompt](docs/images/demo.gif)
 
 One zsh session with the theme in [`tools/demo/demo.kdl`](tools/demo/demo.kdl):
 the header is on screen the moment the terminal opens, `dir` and `vcs` follow the
-working tree, a failing `cargo test` fills in the status and the execution time,
+working tree, `cargo test` fills in the status and the execution time,
 `sleep 30 &` the background-job count, and every submitted command folds into a
 single `❯` line. The images are recorded by
-[`tools/demo/capture.sh`](tools/demo/capture.sh).
+[`tools/demo/capture.sh`](tools/demo/capture.sh) and set in Maple Mono NF.
 
 p11k is a work in progress (1.0.0-alpha.1): feature-complete and used daily, but
 not settled yet — the config language can still change.
@@ -265,7 +265,8 @@ terminal would have shown. The scene is
 [`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json) — a list of
 keystrokes with delays, and the theme is
 [`tools/demo/demo.kdl`](tools/demo/demo.kdl). Re-running it needs a built
-`p11k`, `zsh`, `bash`, `fish`, `python3`, `tmux`, `agg` and ImageMagick.
+`p11k`, `zsh`, `bash`, `fish`, `python3`, `tmux`, `agg`, ImageMagick, and the
+Maple Mono Nerd Font the images are set in.
 
 ## Contributing
 
