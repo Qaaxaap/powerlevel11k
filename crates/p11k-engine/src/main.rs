@@ -1042,9 +1042,10 @@ fn main() -> anyhow::Result<()> {
                         }
                     } else if config.layout.prompt_add_newline > 0 {
                         // Relaxed layout: leave N blank rows between consecutive prompts
-                        // (blanked before the header).
+                        // (blanked before the header). One CRLF is one blank row; the shell has
+                        // already moved the cursor off the command's output row.
                         for _ in 0..config.layout.prompt_add_newline {
-                            write!(stdout, "\r\n\r\n")?;
+                            write!(stdout, "\r\n")?;
                         }
                     }
                     // Emit the prompt-start marker before the shell's multi-line placeholder;

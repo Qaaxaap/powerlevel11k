@@ -228,6 +228,51 @@ fn command_output_passthrough_and_next_prompt() {
     );
 }
 
+/// `prompt-add-newline #true` is one blank row, not two (p10k
+/// `POWERLEVEL9K_PROMPT_ADD_NEWLINE`): the row the engine leaves between the command output
+/// and the next prompt is the blank line the user sees.
+#[test]
+fn prompt_add_newline_leaves_one_blank_row() {
+    let home = std::env::temp_dir().join(format!("p11k-newline-home-{}", std::process::id()));
+    let dir = home.join("p11k");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("p11k.kdl"),
+        // `verbose=#true`: without it the status segment says nothing about a successful
+        // command, and wait_ready's ✔ would never show up.
+        "layout {\n    left { line { dir } }\n    right { line { status } }\n    prompt-add-newline #true\n}\nsegments {\n    status verbose=#true\n}\n",
+    )
+    .unwrap();
+
+    let mut eng = spawn_engine_with_config_home(home.to_str().unwrap());
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    eng.writer
+        .write_all(b"printf 'P11K-ROW-PROBE\\n'\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    let out = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "\x1b]133;A\x07",
+        Duration::from_secs(5),
+    );
+    let _ = std::fs::remove_dir_all(&home);
+
+    // The command output ends with its own CRLF; everything between it and the prompt-start
+    // marker is the blank row the engine writes before the header.
+    let output = "P11K-ROW-PROBE\r\n";
+    let start = out.find(output).expect("command output") + output.len();
+    let rest = &out[start..];
+    let blank = &rest[..rest.find("\x1b]133;A\x07").expect("prompt start marker")];
+    assert_eq!(
+        blank.matches("\r\n").count(),
+        1,
+        "prompt-add-newline #true should open one blank row, got {blank:?}"
+    );
+}
+
 #[test]
 fn exit_code_shows_in_status() {
     let mut eng = spawn_engine();
