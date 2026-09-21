@@ -43,7 +43,11 @@ nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # 不安装、不配置
 
 `--preset lean|classic|rainbow|pure` 可以不用写配置就选定起点，`p11k configure`
 则像 p10k 的向导那样逐项询问并写出 KDL。四者都是普通主题，其中任何内容都可
-以改：
+以改。
+
+下图为四套配色，统一使用演示主题的布局以便对比：preset 本身也带着自己的布局，
+lean 与 pure 是单行、无边框。颜色取自各自的 preset；preset 未定义的段则沿用
+终端的默认颜色。
 
 ![lean、classic、rainbow、pure](docs/images/presets.png)
 
@@ -227,7 +231,8 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 未暂存、未跟踪与 stash 各一处），再在固定尺寸的 pty 中运行引擎，录下终端本来
 会显示的内容。镜头脚本是
 [`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json)（一串带延时的按键），
-主题是 [`tools/demo/demo.kdl`](tools/demo/demo.kdl)。重新生成需要已构建的
+主题是 [`tools/demo/demo.kdl`](tools/demo/demo.kdl)，presets 图的四份文件在
+[`tools/demo/presets/`](tools/demo/presets)。重新生成需要已构建的
 `p11k`，以及 `zsh`、`bash`、`fish`、`python3`、`tmux`、`agg`、ImageMagick，
 以及图中使用的 Maple Mono Nerd Font。
 

@@ -1,0 +1,53 @@
+// The rainbow preset in the demo layout.
+//
+// The colours are `presets::rainbow(4)` in
+// crates/p11k-engine/src/presets.rs; the layout, the separators and the frame are
+// those of tools/demo/demo.kdl, so the four panes of docs/images/presets.png
+// differ only in colour. A segment the preset does not define has no `fg` here
+// either, and is drawn in the terminal's default colour.
+mode "nerdfont-complete"
+
+layout {
+    left {
+        line { os_icon; dir; vcs }
+    }
+    right {
+        line { status; command_execution_time; background_jobs; time }
+    }
+}
+
+separators gap-foreground=240 sub-foreground=242 right-sub-foreground=242 {
+    segment ""
+    sub ""
+    end ""
+    right-start ""
+    right-segment ""
+    right-sub ""
+    left-tail " "
+    right-tail " "
+    gap "·"
+}
+
+frame fg=238 {
+    first-prefix "╭─"
+    first-suffix "─╮"
+    newline-prefix "├─"
+    newline-suffix "─┤"
+    last-prefix "╰─"
+}
+
+segments {
+    os_icon fg=232 bg=7
+    dir fg=254 bg=4 shorten-strategy="truncate_to_unique" shorten-dir-length=1 {
+        state "ANCHOR" fg=255 bold=#true
+        state "SHORTENED" fg=250
+    }
+    vcs bg=2 clean-foreground=0 modified-foreground=0 conflicted-foreground=1 untracked-foreground=0 meta-foreground=7 shorten-strategy="truncate_middle" shorten-length=12 shorten-min-length=32
+    status bg=0 ok-foreground=2 error-foreground=3 verbose=#true
+    command_execution_time fg=0 bg=3 threshold-seconds=3 precision=0
+    background_jobs fg=6 bg=0 verbose=#false
+    time fg=66 bg=7 time-format="24h"
+    prompt_char fg=76 {
+        state "ERROR" fg=196
+    }
+}

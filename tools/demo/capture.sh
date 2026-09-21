@@ -99,10 +99,12 @@ pane fish "$DEMO_THEME"      "fish"
     -background '#121314' -gravity center -append "$images/shells.png"
 
 echo "== presets =="
-pane zsh "--preset lean"    "lean"
-pane zsh "--preset classic" "classic"
-pane zsh "--preset rainbow" "rainbow"
-pane zsh "--preset pure"    "pure"
+# One layout, four palettes. The presets bring their own layout (lean and pure
+# are single-line and unframed), which would make the panes incomparable, so
+# tools/demo/presets/*.kdl are the demo layout with each preset's colours.
+for preset in lean classic rainbow pure; do
+    pane zsh "$here/presets/$preset.kdl" "$preset"
+done
 "$MAGICK" "$work/pane-lean.label.png" "$work/pane-classic.label.png" \
     "$work/pane-rainbow.label.png" "$work/pane-pure.label.png" \
     -background '#121314' -gravity center -append "$images/presets.png"

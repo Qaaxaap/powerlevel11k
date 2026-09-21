@@ -1,0 +1,51 @@
+// The lean preset in the demo layout.
+//
+// The colours are `presets::lean(false)` in
+// crates/p11k-engine/src/presets.rs; the layout, the separators and the frame are
+// those of tools/demo/demo.kdl, so the four panes of docs/images/presets.png
+// differ only in colour. A segment the preset does not define has no `fg` here
+// either, and is drawn in the terminal's default colour.
+mode "nerdfont-complete"
+
+layout {
+    left {
+        line { os_icon; dir; vcs }
+    }
+    right {
+        line { status; command_execution_time; background_jobs; time }
+    }
+}
+
+separators gap-foreground=240 sub-foreground=242 right-sub-foreground=242 {
+    segment ""
+    sub ""
+    end ""
+    right-start ""
+    right-segment ""
+    right-sub ""
+    left-tail " "
+    right-tail " "
+    gap "·"
+}
+
+frame fg=240 {
+    first-prefix "╭─"
+    first-suffix "─╮"
+    newline-prefix "├─"
+    newline-suffix "─┤"
+    last-prefix "╰─"
+}
+
+segments {
+    dir fg=31 shorten-strategy="truncate_to_unique" shorten-dir-length=1 {
+        state "ANCHOR" fg=39 bold=#true
+        state "SHORTENED" fg=103
+    }
+    vcs clean-foreground=76 modified-foreground=178 conflicted-foreground=196 untracked-foreground=39 meta-foreground=246 shorten-strategy="truncate_middle" shorten-length=12 shorten-min-length=32
+    status ok-foreground=70 error-foreground=160 verbose=#true
+    command_execution_time fg=101 threshold-seconds=3 precision=0
+    background_jobs fg=70 verbose=#false
+    prompt_char fg=76 {
+        state "ERROR" fg=196
+    }
+}

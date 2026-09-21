@@ -50,7 +50,12 @@ records it does not have pwsh installed.
 `--preset lean|classic|rainbow|pure` picks a starting point without writing a
 config, and `p11k configure` walks through the same choices as p10k's wizard and
 writes out the KDL. All four are ordinary themes — anything in them can be
-edited:
+edited.
+
+The four palettes, each in the demo theme's layout so that they can be compared:
+a preset carries its own layout as well, and lean and pure are single-line and
+unframed. The colours are the presets' own; a segment a preset does not define is
+left to the terminal.
 
 ![lean, classic, rainbow and pure](docs/images/presets.png)
 
@@ -264,7 +269,9 @@ stashed change, runs the engine in a pty of a fixed size, and records what the
 terminal would have shown. The scene is
 [`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json) — a list of
 keystrokes with delays, and the theme is
-[`tools/demo/demo.kdl`](tools/demo/demo.kdl). Re-running it needs a built
+[`tools/demo/demo.kdl`](tools/demo/demo.kdl), and
+[`tools/demo/presets/`](tools/demo/presets) holds the four files behind the
+presets image. Re-running it needs a built
 `p11k`, `zsh`, `bash`, `fish`, `python3`, `tmux`, `agg`, ImageMagick, and the
 Maple Mono Nerd Font the images are set in.
 

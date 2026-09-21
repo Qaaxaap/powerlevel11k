@@ -1,0 +1,49 @@
+// The pure preset (Original colours) in the demo layout.
+//
+// The colours are `presets::pure(false)` in
+// crates/p11k-engine/src/presets.rs; the layout, the separators and the frame are
+// those of tools/demo/demo.kdl, so the four panes of docs/images/presets.png
+// differ only in colour. A segment the preset does not define has no `fg` here
+// either, and is drawn in the terminal's default colour.
+mode "nerdfont-complete"
+
+layout {
+    left {
+        line { os_icon; dir; vcs }
+    }
+    right {
+        line { status; command_execution_time; background_jobs; time }
+    }
+}
+
+separators gap-foreground=240 sub-foreground=242 right-sub-foreground=242 {
+    segment ""
+    sub ""
+    end ""
+    right-start ""
+    right-segment ""
+    right-sub ""
+    left-tail " "
+    right-tail " "
+    gap "·"
+}
+
+frame fg=240 {
+    first-prefix "╭─"
+    first-suffix "─╮"
+    newline-prefix "├─"
+    newline-suffix "─┤"
+    last-prefix "╰─"
+}
+
+segments {
+    dir fg=4 shorten-strategy="truncate_to_unique" shorten-dir-length=1 {
+        state "ANCHOR" fg=4
+        state "SHORTENED" fg=242
+    }
+    vcs fg=242
+    command_execution_time fg=3 threshold-seconds=3 precision=0
+    prompt_char fg=5 {
+        state "ERROR" fg=1
+    }
+}
