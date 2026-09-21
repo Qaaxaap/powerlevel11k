@@ -34,6 +34,13 @@ fn spawn_engine() -> Engine {
 /// `--config` is not given. The default is a directory that does not exist, or the developer's
 /// own theme would decide what these assertions see.
 fn spawn_engine_with_config_home(config_home: &str) -> Engine {
+    spawn_engine_shell("zsh", config_home)
+}
+
+/// `shell` is passed to `--shell`. The placeholder protocol differs per shell: zsh announces
+/// the rendered prompt through zle-line-init, while bash (and fish/pwsh) leave the engine to
+/// match the placeholder in the pass-through stream.
+fn spawn_engine_shell(shell: &str, config_home: &str) -> Engine {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -45,9 +52,12 @@ fn spawn_engine_with_config_home(config_home: &str) -> Engine {
         .unwrap();
     let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_p11k"));
     cmd.arg("--shell");
-    cmd.arg("zsh");
+    cmd.arg(shell);
     cmd.env("P11K_USER_ZSHRC", "/dev/null");
     cmd.env("XDG_CONFIG_HOME", config_home);
+    // Pin the terminal type: readline's clear-screen (Ctrl-L) comes from terminfo, and an
+    // unset or unknown TERM in the test environment silently turns it into a plain repaint.
+    cmd.env("TERM", "xterm-256color");
     cmd.cwd("/tmp");
     let child = pair.slave.spawn_command(cmd).unwrap();
     drop(pair.slave);
@@ -195,6 +205,326 @@ fn placeholder_overwritten_by_prefix() {
             Duration::from_secs(1),
         ));
     }
+}
+
+/// bash reprints the whole `PS1` whenever readline redraws the prompt over itself, and
+/// showing completion candidates is one of those cases. `PS1` is the placeholder itself, so
+/// the engine has to paint the prefix over the marker every time it shows up again, not only
+/// on the first prompt after precmd. A marker that is left to be followed by the reprinted
+/// input line is the artifact this test exists for.
+#[test]
+fn bash_prompt_reprint_keeps_the_placeholder_covered() {
+    let home = std::env::temp_dir().join(format!("p11k-bash-reprint-{}", std::process::id()));
+    let dir = home.join("probe");
+    let _ = std::fs::remove_dir_all(&home);
+    for name in ["probe-alpha", "probe-beta", "probe-gamma"] {
+        std::fs::create_dir_all(dir.join(name)).unwrap();
+    }
+
+    let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    eng.writer
+        .write_all(format!("cd {}/probe-\t\t", dir.display()).as_bytes())
+        .unwrap();
+    eng.writer.flush().unwrap();
+    let mut out = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "probe-gamma",
+        Duration::from_secs(5),
+    );
+    out.push_str(&read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "❯",
+        Duration::from_secs(2),
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+
+    let mut seen = 0;
+    for (i, _) in out.match_indices("__") {
+        seen += 1;
+        // The engine paints right on top of the marker: the backfill starts with a cursor save
+        // and a move up, so the reprinted input line may not slip in before it.
+        let after: String = out[i + 2..].chars().take(16).collect();
+        assert!(
+            after.starts_with("\x1b[s"),
+            "placeholder #{seen} was not covered, next bytes: {after:?}"
+        );
+    }
+    assert!(
+        seen >= 1,
+        "the completion redraw should reprint the placeholder, got {seen}"
+    );
+}
+
+/// The placeholder carries one newline per header row and the tty turns each of them into
+/// `\r\n`, so the marker match has to tolerate the CRs: a two-row header must still be
+/// backfilled, in every shell that matches the marker itself.
+#[test]
+fn bash_two_row_header_is_backfilled() {
+    let home = std::env::temp_dir().join(format!("p11k-two-rows-{}", std::process::id()));
+    let dir = home.join("p11k");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("p11k.kdl"),
+        "layout {\n    left {\n        line { dir }\n        line { status }\n    }\n    right {\n        line { time }\n        line { background_jobs }\n    }\n}\nsegments {\n    status verbose=#true\n}\n",
+    )
+    .unwrap();
+
+    let mut eng = spawn_engine_shell("bash", home.to_str().unwrap());
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    eng.writer.write_all(b"echo two-row-probe\n").unwrap();
+    eng.writer.flush().unwrap();
+    let mut out = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "two-row-probe",
+        Duration::from_secs(5),
+    );
+    out.push_str(&read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "❯",
+        Duration::from_secs(2),
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+
+    assert!(
+        out.contains("two-row-probe"),
+        "the command should have run, got {out:?}"
+    );
+    for (i, _) in out.match_indices("__") {
+        let after: String = out[i + 2..].chars().take(16).collect();
+        assert!(
+            after.starts_with("\x1b[s"),
+            "placeholder was not covered, next bytes: {after:?}"
+        );
+    }
+}
+
+/// The marker is as wide as the prefix, so a wide prefix means a long marker and a long
+/// placeholder: the match, the backfill and the overwrite all have to follow that length (and
+/// the header's row count) rather than any fixed size.
+#[test]
+fn bash_long_prefix_is_backfilled() {
+    let home = std::env::temp_dir().join(format!("p11k-long-prefix-{}", std::process::id()));
+    let dir = home.join("p11k");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("p11k.kdl"),
+        "layout {\n    left {\n        line { dir }\n        line { status }\n        line { time }\n    }\n    right {\n        line { background_jobs }\n        line {}\n        line {}\n    }\n}\nframe {\n    last-prefix \"══════════╰─\"\n}\nsegments {\n    status verbose=#true\n    time time-format=\"24h\"\n}\n",
+    )
+    .unwrap();
+
+    let mut eng = spawn_engine_shell("bash", home.to_str().unwrap());
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    eng.writer.write_all(b"echo wide-probe\n").unwrap();
+    eng.writer.flush().unwrap();
+    let mut out = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "wide-probe",
+        Duration::from_secs(5),
+    );
+    out.push_str(&read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "❯",
+        Duration::from_secs(2),
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+
+    // Fourteen columns of prefix → a fourteen byte marker, in front of three header rows.
+    let marker = "_".repeat(14);
+    let mut seen = 0;
+    for (i, _) in out.match_indices(&marker) {
+        seen += 1;
+        let after: String = out[i + marker.len()..].chars().take(16).collect();
+        assert!(
+            after.starts_with("\x1b[s"),
+            "the long placeholder was not covered, next bytes: {after:?}"
+        );
+    }
+    assert!(
+        seen >= 1,
+        "the wide placeholder should be printed and matched, got {seen}"
+    );
+    assert!(
+        out.contains("══════════╰─") && out.contains('❯'),
+        "the wide prefix should be painted, got {out:?}"
+    );
+}
+
+/// A `_` the user types is not the placeholder, whatever the marker width is. With a four column
+/// prefix (marker `____`) a run of underscores used to be held back, so the echo lagged by up to
+/// marker width — this is the wide-prefix case the narrow default hides.
+#[test]
+fn bash_typed_underscores_are_echoed_immediately() {
+    let home = std::env::temp_dir().join(format!("p11k-wide-prefix-{}", std::process::id()));
+    let dir = home.join("p11k");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("p11k.kdl"),
+        "layout {\n    left { line { dir } }\n    right { line { status } }\n}\nframe {\n    last-prefix \"╰─\"\n}\nsegments {\n    status verbose=#true\n}\n",
+    )
+    .unwrap();
+
+    let mut eng = spawn_engine_shell("bash", home.to_str().unwrap());
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    for ch in ["_", "_", "_", "_", "_"] {
+        eng.writer.write_all(ch.as_bytes()).unwrap();
+        eng.writer.flush().unwrap();
+        let out = read_until(&*eng.master, &mut *eng.reader, ch, Duration::from_secs(2));
+        assert!(
+            out.contains(ch),
+            "the underscore should be echoed right away, got {out:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&home);
+    eng.writer.write_all(b"\x03").unwrap();
+    eng.writer.flush().unwrap();
+}
+
+/// Typed characters come back one at a time: while the engine looks for the placeholder it must
+/// not hold output back, or the input line lags behind the keyboard (the marker path, which is
+/// bash/fish/pwsh — zsh paints through zle-line-init and never buffers).
+#[test]
+fn bash_typed_characters_are_echoed_immediately() {
+    let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    for ch in ["i", "m", "m", "e", "d"] {
+        eng.writer.write_all(ch.as_bytes()).unwrap();
+        eng.writer.flush().unwrap();
+        let out = read_until(&*eng.master, &mut *eng.reader, ch, Duration::from_secs(2));
+        assert!(
+            out.contains(ch),
+            "the character {ch:?} should be echoed right away, got {out:?}"
+        );
+    }
+    // Leave the line without running a command.
+    eng.writer.write_all(b"\x03").unwrap();
+    eng.writer.flush().unwrap();
+}
+
+/// readline's completion pager takes an enter to page on, and that enter is not a submitted
+/// command: the prompt it reprints afterwards still has to be covered. Keying the marker match on
+/// "the input line is live" breaks exactly here — the enter clears that flag, so the reprint went
+/// through uncovered as soon as the list was paged through.
+#[test]
+fn bash_enter_inside_the_completion_pager_is_covered() {
+    let home = std::env::temp_dir().join(format!("p11k-pager-{}", std::process::id()));
+    let dir = home.join("p");
+    let _ = std::fs::remove_dir_all(&home);
+    // Enough candidates to make readline page in a 24 row window (it lists about sixteen per row).
+    for i in 0..900 {
+        std::fs::create_dir_all(dir.join(format!("c{i:03}"))).unwrap();
+    }
+
+    let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    eng.writer
+        .write_all(format!("ls {}/c\t\t", dir.display()).as_bytes())
+        .unwrap();
+    eng.writer.flush().unwrap();
+    // bash asks before listing this many candidates.
+    read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "possibilities",
+        Duration::from_secs(5),
+    );
+    eng.writer.write_all(b"y").unwrap();
+    eng.writer.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    // One enter inside the pager, then page to the end with spaces.
+    eng.writer.write_all(b"\r").unwrap();
+    eng.writer.flush().unwrap();
+    for _ in 0..40 {
+        eng.writer.write_all(b" ").unwrap();
+        eng.writer.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut out = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "c899",
+        Duration::from_secs(5),
+    );
+    out.push_str(&read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "❯",
+        Duration::from_secs(2),
+    ));
+    let _ = std::fs::remove_dir_all(&home);
+
+    let mut seen = 0;
+    for (i, _) in out.match_indices("__") {
+        seen += 1;
+        let after: String = out[i + 2..].chars().take(16).collect();
+        assert!(
+            after.starts_with("\x1b[s"),
+            "placeholder #{seen} printed by the pager was not covered, next bytes: {after:?}"
+        );
+    }
+    assert!(
+        seen >= 1,
+        "the paged prompt should reprint the placeholder, got {seen}"
+    );
+}
+
+/// Ctrl-L makes readline clear the screen and reprint the prompt. The header was on screen
+/// before the clear, so the engine has to rebuild it from the reprint: the screen must not
+/// end up with a bare marker and no header.
+#[test]
+fn bash_ctrl_l_rebuilds_the_prompt() {
+    let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    // Run an empty command first and let the next prompt settle: bash paints the first prompt
+    // while the rcfile is still taking effect, and a Ctrl-L sent in between lands in the line
+    // buffer instead of running clear-screen.
+    eng.writer.write_all(b"\n").unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&*eng.master, &mut *eng.reader, "❯", Duration::from_secs(5));
+    std::thread::sleep(Duration::from_millis(300));
+
+    eng.writer.write_all(b"\x0c").unwrap();
+    eng.writer.flush().unwrap();
+
+    let mut cleared = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "\x1b[2J",
+        Duration::from_secs(5),
+    );
+    assert!(
+        cleared.contains("\x1b[2J"),
+        "readline clears the screen on Ctrl-L, got {cleared:?}"
+    );
+    // The repaint may already be in the same read as the clear.
+    if !cleared.contains('❯') {
+        cleared.push_str(&read_until(
+            &*eng.master,
+            &mut *eng.reader,
+            "❯",
+            Duration::from_secs(2),
+        ));
+    }
+    assert!(
+        cleared.contains('❯'),
+        "the prompt should be rebuilt after Ctrl-L, got {cleared:?}"
+    );
 }
 
 #[test]
