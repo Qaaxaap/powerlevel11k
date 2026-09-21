@@ -6,9 +6,6 @@
 
 ![p11k 在 zsh 中：git 状态、一次测试运行与耗时、后台任务](docs/images/demo.gif)
 
-录制用的是 zsh 和 [`tools/demo/demo.kdl`](tools/demo/demo.kdl) 里的主题；
-[`tools/demo/`](tools/demo) 可以重新生成这些图。
-
 p11k 仍在开发中（1.0.0-alpha.1）：功能已完整、日常在用，但尚未定型——配置
 语言仍可能变动。
 
@@ -31,7 +28,7 @@ nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # 不安装、不配置
 ## 一套主题，所有 shell
 
 头部由引擎绘制而不是 shell，所以同一份主题文件在 zsh、bash、fish 下给出相同
-的提示符。pwsh 走同一套协议层，只是录制图的机器上没装，不在图里。
+的提示符（pwsh 走同一套协议层）。
 
 ![同一主题在 zsh、bash、fish 下的渲染](docs/images/shells.png)
 
@@ -41,8 +38,8 @@ nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # 不安装、不配置
 则像 p10k 的向导那样逐项询问并写出 KDL。四者都是普通主题，其中任何内容都可
 以改。
 
-下图把四套配色放进演示主题的布局，方便对比。preset 本身也带布局：lean 与 pure
-是单行、无边框。颜色取自 preset，preset 没定义的段用终端默认色。
+下图把四套配色放进同一个布局，方便对比。preset 本身也带布局：lean 与 pure 是
+单行、无边框。颜色取自 preset，preset 没定义的段用终端默认色。
 
 ![lean、classic、rainbow、pure](docs/images/presets.png)
 
@@ -218,18 +215,6 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
   引擎看不到。
 - macOS 支持
 - daemon 与引擎的长期维护和加固
-
-## 演示图片
-
-`docs/images/` 里的图是录出来的，不是画的：
-[`tools/demo/capture.sh`](tools/demo/capture.sh) 先建一个小 git 仓库（暂存、
-未暂存、未跟踪、stash 各一处），再在固定尺寸的 pty 里运行引擎，把终端本来会
-显示的内容留下来。按键在
-[`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json)，主题在
-[`tools/demo/demo.kdl`](tools/demo/demo.kdl)，presets 图用的四份文件在
-[`tools/demo/presets/`](tools/demo/presets)。重新录制需要已构建的 `p11k`，以及
-`zsh`、`bash`、`fish`、`python3`、`tmux`、`agg`、ImageMagick 和图中用的
-Maple Mono Nerd Font。
 
 ## 参与开发
 

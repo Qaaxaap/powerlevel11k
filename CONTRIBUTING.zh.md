@@ -55,6 +55,18 @@ target/debug/p11k --shell zsh --config path/to/theme.kdl
 [docs/config-language.zh.md](docs/config-language.zh.md)。改动配置解析或渲染时
 须遵循该规范。
 
+## 演示图片
+
+`docs/images/` 里的图是生成的。`tools/demo/capture.sh` 先建一个小 git 仓库
+（暂存、未暂存、未跟踪、stash 各一处），再在固定尺寸的 pty 里运行引擎，把终端
+本来会显示的内容留下来；静图取自 tmux 的 pane dump，因为 fish 启动时会向终端
+发问询，裸 pty 不会应答。按键在 `tools/demo/scenes/demo.json`，主题在
+`tools/demo/demo.kdl`，presets 图用的四份文件在 `tools/demo/presets/`。
+
+重新录制需要已构建的 `p11k`（`cargo build --release -p p11k-engine`），以及
+zsh、bash、fish、python3、tmux、agg（asciinema/agg）、ImageMagick 和 Maple
+Mono Nerd Font。这些都不在 devShell 里：图片是提交进仓库的，CI 不重新生成。
+
 ## 文案翻译
 
 用户可见文案使用 gettext：代码中写英文 msgid，词条位于

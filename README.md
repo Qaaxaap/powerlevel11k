@@ -6,10 +6,6 @@ A prompt engine that continues powerlevel10k, written in Rust.
 
 ![p11k in zsh: git status, a test run with its execution time, a background job](docs/images/demo.gif)
 
-The recording uses zsh and the theme in
-[`tools/demo/demo.kdl`](tools/demo/demo.kdl); [`tools/demo/`](tools/demo)
-rebuilds it.
-
 p11k is a work in progress (1.0.0-alpha.1): feature-complete and used daily, but
 not settled yet — the config language can still change.
 
@@ -36,8 +32,7 @@ Anything else is under [Installing](#installing).
 ## One theme, every shell
 
 The header is drawn by the engine, not by the shell, so one theme file gives the
-same prompt under zsh, bash and fish. pwsh uses the same layer; it is not in the
-picture because it is not installed on the machine that records the images.
+same prompt under zsh, bash and fish (pwsh uses the same layer).
 
 ![the same theme in zsh, bash and fish](docs/images/shells.png)
 
@@ -48,10 +43,10 @@ config, and `p11k configure` walks through the same choices as p10k's wizard and
 writes out the KDL. All four are ordinary themes — anything in them can be
 edited.
 
-The image puts the four palettes in the demo theme's layout so that they can be
-compared. A preset also carries a layout of its own: lean and pure are
-single-line and unframed. Colours come from the preset, and a segment a preset
-does not define keeps the terminal's default.
+The four palettes are shown in one layout so that they can be compared. A preset
+also carries a layout of its own: lean and pure are single-line and unframed.
+Colours come from the preset, and a segment a preset does not define keeps the
+terminal's default.
 
 ![lean, classic, rainbow and pure](docs/images/presets.png)
 
@@ -256,18 +251,6 @@ Roadmap:
   zle's buffer, which the engine never sees.
 - macOS support
 - long-term maintenance and hardening of the daemon and the engine
-
-## Demo images
-
-The images are recorded, not drawn. [`tools/demo/capture.sh`](tools/demo/capture.sh)
-builds a small git repository with a staged, an unstaged, an untracked and a
-stashed change, runs the engine in a pty of a fixed size, and keeps what the
-terminal would have shown; the keystrokes are in
-[`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json), the theme in
-[`tools/demo/demo.kdl`](tools/demo/demo.kdl), and
-[`tools/demo/presets/`](tools/demo/presets) holds the four files behind the
-presets image. Re-recording needs a built `p11k`, zsh, bash, fish, python3, tmux,
-agg, ImageMagick and the Maple Mono Nerd Font.
 
 ## Contributing
 

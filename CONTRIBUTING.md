@@ -60,6 +60,21 @@ The theme config language has its own spec, maintained in step with the
 engine: [docs/config-language.md](docs/config-language.md). Changing config
 parsing or rendering must follow it.
 
+## Demo images
+
+`docs/images/` is generated. `tools/demo/capture.sh` builds a small git
+repository with a staged, an unstaged, an untracked and a stashed change, runs
+the engine in a pty of a fixed size, and keeps what the terminal would have
+shown; the still images come from tmux pane dumps, because fish asks the
+terminal questions at startup that a bare pty does not answer. The keystrokes
+are in `tools/demo/scenes/demo.json`, the theme in `tools/demo/demo.kdl`, and
+`tools/demo/presets/` holds the files behind the presets image.
+
+Re-recording needs a built `p11k` (`cargo build --release -p p11k-engine`), zsh,
+bash, fish, python3, tmux, agg (asciinema/agg), ImageMagick and the Maple Mono
+Nerd Font. None of them are in the devShell: the images are committed, and
+nothing in CI regenerates them.
+
 ## Translations
 
 User-facing text uses gettext: English msgids in the code, catalogs in
