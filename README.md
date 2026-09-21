@@ -1,8 +1,20 @@
 # powerlevel11k (p11k)
 
-[中文](README.zh.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml)
+[中文](README.zh.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml) · [![LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](COPYING.LESSER) · ![x86_64 Linux](https://img.shields.io/badge/platform-x86__64%20Linux-lightgrey)
 
 A prompt engine that continues powerlevel10k, written in Rust.
+
+![p11k in zsh: git status, a failing test, a background job, the transient prompt](docs/images/demo.gif)
+
+One zsh session with the theme in [`tools/demo/demo.kdl`](tools/demo/demo.kdl):
+the header is on screen the moment the terminal opens, `dir` and `vcs` follow the
+working tree, a failing `cargo test` fills in the status and the execution time,
+`sleep 30 &` the background-job count, and every submitted command folds into a
+single `❯` line. The images are recorded by
+[`tools/demo/capture.sh`](tools/demo/capture.sh).
+
+p11k is a work in progress (1.0.0-alpha.1): feature-complete and used daily, but
+not settled yet — the config language can still change.
 
 powerlevel10k entered pure maintenance mode in 2024: no new features, most bugs
 left unfixed, issues unanswered, and the repository will not be handed over. It
@@ -16,21 +28,31 @@ that pty, passes bytes through untouched, and only takes over at the moment a
 prompt appears. The same theme therefore runs on zsh, bash, fish and pwsh,
 which is something p10k cannot do.
 
-## How the engine works
+## Try it
 
-The engine is a pty host and a transparent proxy: it starts a theme-less shell
-in a pty, forwards bytes untouched, and only takes over drawing at the moment a
-prompt appears.
+```bash
+nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # no install, no config
+```
 
-Once a shell hook announces that the prompt is ready, the engine draws the
-theme header and hands control back when it is done. The input line is still
-drawn by the shell's own line editor, so completion, history and vi mode stay
-geometrically consistent.
+Anything else is under [Installing](#installing).
 
-The geometry is guaranteed by the placeholder protocol: the shell renders a
-theme skeleton made of placeholders, and the engine fills in the real header
-once that skeleton is on screen. The engine does not parse ANSI sequences out
-of the pty stream, and does not touch user input.
+## One theme, every shell
+
+The header is drawn by the engine, not by the shell, so a single theme file
+renders the same prompt under zsh, bash and fish. pwsh goes through the same
+protocol layer; it is missing from the picture only because the machine that
+records it does not have pwsh installed.
+
+![the same theme in zsh, bash and fish](docs/images/shells.png)
+
+## Presets
+
+`--preset lean|classic|rainbow|pure` picks a starting point without writing a
+config, and `p11k configure` walks through the same choices as p10k's wizard and
+writes out the KDL. All four are ordinary themes — anything in them can be
+edited:
+
+![lean, classic, rainbow and pure](docs/images/presets.png)
 
 ## Features
 
@@ -57,6 +79,22 @@ of the pty stream, and does not touch user input.
 - **Three icon sets**: `nerdfont` / `compatible` / `ascii`, picked to match the
   font in use; a non-UTF-8 locale falls back to `ascii` automatically. A
   top-level `icon{}` overrides individual characters per tier.
+
+## How the engine works
+
+The engine is a pty host and a transparent proxy: it starts a theme-less shell
+in a pty, forwards bytes untouched, and only takes over drawing at the moment a
+prompt appears.
+
+Once a shell hook announces that the prompt is ready, the engine draws the
+theme header and hands control back when it is done. The input line is still
+drawn by the shell's own line editor, so completion, history and vi mode stay
+geometrically consistent.
+
+The geometry is guaranteed by the placeholder protocol: the shell renders a
+theme skeleton made of placeholders, and the engine fills in the real header
+once that skeleton is on screen. The engine does not parse ANSI sequences out
+of the pty stream, and does not touch user input.
 
 ## Installing
 
@@ -217,6 +255,17 @@ Roadmap:
   zle's buffer, which the engine never sees.
 - macOS support
 - long-term maintenance and hardening of the daemon and the engine
+
+## Demo images
+
+`docs/images/` is generated, not drawn: [`tools/demo/capture.sh`](tools/demo/capture.sh)
+builds a small git repository with a staged, an unstaged, an untracked and a
+stashed change, runs the engine in a pty of a fixed size, and records what the
+terminal would have shown. The scene is
+[`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json) — a list of
+keystrokes with delays, and the theme is
+[`tools/demo/demo.kdl`](tools/demo/demo.kdl). Re-running it needs a built
+`p11k`, `zsh`, `bash`, `fish`, `python3`, `tmux`, `agg` and ImageMagick.
 
 ## Contributing
 

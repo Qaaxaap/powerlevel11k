@@ -35,3 +35,5 @@ Thumbs.db
 # ── Nix ──
 /result
 /result-*
+
+/tools/demo/home/
