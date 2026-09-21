@@ -223,6 +223,7 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
 
     let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
     wait_ready(&*eng.master, &mut *eng.reader);
+    assert_readline_available(&mut eng);
 
     eng.writer
         .write_all(format!("cd {}/probe-\t\t", dir.display()).as_bytes())
@@ -431,6 +432,7 @@ fn bash_enter_inside_the_completion_pager_is_covered() {
 
     let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
     wait_ready(&*eng.master, &mut *eng.reader);
+    assert_readline_available(&mut eng);
 
     eng.writer
         .write_all(format!("ls {}/c\t\t", dir.display()).as_bytes())
@@ -490,6 +492,7 @@ fn bash_enter_inside_the_completion_pager_is_covered() {
 fn bash_ctrl_l_rebuilds_the_prompt() {
     let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
     wait_ready(&*eng.master, &mut *eng.reader);
+    assert_readline_available(&mut eng);
 
     // Run an empty command first and let the next prompt settle: bash paints the first prompt
     // while the rcfile is still taking effect, and a Ctrl-L sent in between lands in the line
@@ -524,6 +527,26 @@ fn bash_ctrl_l_rebuilds_the_prompt() {
     assert!(
         cleared.contains('❯'),
         "the prompt should be rebuilt after Ctrl-L, got {cleared:?}"
+    );
+}
+
+/// The tests below drive readline itself — clear-screen, the completion pager. nixpkgs' default
+/// `bash` is built without readline (`bind` does not even exist), so on that shell they would
+/// fail for a reason that has nothing to do with the engine. Say which it is.
+fn assert_readline_available(eng: &mut Engine) {
+    eng.writer
+        .write_all(b"printf 'RL%sRL\\n' \"$(bind -P | grep -c '^clear-screen')\"\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    let out = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "RL1RL",
+        Duration::from_secs(2),
+    );
+    assert!(
+        out.contains("RL1RL"),
+        "the inner bash has no readline (nixpkgs' non-interactive bash build?): {out:?}"
     );
 }
 

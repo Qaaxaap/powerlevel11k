@@ -34,6 +34,10 @@
             rust-analyzer
             gettext
             zsh
+            # The engine's bash tests drive readline: the placeholder protocol, clear-screen and
+            # the completion pager. nixpkgs' default `bash` is the non-interactive build (no
+            # readline, no `bind`), so the proxy tests would fail on it for the wrong reason.
+            bashInteractive
             git
             pkg-config
             openssl
@@ -57,7 +61,10 @@
             git
           ];
           buildInputs = with pkgs; [ openssl ];
-          nativeCheckInputs = with pkgs; [ zsh ];
+          nativeCheckInputs = with pkgs; [
+            zsh
+            bashInteractive
+          ];
           preCheck = ''
             export LANG=C.UTF-8
             export LOCALE_ARCHIVE=${localesOf pkgs}/lib/locale/locale-archive
