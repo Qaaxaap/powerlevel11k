@@ -23,8 +23,8 @@ separators gap-foreground=240 sub-foreground=242 right-sub-foreground=242 {
     right-start ""
     right-segment ""
     right-sub ""
-    left-tail " "
-    right-tail " "
+    left-tail ""
+    right-tail ""
     gap "·"
 }
 

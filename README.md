@@ -1,17 +1,14 @@
 # powerlevel11k (p11k)
 
-[中文](README.zh.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml) · [![LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](COPYING.LESSER) · ![x86_64 Linux](https://img.shields.io/badge/platform-x86__64%20Linux-lightgrey)
+[中文](README.zh.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml) · [![LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](COPYING.LESSER)
 
 A prompt engine that continues powerlevel10k, written in Rust.
 
 ![p11k in zsh: git status, a test run, a background job, the transient prompt](docs/images/demo.gif)
 
-One zsh session with the theme in [`tools/demo/demo.kdl`](tools/demo/demo.kdl):
-the header is on screen the moment the terminal opens, `dir` and `vcs` follow the
-working tree, `cargo test` fills in the status and the execution time,
-`sleep 30 &` the background-job count, and every submitted command folds into a
-single `❯` line. The images are recorded by
-[`tools/demo/capture.sh`](tools/demo/capture.sh) and set in Maple Mono NF.
+The recording uses zsh and the theme in
+[`tools/demo/demo.kdl`](tools/demo/demo.kdl); [`tools/demo/`](tools/demo)
+rebuilds it.
 
 p11k is a work in progress (1.0.0-alpha.1): feature-complete and used daily, but
 not settled yet — the config language can still change.
@@ -38,10 +35,9 @@ Anything else is under [Installing](#installing).
 
 ## One theme, every shell
 
-The header is drawn by the engine, not by the shell, so a single theme file
-renders the same prompt under zsh, bash and fish. pwsh goes through the same
-protocol layer; it is missing from the picture only because the machine that
-records it does not have pwsh installed.
+The header is drawn by the engine, not by the shell, so one theme file gives the
+same prompt under zsh, bash and fish. pwsh uses the same layer; it is not in the
+picture because it is not installed on the machine that records the images.
 
 ![the same theme in zsh, bash and fish](docs/images/shells.png)
 
@@ -52,10 +48,10 @@ config, and `p11k configure` walks through the same choices as p10k's wizard and
 writes out the KDL. All four are ordinary themes — anything in them can be
 edited.
 
-The four palettes, each in the demo theme's layout so that they can be compared:
-a preset carries its own layout as well, and lean and pure are single-line and
-unframed. The colours are the presets' own; a segment a preset does not define is
-left to the terminal.
+The image puts the four palettes in the demo theme's layout so that they can be
+compared. A preset also carries a layout of its own: lean and pure are
+single-line and unframed. Colours come from the preset, and a segment a preset
+does not define keeps the terminal's default.
 
 ![lean, classic, rainbow and pure](docs/images/presets.png)
 
@@ -263,17 +259,15 @@ Roadmap:
 
 ## Demo images
 
-`docs/images/` is generated, not drawn: [`tools/demo/capture.sh`](tools/demo/capture.sh)
+The images are recorded, not drawn. [`tools/demo/capture.sh`](tools/demo/capture.sh)
 builds a small git repository with a staged, an unstaged, an untracked and a
-stashed change, runs the engine in a pty of a fixed size, and records what the
-terminal would have shown. The scene is
-[`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json) — a list of
-keystrokes with delays, and the theme is
+stashed change, runs the engine in a pty of a fixed size, and keeps what the
+terminal would have shown; the keystrokes are in
+[`tools/demo/scenes/demo.json`](tools/demo/scenes/demo.json), the theme in
 [`tools/demo/demo.kdl`](tools/demo/demo.kdl), and
 [`tools/demo/presets/`](tools/demo/presets) holds the four files behind the
-presets image. Re-running it needs a built
-`p11k`, `zsh`, `bash`, `fish`, `python3`, `tmux`, `agg`, ImageMagick, and the
-Maple Mono Nerd Font the images are set in.
+presets image. Re-recording needs a built `p11k`, zsh, bash, fish, python3, tmux,
+agg, ImageMagick and the Maple Mono Nerd Font.
 
 ## Contributing
 
