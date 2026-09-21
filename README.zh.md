@@ -4,7 +4,7 @@
 
 用 Rust 重写的 powerlevel10k 提示符引擎。
 
-![p11k 在 zsh 中：git 状态、测试运行、后台任务、transient prompt](docs/images/demo.gif)
+![p11k 在 zsh 中：git 状态、一次测试运行与耗时、后台任务](docs/images/demo.gif)
 
 录制用的是 zsh 和 [`tools/demo/demo.kdl`](tools/demo/demo.kdl) 里的主题；
 [`tools/demo/`](tools/demo) 可以重新生成这些图。

@@ -9,8 +9,6 @@ layout {
     right {
         line { status; command_execution_time; background_jobs; time }
     }
-    prompt-add-newline 1
-    transient-prompt #true
 }
 
 separators gap-foreground=240 sub-foreground=242 right-sub-foreground=242 {

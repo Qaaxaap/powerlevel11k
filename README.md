@@ -4,7 +4,7 @@
 
 A prompt engine that continues powerlevel10k, written in Rust.
 
-![p11k in zsh: git status, a test run, a background job, the transient prompt](docs/images/demo.gif)
+![p11k in zsh: git status, a test run with its execution time, a background job](docs/images/demo.gif)
 
 The recording uses zsh and the theme in
 [`tools/demo/demo.kdl`](tools/demo/demo.kdl); [`tools/demo/`](tools/demo)

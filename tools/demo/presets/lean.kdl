@@ -19,7 +19,7 @@ layout {
 separators gap-foreground=240 sub-foreground=242 right-sub-foreground=242 {
     segment ""
     sub ""
-    end ""
+    end ""
     right-start ""
     right-segment ""
     right-sub ""
