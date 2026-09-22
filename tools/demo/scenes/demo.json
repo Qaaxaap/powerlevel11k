@@ -1,0 +1,29 @@
+{
+  "cols": 94,
+  "rows": 22,
+  "command": ["$P11K", "--shell", "zsh", "--config", "$DEMO_THEME"],
+  "cwd": "$DEMO_HOME",
+  "env": {
+    "HOME": "$DEMO_HOME",
+    "P11K_USER_ZSHRC": "$DEMO_HOME/.zshrc",
+    "PATH": "$DEMO_HOME/.cargo/bin:/usr/bin:/bin",
+    "COLORTERM": "truecolor"
+  },
+  "tail": 1.5,
+  "steps": [
+    {"mark": "the header is already on screen before the first key"},
+    {"sleep": 1.4},
+    {"type": "cd dev/p11k", "delay": 0.055},
+    {"send": "\r"},
+    {"mark": "dir + vcs: branch, ahead/behind, stash, staged/unstaged/untracked"},
+    {"sleep": 1.1},
+    {"type": "cargo test -p p11k-engine", "delay": 0.045},
+    {"send": "\r"},
+    {"mark": "a failing test: error status and the execution time"},
+    {"sleep": 4.4},
+    {"type": "sleep 30 &", "delay": 0.055},
+    {"send": "\r"},
+    {"mark": "background job count"},
+    {"sleep": 1.6}
+  ]
+}

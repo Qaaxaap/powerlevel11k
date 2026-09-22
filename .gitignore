@@ -21,6 +21,10 @@ debug/
 # Compiled wordcode
 *.zwc
 
+# ── Python (tools/demo) ──
+__pycache__/
+*.pyc
+
 # ── Editors ──
 .vscode/
 .idea/
