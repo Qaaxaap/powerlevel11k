@@ -2,8 +2,8 @@
 # Build the demo environment used to record the README assets.
 #
 #   REAL_HOME=<dir>  the real home, for the cargo/rustup symlinks (default: $HOME)
-#   HOME_DIR=<dir>   the isolated home the recording runs in
-#                    (default: ${TMPDIR:-/tmp}/p11k-demo-home)
+#   HOME_DIR=<dir>   the isolated home the recording runs in; it is removed and
+#                    rebuilt from scratch (default: ${TMPDIR:-/tmp}/p11k-demo-home)
 #
 # Creates a miniature Rust workspace under $HOME_DIR/dev/p11k whose git state has
 # one of everything the vcs segment can show: a branch ahead of and behind its
@@ -17,6 +17,14 @@ HOME_DIR=${HOME_DIR:-${TMPDIR:-/tmp}/p11k-demo-home}
 REPO=$HOME_DIR/dev/p11k
 REAL_HOME=${REAL_HOME:-$HOME}
 
+# The directory is rebuilt from scratch, so refuse anything that is not a throwaway path: a
+# typo in HOME_DIR (capture.sh forwards DEMO_HOME here) must not turn into `rm -rf "$HOME"`.
+case $HOME_DIR in
+    "" | / | "$HOME" | "$REAL_HOME")
+        echo "refusing to remove HOME_DIR=$HOME_DIR" >&2
+        exit 1
+        ;;
+esac
 rm -rf "$HOME_DIR"
 mkdir -p "$HOME_DIR/.config"
 

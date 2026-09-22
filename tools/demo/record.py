@@ -22,7 +22,7 @@ Two subcommands:
         `type` writes one byte at a time with `delay` seconds in between, `send`
         writes its string at once, `sleep` waits, `mark` does nothing.
 
-    record.py screen SCREEN -o OUT.cast --cols N --rows M [--repeat N]
+    record.py screen SCREEN -o OUT.cast --cols N --rows M
         Wrap a screen dump (`tmux capture-pane -e -p`, escape sequences and all)
         into a one-frame asciicast, for rendering a still image with agg.
 
@@ -159,10 +159,9 @@ def record_pty(scene, out_path):
 def record_screen(args):
     with open(args.screen) as fh:
         text = fh.read().rstrip("\n")
-    # Home, clear, then the screen: the pane dump is a full repaint by definition.
+    # Home, clear, then the screen: the pane dump is a full repaint by definition, and one
+    # frame is all a still image needs.
     events = [(0.0, "\x1b[2J\x1b[H" + text.replace("\n", "\r\n"))]
-    if args.repeat > 1:
-        events.append((args.tail, ""))
     write_cast(args.out, args.cols, args.rows, events)
     return 0.0
 
@@ -180,8 +179,6 @@ def main():
     screen_ap.add_argument("-o", "--out", required=True)
     screen_ap.add_argument("--cols", type=int, required=True)
     screen_ap.add_argument("--rows", type=int, required=True)
-    screen_ap.add_argument("--repeat", type=int, default=1)
-    screen_ap.add_argument("--tail", type=float, default=1.0)
 
     args = ap.parse_args()
     if args.mode == "pty":

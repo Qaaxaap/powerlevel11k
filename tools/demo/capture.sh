@@ -46,6 +46,8 @@ HOME_DIR=$DEMO_HOME sh "$here/setup-demo.sh"
 
 echo "== recording the animated demo =="
 python3 "$here/record.py" pty "$here/scenes/demo.json" -o "$work/demo.cast"
+# --idle-time-limit trims the pauses the scene deliberately waits out, --fps-cap keeps the file
+# small, and --speed plays the recording back a little faster than it was typed.
 "$AGG" -q --font-family "$FONT" --font-size 20 --theme asciinema \
     --idle-time-limit 1.0 --fps-cap 20 --speed 1.2 "$work/demo.cast" "$images/demo.gif"
 
@@ -77,7 +79,9 @@ pane() {
     "$TMUX" -L p11k-images send-keys -t 0 'cd dev/p11k' Enter
     sleep 1.5
 
-    # -S -2: the last two lines are exactly the current prompt (header + input).
+    # -S -2: the last two lines are exactly the current prompt. The header is a single row in
+    # demo.kdl and in the presets/ files, so header + input line is two; a theme with a
+    # multi-row header would have to raise this number with it.
     "$TMUX" -L p11k-images capture-pane -e -p -t 0 -S -2 > "$stem.ans"
     "$TMUX" -L p11k-images kill-server 2>/dev/null || true
 
