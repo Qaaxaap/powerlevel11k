@@ -38,6 +38,15 @@
             # the completion pager. nixpkgs' default `bash` is the non-interactive build (no
             # readline, no `bind`), so the proxy tests would fail on it for the wrong reason.
             bashInteractive
+            # The engine proxies fish and pwsh too, and their protocol layers are exercised by
+            # tests/proxy.rs: the shells have to come from here rather than from whatever happens
+            # to be on a developer's PATH.
+            fish
+            powershell
+            # pwsh's PSReadLine asks the terminal for the cursor position on every keystroke and
+            # blocks until the reply arrives, so its tests drive a tmux session: a bare pty never
+            # answers, and without the answer pwsh's redraws land on wrong coordinates.
+            tmux
             git
             pkg-config
             openssl
@@ -64,6 +73,8 @@
           nativeCheckInputs = with pkgs; [
             zsh
             bashInteractive
+            fish
+            powershell
           ];
           preCheck = ''
             export LANG=C.UTF-8
