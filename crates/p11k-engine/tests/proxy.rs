@@ -250,7 +250,7 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
         // and a move up, so the reprinted input line may not slip in before it.
         let after: String = out[i + 2..].chars().take(16).collect();
         assert!(
-            after.starts_with("\x1b[s"),
+            after.starts_with("\x1b7"),
             "placeholder #{seen} was not covered, next bytes: {after:?}"
         );
     }
@@ -301,7 +301,7 @@ fn bash_two_row_header_is_backfilled() {
     for (i, _) in out.match_indices("__") {
         let after: String = out[i + 2..].chars().take(16).collect();
         assert!(
-            after.starts_with("\x1b[s"),
+            after.starts_with("\x1b7"),
             "placeholder was not covered, next bytes: {after:?}"
         );
     }
@@ -348,7 +348,7 @@ fn bash_long_prefix_is_backfilled() {
         seen += 1;
         let after: String = out[i + marker.len()..].chars().take(16).collect();
         assert!(
-            after.starts_with("\x1b[s"),
+            after.starts_with("\x1b7"),
             "the long placeholder was not covered, next bytes: {after:?}"
         );
     }
@@ -475,7 +475,7 @@ fn bash_enter_inside_the_completion_pager_is_covered() {
         seen += 1;
         let after: String = out[i + 2..].chars().take(16).collect();
         assert!(
-            after.starts_with("\x1b[s"),
+            after.starts_with("\x1b7"),
             "placeholder #{seen} printed by the pager was not covered, next bytes: {after:?}"
         );
     }
