@@ -108,9 +108,14 @@ pub fn render_header_cfg(
 /// Fill in/redraw the header: save the input line cursor, move up to header line 1, redraw
 /// line by line, restore. The number of rows moved up equals the configured header line count;
 /// the input line is untouched. Under the placeholder protocol the shell has already rendered
-/// that many blank placeholder lines, so the real content is written over them, and `\x1b[u`
+/// that many blank placeholder lines, so the real content is written over them, and `\x1b8`
 /// returns to the input line cursor. Resize redraws and the first fill-in after the `p`
 /// announcement share this code.
+///
+/// Cursor save/restore uses the 7-bit `ESC 7` / `ESC 8` form of DECSC/DECRC rather than the
+/// `CSI s` / `CSI u` aliases: nvim's built-in terminal (libvterm) implements only the 7-bit
+/// form, so with the aliases the restore lands in the top-left corner and the whole prompt
+/// window is painted on the wrong rows.
 pub fn redraw_header_cfg(
     out: &mut dyn Write,
     cols: usize,
@@ -120,9 +125,9 @@ pub fn redraw_header_cfg(
 ) -> io::Result<()> {
     let lines = crate::render::render_header_lines(config, info, vcs, cols);
     let n = lines.len().max(1);
-    write!(out, "\x1b[s\x1b[{}A", n)?;
+    write!(out, "\x1b7\x1b[{}A", n)?;
     header_body(out, &lines)?;
-    write!(out, "\x1b[u")?;
+    write!(out, "\x1b8")?;
     Ok(())
 }
 
@@ -130,13 +135,13 @@ pub fn redraw_header_cfg(
 /// to draw `prefix`, restore the cursor.
 ///
 /// Triggered by the `p` announcement (zle-line-init) — zle has finished rendering the
-/// placeholder prompt and the cursor sits after the placeholder. `\e[s` saves the cursor, `\r`
-/// returns to column 0 to overwrite the placeholder characters column by column, and `\e[u`
+/// placeholder prompt and the cursor sits after the placeholder. `\e7` saves the cursor, `\r`
+/// returns to column 0 to overwrite the placeholder characters column by column, and `\e8`
 /// restores the cursor. The prefix covers only the placeholder's columns; when the buffer is
 /// non-empty (redraw after resize) the cursor is restored to the end of the buffer, so it never
 /// conflicts with zle's cursor model.
 pub fn render_prompt(out: &mut dyn Write, prefix: &str) -> io::Result<()> {
-    write!(out, "\x1b[s\r{prefix}\x1b[u")?;
+    write!(out, "\x1b7\r{prefix}\x1b8")?;
     // OSC 133 B: prompt end marker, telling the terminal the cursor now rests at the input
     // position, so closing the window no longer asks to confirm a "running program" (aligns
     // with p10k _p9k_prompt_suffix).
@@ -154,7 +159,7 @@ mod tests {
         render_prompt(&mut out, "❯ ").unwrap();
         let s = String::from_utf8_lossy(&out);
         assert!(
-            s.starts_with("\x1b[s\r❯ "),
+            s.starts_with("\x1b7\r❯ "),
             "should save the cursor, go back to column 0 to draw the prefix over the placeholder, then restore the cursor"
         );
         assert!(
