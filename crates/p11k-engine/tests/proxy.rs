@@ -260,6 +260,54 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
     );
 }
 
+/// A background job finishing while the prompt sits idle makes zsh print the notification and
+/// redraw the prompt: `PROMPT` (blank rows + marker) goes out again, and no announce covers it
+/// — zle-line-init only runs when the input line is entered, not when it is redrawn. The
+/// marker matching therefore has to run for zsh too, for as long as the input line is idle.
+///
+/// Only the marker reprinted after the notification is asserted here: the first prompt of a
+/// cycle is painted by the `p` announce, and zle's own bytes (bracketed paste, cursor keys)
+/// sit between its marker and the paint that covers it.
+#[test]
+fn zsh_job_notification_reprint_is_covered() {
+    let mut eng = spawn_engine();
+    wait_ready(&*eng.master, &mut *eng.reader);
+
+    eng.writer.write_all(b"sleep 1 &\n").unwrap();
+    eng.writer.flush().unwrap();
+    // The next prompt is up while the job still runs; the notification and the redraw follow
+    // once it finishes.
+    let mut out = read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "done",
+        Duration::from_secs(8),
+    );
+    out.push_str(&read_until(
+        &*eng.master,
+        &mut *eng.reader,
+        "❯",
+        Duration::from_secs(3),
+    ));
+
+    let done = out
+        .find("done")
+        .unwrap_or_else(|| panic!("the job notification should have been printed, got {out:?}"));
+    let mut seen = 0;
+    for (i, _) in out[done..].match_indices("__") {
+        seen += 1;
+        let after: String = out[done + i + 2..].chars().take(16).collect();
+        assert!(
+            after.starts_with("\x1b7"),
+            "the prompt zsh redrew after #{seen} was not covered, next bytes: {after:?}"
+        );
+    }
+    assert!(
+        seen >= 1,
+        "the notification should make zsh reprint the placeholder, got {seen}"
+    );
+}
+
 /// The placeholder carries one newline per header row and the tty turns each of them into
 /// `\r\n`, so the marker match has to tolerate the CRs: a two-row header must still be
 /// backfilled, in every shell that matches the marker itself.

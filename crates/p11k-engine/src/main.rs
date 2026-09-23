@@ -1213,9 +1213,22 @@ fn main() -> anyhow::Result<()> {
                     // Those reprints have to be covered for as long as the prompt is on screen,
                     // which is what `prompt_painted` tracks: it survives an enter, because
                     // readline's pager takes one to page on while `at_prompt` reads it as a
-                    // submitted command. zsh repaints its prompt region without reprinting the
-                    // prompt bytes, so it is not matched here.
-                    if shell != Shell::Zsh && (pending_placeholder || prompt_painted) {
+                    // submitted command.
+                    //
+                    // zsh reprints PROMPT (blank rows + marker) as well, just not for those
+                    // reasons: when an asynchronous event lands while the input line is idle — a
+                    // background job finishing, so zle prints the notification and redraws the
+                    // prompt — nothing announces it, and the bare marker stays on screen.
+                    // `at_prompt` is the exact test for zsh: it is set by the `p` announce, which
+                    // covers the placeholder printed right after `h` (so nothing is drawn twice),
+                    // and it is cleared when the user submits (so command output is never
+                    // matched).
+                    let covering = if shell == Shell::Zsh {
+                        at_prompt
+                    } else {
+                        pending_placeholder || prompt_painted
+                    };
+                    if covering {
                         placeholder_buf.extend_from_slice(&buf[..n]);
                         // Paint over every placeholder the buffer holds. The blank rows in front of
                         // the marker may sit in an earlier read — a reprint can straddle a read
