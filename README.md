@@ -1,6 +1,6 @@
 # powerlevel11k (p11k)
 
-[中文](README.zh.md) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml) · [![LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](COPYING.LESSER)
+[中文](README.zh.md) · [![All Contributors](https://img.shields.io/github/all-contributors/Qaaxaap/powerlevel11k?color=ee8449&style=flat-square)](#contributors) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml) · [![LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](COPYING.LESSER)
 
 A prompt engine that continues powerlevel10k, written in Rust.
 
@@ -181,6 +181,15 @@ Roadmap:
 ## Contributing
 
 Build and test environment, commit conventions, the translation workflow and the release process are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Contributors
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
 
 ## License
 
