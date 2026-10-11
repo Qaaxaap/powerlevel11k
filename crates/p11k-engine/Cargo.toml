@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-gettext-rs = { version = "0.7", features = ["gettext-system"] }
+gettext-rs = { version = "0.8", features = ["gettext-system"] }
 kdl = "6.5.0"
 libc = { workspace = true }
 p11k-gitstatus = { path = "../p11k-gitstatus" }
