@@ -1,0 +1,11 @@
+# typos configuration, used by `just spell`.
+#
+# The catalogs hold Chinese and the images are generated, so neither is worth checking. Add
+# an entry to `extend-ignore-re` only with a comment saying what the false positive is.
+
+[files]
+extend-exclude = ["crates/p11k-engine/po", "docs/images"]
+
+[default]
+# Nerd Font glyphs are written as Unicode escapes; their hex digits read as words.
+extend-ignore-re = ['\\u\{[0-9a-fA-F]+\}']

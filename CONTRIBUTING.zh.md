@@ -8,15 +8,18 @@
 
 ## 开发环境
 
-构建与测试所需的一切均固定在 `flake.nix`：
+构建与测试所需的一切均固定在 `flake.nix`。进入 devShell 后使用 `justfile` 里的配方，`just` 不带参数会列出它们。
 
 ```bash
 nix develop
-cargo test --all
-nix build          # 生成两个二进制：p11k 与 p11k-d
+just check         # fmt-check + clippy + test：PR 必须通过的部分
+just nix-check     # 同样的测试，跑在 nix 沙箱里
+just build         # 生成两个二进制：p11k 与 p11k-d
 ```
 
-devShell 会导出 `LOCALE_ARCHIVE`；缺少该变量时 `setlocale("zh_CN.UTF-8")` 失败，i18n 测试将被跳过。CI 执行的即为上述 `nix develop` 命令，不存在第二套需要同步的环境；此外另有一项检查，确认 Nix 包仍可构建且包含词条。
+CI 执行的就是 `just check`，不存在第二套需要同步的命令行。其余配方覆盖基础设施的另外几块：`just deny`（依赖许可、禁用与安全通告）、`just spell`（拼写检查）、`just i18n`（重新生成 gettext 模板）、`just changelog`（由提交历史重新生成 `CHANGELOG.md`）、`just demo`（重新录制 `docs/images/`）。
+
+devShell 会导出 `LOCALE_ARCHIVE`；缺少该变量时 `setlocale("zh_CN.UTF-8")` 失败，i18n 测试将被跳过。
 
 以开发方式启动引擎：
 
@@ -34,8 +37,7 @@ target/debug/p11k --shell zsh --config path/to/theme.kdl
 
 ## 代码风格
 
-- 每次提交前执行 `cargo fmt --all`，CI 会检查格式。
-- `cargo clippy --all-targets --locked -- -D warnings` 与 `cargo test --all --locked` 必须通过。
+- 每次提交前执行 `just fmt`；`just check` 会一并检查格式、lint 与测试。
 - 不得使用 `unsafe`，除非有注释说明理由，并有测试或基准作为支撑。git 状态核心因直接访问 `fstatat`/`MetadataExt` 可能需要 `unsafe`；该处为明确许可的例外，不构成其余代码的先例。
 - 公开 API 须有文档注释。gitstatus 协议代码必须在解析代码旁写明线上格式：与原版守护进程的字节级兼容是硬性要求。
 
@@ -74,6 +76,8 @@ tools/i18n.sh update    # msgmerge 将新条目并入每个 po/*.po
 ## 发布
 
 发布由 tag 触发：`v*` 形式的 tag 会构建 `p11k` 与 `p11k-d`，并将 tar 包与 `.deb` 附到该 tag 的 GitHub Release。
+
+打 tag 前先执行 `just changelog` 并提交结果。`CHANGELOG.md` 由约定式提交历史生成，tag 会把当前的 `Unreleased` 段收口。
 
 tag 的版本号必须与 `Cargo.toml` 中 `[workspace.package] version` 一致；workflow 会校验，不一致时失败。
 

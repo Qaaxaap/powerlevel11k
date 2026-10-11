@@ -22,14 +22,14 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 2G
 
-      - name: Format
-        run: nix develop --command cargo fmt --all -- --check
+      - name: Check
+        run: nix develop --command just check
 
-      - name: Clippy
-        run: nix develop --command cargo clippy --all-targets --locked -- -D warnings
+      - name: Dependency licences and advisories
+        run: nix develop --command just deny
 
-      - name: Test
-        run: nix develop --command cargo test --all --locked
+      - name: Spelling
+        run: nix develop --command just spell
 
       - name: Flake check
         run: nix flake check
