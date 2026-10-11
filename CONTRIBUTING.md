@@ -8,15 +8,18 @@ The project is in early development. These rules are deliberately small and will
 
 ## Development environment
 
-Everything the build and the tests need is pinned in `flake.nix`:
+Everything the build and the tests need is pinned in `flake.nix`. Enter the devShell and use the recipes in `justfile`; `just` on its own lists them.
 
 ```bash
 nix develop
-cargo test --all
-nix build          # the binaries: p11k and p11k-d
+just check         # fmt-check + clippy + test: what a pull request must pass
+just nix-check     # the same tests inside the nix sandbox
+just build         # the binaries: p11k and p11k-d
 ```
 
-The devShell exports `LOCALE_ARCHIVE`; without it `setlocale("zh_CN.UTF-8")` fails and the i18n test has to skip. CI runs exactly these `nix develop` commands, so there is no second environment to keep in sync — plus one check that the nix package still builds and carries its catalogs.
+`just check` is what CI runs, so there is no second command line to keep in sync. The other recipes cover the rest of the infrastructure: `just deny` (dependency licences, bans and advisories), `just spell` (typos), `just i18n` (regenerate the gettext template), `just changelog` (regenerate `CHANGELOG.md` from the commit history) and `just demo` (re-record `docs/images/`).
+
+The devShell exports `LOCALE_ARCHIVE`; without it `setlocale("zh_CN.UTF-8")` fails and the i18n test has to skip.
 
 To run the engine straight from a build:
 
@@ -34,8 +37,7 @@ target/debug/p11k --shell zsh --config path/to/theme.kdl
 
 ## Code style
 
-- Run `cargo fmt --all` before every commit; CI checks the formatting.
-- `cargo clippy --all-targets --locked -- -D warnings` and `cargo test --all --locked` must pass.
+- Run `just fmt` before every commit; `just check` verifies the formatting along with the lint and the tests.
 - `unsafe` is not permitted unless a comment justifies it and a test or benchmark backs it up. The git status core may need it for direct `fstatat`/`MetadataExt` access; that is a sanctioned exception, not a precedent for the rest of the crate.
 - Public API requires doc comments. The gitstatus protocol code must document the wire format next to the parsing code: byte-level compatibility with the original daemon is a hard requirement.
 
@@ -74,6 +76,8 @@ This repository embraces AI, on the following terms. Ignoring them may result in
 ## Releases
 
 A `v*` tag publishes: the workflow builds `p11k` and `p11k-d` and attaches a tarball and a `.deb` to that tag's GitHub release.
+
+Before tagging, run `just changelog` and commit the result. `CHANGELOG.md` is generated from the Conventional Commit history; the tag closes the current `Unreleased` section.
 
 The tag must match `[workspace.package] version` in `Cargo.toml`; the workflow checks this and fails otherwise.
 

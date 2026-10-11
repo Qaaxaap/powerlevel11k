@@ -4048,7 +4048,7 @@ mod tests {
     #[test]
     fn row_never_exceeds_cols_at_any_width() {
         // The row width must never exceed cols: the placeholder protocol assumes one terminal
-        // row per line, and an overflow wrap would break the header row count (and mis-count
+        // row per line, and an overflow wrap would break the header row count (and miscount
         // the rows erased for the instant header).
         let cfg = Config::parse(
             "layout {\n  left { line { os_icon; dir; vcs } }\n  \

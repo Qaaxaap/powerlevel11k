@@ -1,0 +1,52 @@
+# cargo-deny configuration, used by `just deny` and the CI `deny` job.
+#
+# The repository itself is GPL-3.0-or-later; the allow list covers that plus the licences the
+# current dependency graph carries, so a new dependency with an unexpected licence fails the
+# check instead of passing unnoticed.
+
+[graph]
+targets = [{ triple = "x86_64-unknown-linux-gnu" }]
+
+[advisories]
+version = 2
+yanked = "warn"
+ignore = [
+  # Both advisories are in git2 code p11k never reaches: `Remote::list()` (which needs a
+  # remote that advertises no references) and `Blame::blame_buffer()`. p11k-gitstatus reads
+  # the index, the refs and the diffs of a local repository and never calls either. Remove
+  # these two entries when the crate moves to git2 0.21.
+  "RUSTSEC-2026-0183",
+  "RUSTSEC-2026-0184",
+  # `setlocale` and `TextDomain::init` touch process-global state without synchronisation.
+  # p11k binds the locale and the text domain once in `i18n::init`, before the engine starts
+  # any thread, and only reads translations afterwards.
+  "RUSTSEC-2026-0244",
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+allow = [
+  "GPL-3.0-or-later",
+  "LGPL-3.0-or-later",
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "MPL-2.0",
+  "CC0-1.0",
+  "Unlicense",
+  "0BSD",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

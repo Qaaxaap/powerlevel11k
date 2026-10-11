@@ -47,6 +47,13 @@
             # blocks until the reply arrives, so its tests drive a tmux session: a bare pty never
             # answers, and without the answer pwsh's redraws land on wrong coordinates.
             tmux
+            # Task runner, changelog generator, and the dependency and spelling checks:
+            # `just check`, `just changelog`, `just deny`, `just spell`. They live here so CI
+            # runs the same commands a developer runs.
+            just
+            git-cliff
+            cargo-deny
+            typos
             git
             pkg-config
             openssl

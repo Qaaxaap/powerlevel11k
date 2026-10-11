@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# Binary assets: never normalise, never diff.
+*.png binary
+*.gif binary
+*.cast binary
+*.deb binary

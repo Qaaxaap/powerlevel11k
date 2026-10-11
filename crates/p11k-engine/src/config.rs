@@ -586,12 +586,12 @@ impl Config {
             if piece.text.is_empty() && piece.style.is_none() {
                 continue;
             }
-            let mut pn = KdlNode::new(name);
-            pn.entries_mut().push(KdlEntry::new(piece.text.clone()));
+            let mut node = KdlNode::new(name);
+            node.entries_mut().push(KdlEntry::new(piece.text.clone()));
             if let Some(st) = &piece.style {
-                pn.entries_mut().extend(style_entries(st));
+                node.entries_mut().extend(style_entries(st));
             }
-            ch.nodes_mut().push(pn);
+            ch.nodes_mut().push(node);
         }
         n
     }
