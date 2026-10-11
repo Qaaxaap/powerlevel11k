@@ -93,15 +93,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// Source files carrying text (the same set tools/i18n.sh scans; i18n.rs itself
-    /// does not count, it holds only wrappers, no text).
-    const SOURCES: &[(&str, &str)] = &[
-        ("main.rs", include_str!("main.rs")),
-        ("config.rs", include_str!("config.rs")),
-        ("render.rs", include_str!("render.rs")),
-        ("presets.rs", include_str!("presets.rs")),
-        ("wizard.rs", include_str!("wizard.rs")),
-    ];
+    /// Source files carrying text: every `src/*.rs` except this one, which holds only
+    /// wrappers and no text. Enumerated rather than listed, so adding or splitting a module
+    /// cannot silently drop its msgids from the check.
+    fn sources() -> Vec<(String, String)> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<(String, String)> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+            .filter(|path| path.file_name().is_some_and(|name| name != "i18n.rs"))
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let text = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+                (name, text)
+            })
+            .collect();
+        files.sort();
+        files
+    }
 
     /// Parse .po/.pot: pull out every msgid (including continuation chunks), skipping the empty header msgid.
     fn catalog_msgids(text: &str) -> BTreeSet<String> {
@@ -198,7 +213,7 @@ mod tests {
     }
 
     fn all_source_msgids() -> BTreeSet<String> {
-        SOURCES
+        sources()
             .iter()
             .flat_map(|(name, src)| source_msgids(name, src))
             .collect()
