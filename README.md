@@ -187,8 +187,17 @@ Build and test environment, commit conventions, the translation workflow and the
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
 <!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Qaaxaap"><img src="https://avatars.githubusercontent.com/u/175310223?v=4?s=100" width="100px;" alt="Qaaxaap"/><br /><sub><b>Qaaxaap</b></sub></a><br /><a href="#code-Qaaxaap" title="Code">💻</a> <a href="#doc-Qaaxaap" title="Documentation">📖</a> <a href="#test-Qaaxaap" title="Tests">⚠️</a> <a href="#infra-Qaaxaap" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#translation-Qaaxaap" title="Translation">🌍</a> <a href="#review-Qaaxaap" title="Reviewed Pull Requests">👀</a></td>
+    </tr>
+  </tbody>
+</table>
+
 <!-- markdownlint-restore -->
 <!-- prettier-ignore-end -->
+
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 ## License
