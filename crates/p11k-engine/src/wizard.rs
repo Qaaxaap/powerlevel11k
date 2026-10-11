@@ -28,7 +28,7 @@ fn early<T, U>(s: Step<T>) -> Step<U> {
 }
 
 pub fn run() -> anyhow::Result<()> {
-    let _raw = crate::RawTerminal::enter(libc::STDIN_FILENO)?;
+    let _raw = crate::state::RawTerminal::enter(libc::STDIN_FILENO)?;
     let mut out = io::stdout();
     loop {
         match flow(&mut out)? {
@@ -237,7 +237,9 @@ fn sample_vcs() -> crate::theme::GitStatus {
 
 /// Render a full prompt preview of the current config (header lines + input line) for per-option previews.
 fn preview_lines(cfg: &Config) -> Vec<String> {
-    let cols = crate::tty_size().map(|(_, c, ..)| c as usize).unwrap_or(80);
+    let cols = crate::state::tty_size()
+        .map(|(_, c, ..)| c as usize)
+        .unwrap_or(80);
     let vcs = sample_vcs();
     let mut lines = crate::render::render_header_lines(cfg, &sample_info(), Some(&vcs), cols);
     // Input line: the prompt_char prefix the engine draws (the shell's buffer follows).
