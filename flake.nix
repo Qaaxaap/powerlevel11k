@@ -75,10 +75,12 @@
             bashInteractive
             fish
             powershell
+            tmux
           ];
           preCheck = ''
             export LANG=C.UTF-8
             export LOCALE_ARCHIVE=${localesOf pkgs}/lib/locale/locale-archive
+            export TERMINFO_DIRS=${pkgs.ncurses.out}/share/terminfo
             export HOME=$TMPDIR
             git config --global user.email "ci@example.com"
             git config --global user.name "CI"
