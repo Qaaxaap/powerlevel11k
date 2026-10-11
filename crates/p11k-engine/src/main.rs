@@ -14,8 +14,9 @@
 //!      real prefix over the placeholder. The prefix covers only the placeholder columns,
 //!      so a slow engine or a user already typing does not matter.
 //!
-//! Geometry protocol: PROMPT carries header_rows newlines + a "__" placeholder so the
-//! shell's prompt geometry counts the header rows too.
+//! Geometry protocol: the shell prints `$P11K_PLACEHOLDER` as its prompt — header_rows
+//! newlines plus a marker as wide as the prefix — so the prompt geometry counts the header
+//! rows too.
 //! precmd writes announce then polls ack, ensuring the placeholder is printed first and
 //! the header backfilled after.
 //!
@@ -265,7 +266,7 @@ _p11k_precmd() {
   _p11k_pipes="${pipestatus}"
   _p11k_pwd=$PWD
   # Used to restore PROMPT after the transient fold
-  PROMPT='__'
+  PROMPT="$P11K_PLACEHOLDER"
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
@@ -301,7 +302,7 @@ fi
 
 # ===== protocol invariants =====
 # PROMPT is a placeholder.
-PROMPT='__'
+PROMPT="$P11K_PLACEHOLDER"
 RPROMPT=''
 PROMPT2='> '
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
@@ -369,11 +370,11 @@ zstyle ':completion:*' special-dirs true
 zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
 "#;
 
-/// bash has no `p` announce: after the ack bash prints PS1 (`__`) directly, and the engine
-/// byte-matches it to paint the prefix over it. resize detects size changes via trap WINCH
-/// and announces `r`.
+/// bash has no `p` announce: after the ack bash prints PS1 (the `P11K_PLACEHOLDER` value)
+/// directly, and the engine byte-matches it to paint the prefix over it. resize detects size
+/// changes via trap WINCH and announces `r`.
 const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol layer + user config.
-PS1='__'
+PS1="$P11K_PLACEHOLDER"
 
 # PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
 # then wait for the engine ack before returning.
@@ -407,7 +408,7 @@ elif [[ -r "$HOME/.bashrc" ]]; then
 fi
 
 # ===== protocol invariants =====
-PS1='__'
+PS1="$P11K_PLACEHOLDER"
 PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
 "#;
@@ -433,7 +434,7 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
-        printf '__'
+        printf '%s' "$P11K_PLACEHOLDER"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -441,7 +442,7 @@ function fish_prompt
         sleep 0.005
     end
     rm -f $P11K_ACK
-    printf '__'
+    printf '%s' "$P11K_PLACEHOLDER"
 end
 
 # ===== user config =====
@@ -462,7 +463,7 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
-        printf '__'
+        printf '%s' "$P11K_PLACEHOLDER"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -470,7 +471,7 @@ function fish_prompt
         sleep 0.005
     end
     rm -f $P11K_ACK
-    printf '__'
+    printf '%s' "$P11K_PLACEHOLDER"
 end
 "#;
 
@@ -515,7 +516,7 @@ function global:P11kEnginePrompt {
     # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
-    '__'
+    $env:P11K_PLACEHOLDER
 }
 
 function global:prompt { P11kEnginePrompt }
@@ -658,7 +659,7 @@ fn main() -> anyhow::Result<()> {
     let header_rows = config.layout.left.len().max(config.layout.right.len());
     let marker = "_".repeat(prefix.width.max(1));
     let placeholder = format!("{}{}", "\n".repeat(header_rows), marker);
-    let state = StateDir::create(shell, &placeholder)?;
+    let state = StateDir::create(shell)?;
     log(&format!(
         "engine start: dir={} announce={} ack={} placeholder={:?} shell={:?}",
         state.dir.display(),
@@ -711,6 +712,9 @@ fn main() -> anyhow::Result<()> {
     }
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
+    // The prompt skeleton each shell prints: header_rows newlines plus a marker exactly as wide
+    // as the prefix the engine paints over it. Handed over as data so no template carries it.
+    cmd.env("P11K_PLACEHOLDER", &placeholder);
     // `p11k reload` runs in the inner shell: it needs to find this engine and the file the
     // theme came from. An empty P11K_CONFIG means the theme is a preset or the built-in one,
     // and there is nothing to re-read.
@@ -1350,7 +1354,7 @@ struct StateDir {
 }
 
 impl StateDir {
-    fn create(shell: Shell, placeholder: &str) -> io::Result<Self> {
+    fn create(shell: Shell) -> io::Result<Self> {
         let dir = std::env::temp_dir().join(format!("p11k-{}", process::id()));
         fs::create_dir_all(&dir)?;
 
@@ -1364,12 +1368,12 @@ impl StateDir {
                     }
                     Err(_) => ZSHRC_TEMPLATE.to_string(),
                 };
-                fs::write(&rc, content.replace("__", placeholder))?;
+                fs::write(&rc, content)?;
                 rc
             }
             Shell::Bash => {
                 let rc = dir.join(".bashrc");
-                fs::write(&rc, BASHRC_TEMPLATE.replace("__", placeholder))?;
+                fs::write(&rc, BASHRC_TEMPLATE)?;
                 rc
             }
             Shell::Fish => {
@@ -1377,15 +1381,13 @@ impl StateDir {
                 let fish_dir = dir.join("fish");
                 fs::create_dir_all(&fish_dir)?;
                 let rc = fish_dir.join("config.fish");
-                fs::write(&rc, FISH_TEMPLATE.replace("__", placeholder))?;
+                fs::write(&rc, FISH_TEMPLATE)?;
                 rc
             }
             Shell::Pwsh => {
-                // pwsh has no rcfile convention (-Command dot-sources it). The file name
-                // deliberately omits `__`: the template's placeholder is injected by a literal
-                // `__` replacement.
+                // pwsh has no rcfile convention (-Command dot-sources it).
                 let rc = dir.join("p11k.ps1");
-                fs::write(&rc, PWSH_TEMPLATE.replace("__", placeholder))?;
+                fs::write(&rc, PWSH_TEMPLATE)?;
                 rc
             }
         };
@@ -1933,23 +1935,24 @@ mod tests {
         );
     }
 
-    /// The placeholder is injected by the literal `replace("__", placeholder)`: as many `__`
-    /// in the template, as many copies of the placeholder. One stray `__` in a comment adds
-    /// an extra copy and breaks the prompt geometry. The numbers below are design values and
-    /// must be updated with the templates. pwsh has 1; do not change the others to match.
+    /// The placeholder reaches the shell through `P11K_PLACEHOLDER`, so its width and its row
+    /// count stay the engine's to decide. No template may carry a literal `__` again: a copy
+    /// baked into a template would desync the geometry the moment the theme changes it.
     #[test]
-    fn templates_carry_the_expected_number_of_placeholder_slots() {
-        for (name, template, want) in [
-            ("ZSHRC_TEMPLATE", ZSHRC_TEMPLATE, 2),
-            ("BASHRC_TEMPLATE", BASHRC_TEMPLATE, 2),
-            ("FISH_TEMPLATE", FISH_TEMPLATE, 4),
-            ("PWSH_TEMPLATE", PWSH_TEMPLATE, 1),
+    fn templates_take_the_placeholder_from_the_environment() {
+        for (name, template) in [
+            ("ZSHRC_TEMPLATE", ZSHRC_TEMPLATE),
+            ("BASHRC_TEMPLATE", BASHRC_TEMPLATE),
+            ("FISH_TEMPLATE", FISH_TEMPLATE),
+            ("PWSH_TEMPLATE", PWSH_TEMPLATE),
         ] {
-            assert_eq!(
-                template.matches("__").count(),
-                want,
-                "{name}: every `__` becomes the placeholder, so this count is part of the \
-                 protocol — and a comment must never contain `__`"
+            assert!(
+                template.contains("P11K_PLACEHOLDER"),
+                "{name} must print the placeholder the engine passes in"
+            );
+            assert!(
+                !template.contains("__"),
+                "{name} must not carry a placeholder of its own"
             );
         }
     }
