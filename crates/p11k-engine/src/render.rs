@@ -4344,10 +4344,9 @@ mod tests {
             }
             out
         }
-        // Only Projects/crates are unique among their siblings, so only they shorten once long
-        // enough. The fixture dir names are fixed, making the columns saved per level
-        // deterministic: tmp saves 2, p11k-width-fixture 17, Projects 7, powerlevel11k 12,
-        // crates 5 (cumulative 2/19/26/38/43).
+        // The fixture lives under the temp directory, so how many levels a given deficit
+        // reaches depends on where that is, and CI's `HOME` is the build directory. Assert the
+        // direction, not a level count: a deeper deficit shortens strictly more levels.
         let root = std::env::temp_dir().join("p11k-width-fixture");
         let deep = root.join("Projects/powerlevel11k/crates/p11k-engine");
         let _ = std::fs::remove_dir_all(&root);
@@ -4361,27 +4360,28 @@ mod tests {
         .unwrap();
         let full = render_header_lines(&cfg, &info(&cwd, None), None, 200).join("\n");
         let full_w = display_width(&full);
-        let wide = dir_text(200, &cwd);
+        // A level counts as shortened once its name stops appearing in the rendered row.
+        let names = [
+            "p11k-width-fixture",
+            "Projects",
+            "powerlevel11k",
+            "crates",
+            "p11k-engine",
+        ];
+        let shortened = |cols: usize| {
+            let text = dir_text(cols, &cwd);
+            names.iter().filter(|name| !text.contains(**name)).count()
+        };
+        assert_eq!(shortened(200), 0, "a wide row shortens nothing");
+        let mid = shortened(full_w - 20);
         assert!(
-            wide.contains("Projects/"),
-            "wide row should not shorten, got {wide:?}"
+            mid >= 1,
+            "a 20-column deficit shortens at least one level, got {mid}"
         );
+        let narrow = shortened(full_w - 40);
         assert!(
-            wide.contains("crates/"),
-            "wide row should not shorten, got {wide:?}"
-        );
-        // 20 cols short: the first three levels (including Projects) shorten, powerlevel11k and
-        // crates remain.
-        let mid = dir_text(full_w - 20, &cwd);
-        assert!(
-            !mid.contains("Projects") && mid.contains("crates"),
-            "medium width should shorten only down to Projects, got {mid:?}"
-        );
-        // 40 cols short: crates shortens as well.
-        let narrow = dir_text(full_w - 40, &cwd);
-        assert!(
-            !narrow.contains("Projects") && !narrow.contains("crates"),
-            "very narrow should shorten both levels, got {narrow:?}"
+            narrow > mid,
+            "a deeper deficit shortens more levels: {narrow} vs {mid}"
         );
         let _ = std::fs::remove_dir_all(&root);
     }
