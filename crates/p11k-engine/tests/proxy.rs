@@ -21,6 +21,7 @@ use std::cell::Cell;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 const COLS: u16 = 100;
@@ -29,6 +30,11 @@ const ROWS: u16 = 24;
 /// tmux servers are named per case: the process id separates concurrent test binaries, the counter
 /// the cases inside one.
 static SOCKET_SEQ: AtomicUsize = AtomicUsize::new(0);
+
+/// Held by a pwsh case for its whole lifetime. pwsh carries a .NET runtime and PSReadLine, and
+/// several of them starting at once on a two-core runner starve each other badly enough that the
+/// prompt never comes back.
+static PWSH_SERIAL: Mutex<()> = Mutex::new(());
 
 /// A missing program is a broken environment (the devShell provides every shell these tests use),
 /// said plainly instead of surfacing as a timeout later on.
@@ -219,6 +225,8 @@ impl Write for TmuxKeys {
 struct Engine {
     master: Box<Tmux>,
     writer: Box<dyn Write + Send>,
+    /// `Some` for a pwsh case: the lock is held until the case ends and the engine is dropped.
+    _pwsh_guard: Option<MutexGuard<'static, ()>>,
 }
 
 /// Start the engine under isolation: explicit `--shell zsh` (CI's `$SHELL` is bash, while the
@@ -242,9 +250,17 @@ fn spawn_engine_shell(shell: &str, config_home: &str) -> Engine {
         "p11k-proxy-{shell}-{}",
         SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
     );
+    // Take the lock before the server starts, so the tmux server, the shell and the case all sit
+    // inside the serialised section.
+    let pwsh_guard = (shell == "pwsh").then(|| {
+        PWSH_SERIAL
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    });
     Engine {
         master: Box::new(Tmux::start(&socket, shell, config_home)),
         writer: Box::new(TmuxKeys { socket }),
+        _pwsh_guard: pwsh_guard,
     }
 }
 
@@ -256,11 +272,36 @@ fn read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
     let mut acc = String::new();
     loop {
         acc.push_str(&master.fresh());
-        if acc.contains(needle) || start.elapsed() >= timeout {
+        if acc.contains(needle) {
+            return acc;
+        }
+        if start.elapsed() >= timeout {
+            // Print the scene instead of returning it: callers parse this string as the engine's
+            // byte stream, so a pane dump inside it would both satisfy and break their
+            // assertions. A failed case shows the capture.
+            eprintln!(
+                "read_until({needle:?}) timed out after {timeout:?}{}",
+                diagnose(master)
+            );
             return acc;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// What a timing assertion needs when it fails: the rendered pane and the tail of the engine's
+/// own log. A prompt that never arrives is a shell that never announced it, an engine that never
+/// repainted, or a capture that broke; this tells the three apart.
+fn diagnose(master: &Tmux) -> String {
+    let pane = Tmux::tmux(&master.socket, &["capture-pane", "-p", "-t", Tmux::SESSION]);
+    let log = std::fs::read_to_string("/tmp/p11k-engine.log").unwrap_or_default();
+    let mut tail: Vec<&str> = log.lines().rev().take(20).collect();
+    tail.reverse();
+    format!(
+        "\n--- pane ---\n{}--- engine log (last 20 lines) ---\n{}",
+        String::from_utf8_lossy(&pane.stdout),
+        tail.join("\n")
+    )
 }
 
 /// Wait for the real first prompt to be ready. The criterion is `✔`: the instant header is painted
