@@ -844,13 +844,16 @@ fn marker_shell_runs_a_command(shell: &str, fail: &str) {
 
     eng.writer.write_all(b"echo hello-from-proxy\n").unwrap();
     eng.writer.flush().unwrap();
-    let out = read_until(&eng.master, "hello-from-proxy", Duration::from_secs(10));
+    // The waits after a command use the same budget as the startup: on a loaded runner a pwsh
+    // session can take seconds to come back with its next prompt, and ten seconds proved too
+    // tight there.
+    let out = read_until(&eng.master, "hello-from-proxy", SHELL_READY);
     assert!(
         out.contains("hello-from-proxy"),
         "{shell}: command output should pass through, got {out:?}"
     );
 
-    let out = read_until(&eng.master, "\u{f00c}", Duration::from_secs(10));
+    let out = read_until(&eng.master, "\u{f00c}", SHELL_READY);
     assert!(
         out.contains('\u{f00c}'),
         "{shell}: a new prompt should follow the command, got {out:?}"
@@ -859,7 +862,7 @@ fn marker_shell_runs_a_command(shell: &str, fail: &str) {
     eng.writer.write_all(fail.as_bytes()).unwrap();
     eng.writer.write_all(b"\n").unwrap();
     eng.writer.flush().unwrap();
-    let out = read_until(&eng.master, "\u{f00d}", Duration::from_secs(10));
+    let out = read_until(&eng.master, "\u{f00d}", SHELL_READY);
     assert!(
         out.contains('\u{f00d}'),
         "{shell}: the status should turn to ✘ after `{fail}`, got {out:?}"
