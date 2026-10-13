@@ -17,4 +17,4 @@ p11k-gitstatus = { path = "../p11k-gitstatus" }
 # 集成测试用临时 git 仓库。
 tempfile = "3"
 # 对拍测试用 git2 构造确定状态的仓库 fixture。
-git2 = "0.20"
+git2 = "0.21"
