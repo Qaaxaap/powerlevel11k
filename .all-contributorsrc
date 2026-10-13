@@ -21,6 +21,16 @@
         "translation",
         "review"
       ]
+    },
+    {
+      "login": "Cwhirly",
+      "name": "Cwhirly",
+      "avatar_url": "https://avatars.githubusercontent.com/u/247487531?v=4",
+      "profile": "http://revitalize.top",
+      "contributions": [
+        "code",
+        "doc"
+      ]
     }
   ]
 }
