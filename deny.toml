@@ -10,12 +10,9 @@ targets = [{ triple = "x86_64-unknown-linux-gnu" }]
 [advisories]
 version = 2
 yanked = "warn"
-ignore = [
-  # `setlocale` and `TextDomain::init` touch process-global state without synchronisation.
-  # p11k binds the locale and the text domain once in `i18n::init`, before the engine starts
-  # any thread, and only reads translations afterwards.
-  "RUSTSEC-2026-0244",
-]
+# Empty on purpose: git2 0.21 fixed RUSTSEC-2026-0183 and RUSTSEC-2026-0184, and gettext-rs
+# 0.8 marks `setlocale` unsafe for RUSTSEC-2026-0244.
+ignore = []
 
 [licenses]
 version = 2
