@@ -85,6 +85,11 @@ impl Tmux {
                 &COLS.to_string(),
                 "-y",
                 &ROWS.to_string(),
+                // Pin the terminal type of the pane. readline spells clear-screen from
+                // terminfo, and a check environment whose default entry is missing made the
+                // Ctrl-L case skip the sequence with the engine innocent.
+                "-e",
+                "TERM=screen",
                 &cmd,
             ],
         );
