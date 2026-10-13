@@ -316,8 +316,20 @@ impl Repo {
         if let Some(oid) = self.head_oid
             && let Ok(commit) = self.git.find_commit(oid)
         {
-            f[field::COMMIT_ENCODING] = commit.message_encoding().unwrap_or("").as_bytes().to_vec();
-            let mut summary = commit.summary().unwrap_or("").as_bytes().to_vec();
+            f[field::COMMIT_ENCODING] = commit
+                .message_encoding()
+                .ok()
+                .flatten()
+                .unwrap_or("")
+                .as_bytes()
+                .to_vec();
+            let mut summary = commit
+                .summary()
+                .ok()
+                .flatten()
+                .unwrap_or("")
+                .as_bytes()
+                .to_vec();
             // Truncate byte-wise (gitstatus.cc:44-46).
             summary.truncate(self.limits.max_commit_summary_length);
             f[field::COMMIT_SUMMARY] = summary;
@@ -342,7 +354,7 @@ impl Repo {
                     String::new()
                 }
             }
-            Err(_) => match head.symbolic_target() {
+            Err(_) => match head.symbolic_target().ok().flatten() {
                 Some(t) if t.starts_with("refs/heads/") => t["refs/heads/".len()..].to_string(),
                 _ => String::new(),
             },
@@ -422,7 +434,7 @@ impl Repo {
             .fetch_refspecs()
             .ok()?
             .iter()
-            .any(|r| r.is_some_and(|s| !s.is_empty()));
+            .any(|r| matches!(r, Ok(Some(s)) if !s.is_empty()));
         if !has_fetch {
             return None;
         }
@@ -491,7 +503,7 @@ impl Repo {
                     .map(|o| o == oid)
                     .unwrap_or(false);
                 if matches
-                    && let Some(name) = t.shorthand()
+                    && let Ok(name) = t.shorthand()
                     && best.as_deref().map(|b| name > b).unwrap_or(true)
                 {
                     best = Some(name.to_string());
