@@ -14,11 +14,21 @@ use gettextrs::{LocaleCategory, bindtextdomain, gettext, setlocale, textdomain};
 
 static INIT: Once = Once::new();
 
+/// Set the C locale. Returns whether a locale was found.
+///
+/// `setlocale` writes process-global state, and gettext-rs 0.8 marks it unsafe for that
+/// reason. Every call goes through here so the justification lives in one place: `init` runs
+/// from `main` before the engine starts any thread and only reads catalogs afterwards, and
+/// the locale tests switch back inside a single-threaded test binary.
+fn set_locale(category: LocaleCategory, locale: &str) -> bool {
+    unsafe { setlocale(category, locale) }.is_some()
+}
+
 /// Bind the catalog directory. Call once per process (idempotent).
 pub fn init() {
     INIT.call_once(|| {
         // An empty string means: take the locale from the environment.
-        let _ = setlocale(LocaleCategory::LcAll, "");
+        let _ = set_locale(LocaleCategory::LcAll, "");
         let _ = bindtextdomain("p11k", catalog_dir());
         let _ = textdomain("p11k");
     });
@@ -265,8 +275,7 @@ mod tests {
             eprintln!("skipping: no compiled zh_CN catalog (msgfmt missing?)");
             return;
         }
-        let got = setlocale(LocaleCategory::LcAll, "zh_CN.UTF-8");
-        if !got.as_deref().is_some_and(|s| !s.is_empty()) {
+        if !set_locale(LocaleCategory::LcAll, "zh_CN.UTF-8") {
             eprintln!("skipping: system has no zh_CN.UTF-8 locale");
             return;
         }
@@ -278,6 +287,6 @@ mod tests {
         let unknown = String::from("no such msgid");
         assert_eq!(gettext(&unknown), unknown);
 
-        let _ = setlocale(LocaleCategory::LcAll, "C");
+        let _ = set_locale(LocaleCategory::LcAll, "C");
     }
 }
