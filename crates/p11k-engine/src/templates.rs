@@ -320,7 +320,7 @@ function global:P11kEnginePrompt {
     if ($P11kCode -eq 0) {
         "$env:P11K_PROMPT_LEAD`e]1337;p11k;p`a$env:P11K_PREFIX_OK"
     } else {
-        "$env:P11K_PROMPT_LEAD$env:P11K_PREFIX_ERR"
+        "$env:P11K_PROMPT_LEAD`e]1337;p11k;p`a$env:P11K_PREFIX_ERR"
     }
 }
 
