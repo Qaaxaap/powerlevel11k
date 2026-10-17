@@ -49,7 +49,7 @@ fn strip_ansi(s: &str) -> String {
             continue;
         }
         // CSI: ESC [ ... final byte in 0x40..=0x7e.
-        let mut it = chars.by_ref();
+        let it = chars.by_ref();
         if it.next() == Some('[') {
             for c in it.by_ref() {
                 if ('\u{40}'..='\u{7e}').contains(&c) {
@@ -168,7 +168,6 @@ pub fn run() -> anyhow::Result<()> {
     // Both states of the input-line prefix, as visible text. zle/readline draw the user's buffer
     // immediately after the prompt string, so the prefix has to be part of it — painting it
     // afterwards would overwrite the front of the buffer on every completion redraw.
-    let prefix_ok = strip_ansi(&crate::render::input_prefix(&config, None).text);
     let err_info = HeaderInfo {
         exit_code: Some(1),
         cwd: String::new(),
@@ -177,7 +176,19 @@ pub fn run() -> anyhow::Result<()> {
         history: 0,
         pipestatus: Vec::new(),
     };
-    let prefix_err = strip_ansi(&crate::render::input_prefix(&config, Some(&err_info)).text);
+    // zsh gets its own prompt syntax (`%F{...}`, zero width for zle); the other shells get the
+    // visible text, since their line editors count bare ANSI as width.
+    let (prefix_ok, prefix_err) = if shell == Shell::Zsh {
+        (
+            crate::render::prefix_text_zsh(&config, None),
+            crate::render::prefix_text_zsh(&config, Some("ERROR")),
+        )
+    } else {
+        (
+            strip_ansi(&crate::render::input_prefix(&config, None).text),
+            strip_ansi(&crate::render::input_prefix(&config, Some(&err_info)).text),
+        )
+    };
     cmd.env("P11K_PREFIX_OK", &prefix_ok);
     cmd.env("P11K_PREFIX_ERR", &prefix_err);
     // `p11k reload` runs in the inner shell: it needs to find this engine and the file the

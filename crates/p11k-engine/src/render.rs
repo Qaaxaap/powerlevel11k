@@ -115,6 +115,31 @@ fn prefix_width(config: &Config, state: Option<&str>) -> usize {
     display_width(&prefix_text(config, state))
 }
 
+/// Input-line prefix in zsh's prompt syntax: `%F{...}` is zero width for zle, so the prefix can
+/// carry its colour without shifting the buffer. Used when the prompt string is built by the
+/// shell (the engine cannot paint the prefix itself: zle draws the buffer immediately after the
+/// prompt and a later paint would overwrite it).
+pub fn prefix_text_zsh(config: &Config, state: Option<&str>) -> String {
+    let mut text = String::new();
+    if !config.frame.last_prefix.text.is_empty() {
+        let piece = &config.frame.last_prefix;
+        text.push_str(&paint_zsh(&piece.text, &config.frame_piece_style(piece)));
+    }
+    let pc = config.segment("prompt_char");
+    let st = pc.effective_style(state, &config.defaults);
+    text.push_str(&paint_zsh(pc.char_for(state, "❯"), &st));
+    text.push(' '); // space after the prefix (uncolored), matching the original `❯ ` geometry
+    text
+}
+
+/// zsh prompt colouring: `%F{...}` sets the foreground and `%f` resets it, both zero width.
+fn paint_zsh(text: &str, style: &Style) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    format!("{}{}%f", zsh_fg(&style.fg), text)
+}
+
 /// Computes the input line prefix (e.g. `╰─❯`). `last_prefix` (frame style) and the prompt
 /// char (prompt_char style, entering ERROR state from `exit_code`) are colored; `width` is
 /// the ANSI-stripped display width.
