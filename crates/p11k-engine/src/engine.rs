@@ -165,6 +165,9 @@ pub fn run() -> anyhow::Result<()> {
     // zero-width signal and the prefix (the engine cannot: each shell has its own syntax for
     // marking non-printing sequences).
     cmd.env("P11K_PROMPT_LEAD", &prompt_lead);
+    // Set while the instant header is on screen: the first prompt must not print blank rows for
+    // the header, the engine overwrites the instant header in place instead.
+    cmd.env("P11K_INSTANT", "1");
     // Both states of the input-line prefix, as visible text. zle/readline draw the user's buffer
     // immediately after the prompt string, so the prefix has to be part of it — painting it
     // afterwards would overwrite the front of the buffer on every completion redraw.
@@ -483,41 +486,9 @@ pub fn run() -> anyhow::Result<()> {
                         .map(|t| t.elapsed().as_secs_f64())
                         .unwrap_or(0.0);
                     at_prompt = false; // new prompt cycle: the next signal paints the input line
-                    if instant_drawn {
-                        // First precmd: replace the instant header with the real state.
-                        //
-                        // Normally (the inner shell printed nothing meanwhile) it is enough to
-                        // erase the few rows we drew: move up to the header's first row and
-                        // `\x1b[J` to the end of screen — below the cursor there is only our
-                        // header + the input line. That leaves existing content above untouched
-                        // (previous session output, window banner, anything printed before
-                        // `exec p11k`) and does not flash the whole screen like `\x1b[2J`.
-                        // p10k likewise does not clear the screen.
-                        //
-                        // If the inner shell did print (rc echo/warning/error), those rows sit
-                        // below ours and "move up k rows" lands inside the output — then do
-                        // nothing, keep the output and let the real prompt follow it (p10k also
-                        // keeps it and warns). Set P11K_INSTANT_LOG to log which branch was hit.
-                        instant_drawn = false;
-                        // Query the terminal width again here: if the size had not synced when
-                        // the instant header was drawn (fresh window, SIGWINCH not delivered
-                        // yet), the content was laid out at the old width and has already
-                        // wrapped in the real window, so convert rows using the real columns.
-                        let (rows_cap, cols_now, ..) = tty_size().unwrap_or(last_size);
-                        let rows = instant_rows_at(&instant_widths, cols_now);
-                        if instant_newlines == 0 && rows < rows_cap as usize {
-                            write!(stdout, "\x1b[{rows}A\r\x1b[J")?;
-                        } else if instant_newlines == 0 {
-                            // The window is too short for the header: the header itself has
-                            // scrolled the screen and its position is unreliable, so fall back
-                            // to a full clear.
-                            write!(stdout, "\x1b[2J\x1b[H")?;
-                        } else if std::env::var_os("P11K_INSTANT_LOG").is_some() {
-                            log(&format!(
-                                "instant header kept: {instant_newlines} line(s) / {instant_bytes} bytes of shell output during init"
-                            ));
-                        }
-                    } else if config.layout.prompt_add_newline > 0 {
+                    // The instant header stays flagged until the first signal arrives: that is
+                    // where the real header replaces it in place.
+                    if !instant_drawn && config.layout.prompt_add_newline > 0 {
                         // Relaxed layout: leave N blank rows between consecutive prompts
                         // (blanked before the header). One CRLF is one blank row; the shell has
                         // already moved the cursor off the command's output row.
@@ -672,6 +643,12 @@ pub fn run() -> anyhow::Result<()> {
                     let scan = scanner.push(&buf[..n]);
                     stdout.write_all(&scan.before)?;
                     for _ in 0..scan.signals {
+                        // The instant header is still on screen above the input line: step over
+                        // its rows first, so the real header replaces it in place instead of
+                        // being painted below it.
+                        if instant_drawn {
+                            write!(stdout, "\x1b[1A")?;
+                        }
                         paint_prompt(
                             &mut stdout,
                             &config,
@@ -680,6 +657,7 @@ pub fn run() -> anyhow::Result<()> {
                             &instant_info,
                             last_vcs.as_ref(),
                         )?;
+                        instant_drawn = false;
                         at_prompt = true;
                         typed_since_prompt = false;
                     }
