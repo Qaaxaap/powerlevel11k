@@ -378,37 +378,10 @@ fn initial_prompt_shows_header_and_input_line() {
     );
 }
 
-/// Placeholder protocol: the `__` rendered by the shell (`_` repeated to the prefix's
-/// visible width) passes through verbatim, and the engine then overwrites it with `\r` +
-/// the prefix. The prefix width equals the placeholder's (2 columns), so zle's repaint
-/// column offset lines up.
-#[test]
-fn placeholder_overwritten_by_prefix() {
-    let eng = spawn_engine();
-    let mut full = wait_ready(&eng.master);
-    assert!(
-        full.contains("__"),
-        "placeholder should pass through verbatim, got {full:?}"
-    );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let ph = full.find("__").expect("placeholder present");
-        if full[ph..].contains('❯') {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "prefix ❯ should appear after the __ placeholder, got {full:?}"
-        );
-        full.push_str(&read_until(&eng.master, "❯", Duration::from_secs(1)));
-    }
-}
-
 /// bash reprints the whole `PS1` whenever readline redraws the prompt over itself, and
-/// showing completion candidates is one of those cases. `PS1` is the placeholder itself, so
-/// the engine has to paint the prefix over the marker every time it shows up again, not only
-/// on the first prompt after precmd. A marker that is left to be followed by the reprinted
-/// input line is the artifact this test exists for.
+/// showing completion candidates is one of those cases. `PS1` now carries the prompt-ready
+/// signal and the prefix itself, so a reprint must produce a clean prompt: no leftover marker,
+/// and the header still backfilled.
 #[test]
 fn bash_prompt_reprint_keeps_the_placeholder_covered() {
     let home = std::env::temp_dir().join(format!("p11k-bash-reprint-{}", std::process::id()));
@@ -430,20 +403,16 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
     out.push_str(&read_until(&eng.master, "❯", Duration::from_secs(2)));
     let _ = std::fs::remove_dir_all(&home);
 
-    let mut seen = 0;
-    for (i, _) in out.match_indices("__") {
-        seen += 1;
-        // The engine paints right on top of the marker: the backfill starts with a cursor save
-        // and a move up, so the reprinted input line may not slip in before it.
-        let after: String = out[i + 2..].chars().take(16).collect();
-        assert!(
-            after.starts_with("\x1b7"),
-            "placeholder #{seen} was not covered, next bytes: {after:?}"
-        );
-    }
+    // The completion redraw reprints the prompt string: the signal fires again and the header
+    // is backfilled. The prefix is part of that string, so zle's buffer cannot be covered by a
+    // late paint — that artifact is what this test guards against.
     assert!(
-        seen >= 1,
-        "the completion redraw should reprint the placeholder, got {seen}"
+        !out.contains("__"),
+        "the placeholder must not exist any more, got {out:?}"
+    );
+    assert!(
+        out.matches("╭─").count() >= 2,
+        "the completion redraw should backfill the header again, got {out:?}"
     );
 }
 
@@ -470,18 +439,15 @@ fn zsh_job_notification_reprint_is_covered() {
     let done = out
         .find("done")
         .unwrap_or_else(|| panic!("the job notification should have been printed, got {out:?}"));
-    let mut seen = 0;
-    for (i, _) in out[done..].match_indices("__") {
-        seen += 1;
-        let after: String = out[done + i + 2..].chars().take(16).collect();
-        assert!(
-            after.starts_with("\x1b7"),
-            "the prompt zsh redrew after #{seen} was not covered, next bytes: {after:?}"
-        );
-    }
+    // The redraw reprints the prompt string, so the signal fires again and the header is
+    // backfilled. What must not happen is a half-painted prompt left on screen.
     assert!(
-        seen >= 1,
-        "the notification should make zsh reprint the placeholder, got {seen}"
+        !out.contains("__"),
+        "the placeholder must not exist any more, got {out:?}"
+    );
+    assert!(
+        out[done..].matches("╭─").count() >= 1,
+        "the redrawn prompt should carry a backfilled header, got {out:?}"
     );
 }
 
@@ -513,18 +479,14 @@ fn bash_two_row_header_is_backfilled() {
         out.contains("two-row-probe"),
         "the command should have run, got {out:?}"
     );
-    for (i, _) in out.match_indices("__") {
-        let after: String = out[i + 2..].chars().take(16).collect();
-        assert!(
-            after.starts_with("\x1b7"),
-            "placeholder was not covered, next bytes: {after:?}"
-        );
-    }
+    assert!(
+        !out.contains("__"),
+        "the placeholder must not exist any more, got {out:?}"
+    );
 }
 
-/// The marker is as wide as the prefix, so a wide prefix means a long marker and a long
-/// placeholder: the match, the backfill and the overwrite all have to follow that length (and
-/// the header's row count) rather than any fixed size.
+/// The prefix is part of the shell's prompt string, so a wide one needs no marker to match and
+/// its length is unconstrained.
 #[test]
 fn bash_long_prefix_is_backfilled() {
     let home = std::env::temp_dir().join(format!("p11k-long-prefix-{}", std::process::id()));
@@ -546,21 +508,8 @@ fn bash_long_prefix_is_backfilled() {
     out.push_str(&read_until(&eng.master, "❯", Duration::from_secs(2)));
     let _ = std::fs::remove_dir_all(&home);
 
-    // Fourteen columns of prefix → a fourteen byte marker, in front of three header rows.
-    let marker = "_".repeat(14);
-    let mut seen = 0;
-    for (i, _) in out.match_indices(&marker) {
-        seen += 1;
-        let after: String = out[i + marker.len()..].chars().take(16).collect();
-        assert!(
-            after.starts_with("\x1b7"),
-            "the long placeholder was not covered, next bytes: {after:?}"
-        );
-    }
-    assert!(
-        seen >= 1,
-        "the wide placeholder should be printed and matched, got {seen}"
-    );
+    // The prefix is part of the shell's prompt string now, so the wide one must simply show up;
+    // there is no marker to match or cover any more.
     assert!(
         out.contains("══════════╰─") && out.contains('❯'),
         "the wide prefix should be painted, got {out:?}"
@@ -660,18 +609,15 @@ fn bash_enter_inside_the_completion_pager_is_covered() {
     out.push_str(&read_until(&eng.master, "❯", Duration::from_secs(2)));
     let _ = std::fs::remove_dir_all(&home);
 
-    let mut seen = 0;
-    for (i, _) in out.match_indices("__") {
-        seen += 1;
-        let after: String = out[i + 2..].chars().take(16).collect();
-        assert!(
-            after.starts_with("\x1b7"),
-            "placeholder #{seen} printed by the pager was not covered, next bytes: {after:?}"
-        );
-    }
+    // Paging reprints the prompt string, so the signal fires again and the header is backfilled.
+    // The placeholder is gone from the protocol; what matters is that no marker is left behind.
     assert!(
-        seen >= 1,
-        "the paged prompt should reprint the placeholder, got {seen}"
+        !out.contains("__"),
+        "the placeholder must not exist any more, got {out:?}"
+    );
+    assert!(
+        out.matches("╭─").count() >= 2,
+        "paging should backfill the header again, got {out:?}"
     );
 }
 
@@ -866,18 +812,12 @@ fn marker_shell_paints_its_prompt(shell: &str) {
         "{shell}: the input line should carry the ❯ prefix, got {out:?}"
     );
 
-    let mut seen = 0;
-    for (i, _) in out.match_indices("__") {
-        seen += 1;
-        let after: String = out[i + 2..].chars().take(16).collect();
-        assert!(
-            after.starts_with("\x1b7"),
-            "{shell}: placeholder #{seen} was not covered, next bytes: {after:?}"
-        );
-    }
+    // The placeholder is gone from the protocol: the prompt string carries the signal and the
+    // prefix itself, so nothing has to be matched or covered. What must not appear is the old
+    // marker left on screen.
     assert!(
-        seen >= 1,
-        "{shell}: the prompt should print the __ placeholder for the engine to match, got {seen}"
+        !out.contains("__"),
+        "{shell}: the placeholder must not exist any more, got {out:?}"
     );
     assert_no_bare_placeholder(&eng.master.screen());
 }
