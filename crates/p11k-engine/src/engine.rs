@@ -37,6 +37,30 @@ use crate::theme::{GitStatus, HeaderInfo};
 use crate::window::paint_prompt;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
+/// Visible text of a rendered prefix: the ANSI colouring is dropped so the shell can put it in
+/// its prompt string without knowing which byte runs are non-printing. Wrapping the whole
+/// prefix in zsh's `%{...%}` would make it zero-width and start the buffer at column 0.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        // CSI: ESC [ ... final byte in 0x40..=0x7e.
+        let mut it = chars.by_ref();
+        if it.next() == Some('[') {
+            for c in it.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&c) {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn run() -> anyhow::Result<()> {
     // The config comes first: it may name the shell, and it decides the input-line prefix
     // width, from which the placeholder is built.
@@ -79,11 +103,11 @@ pub fn run() -> anyhow::Result<()> {
     // fills the blank rows and draws the input-line prefix when the signal arrives, which keeps
     // the prefix's styling in the theme and its width unconstrained.
     let header_rows = config.layout.left.len().max(config.layout.right.len());
-    let prompt_lead = format!(
-        "{}{}",
-        "\n".repeat(header_rows),
-        String::from_utf8_lossy(crate::protocol::PROMPT_SIGNAL)
-    );
+    // The blank rows the prompt opens with; the templates append the zero-width signal and the
+    // prefix. The signal has to be written by the shell: each shell marks non-printing
+    // sequences differently (`%{...%}` in zsh, `\[...\]` in bash) and the engine handing over a
+    // bare OSC would make the line editor count it as visible width.
+    let prompt_lead = "\n".repeat(header_rows);
     let state = StateDir::create(shell)?;
     log(&format!(
         "engine start: dir={} announce={} ack={} prompt_lead={:?} shell={:?}",
@@ -137,9 +161,25 @@ pub fn run() -> anyhow::Result<()> {
     }
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
-    // The prompt skeleton each shell prints: header_rows newlines plus a marker exactly as wide
-    // as the prefix the engine paints over it. Handed over as data so no template carries it.
+    // The prompt skeleton each shell prints: `header_rows` blank rows. The templates append the
+    // zero-width signal and the prefix (the engine cannot: each shell has its own syntax for
+    // marking non-printing sequences).
     cmd.env("P11K_PROMPT_LEAD", &prompt_lead);
+    // Both states of the input-line prefix, as visible text. zle/readline draw the user's buffer
+    // immediately after the prompt string, so the prefix has to be part of it — painting it
+    // afterwards would overwrite the front of the buffer on every completion redraw.
+    let prefix_ok = strip_ansi(&crate::render::input_prefix(&config, None).text);
+    let err_info = HeaderInfo {
+        exit_code: Some(1),
+        cwd: String::new(),
+        exec_seconds: 0.0,
+        jobs: 0,
+        history: 0,
+        pipestatus: Vec::new(),
+    };
+    let prefix_err = strip_ansi(&crate::render::input_prefix(&config, Some(&err_info)).text);
+    cmd.env("P11K_PREFIX_OK", &prefix_ok);
+    cmd.env("P11K_PREFIX_ERR", &prefix_err);
     // `p11k reload` runs in the inner shell: it needs to find this engine and the file the
     // theme came from. An empty P11K_CONFIG means the theme is a preset or the built-in one,
     // and there is nothing to re-read.

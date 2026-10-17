@@ -11,6 +11,9 @@ pub const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap -- protocol layer + 
 # Empty when the engine does not enable transient; clear it so a stale value
 # left in the outer environment cannot make zle-line-finish fold wrongly.
 [[ -n "${P11K_TRANSIENT_PROMPT:-}" ]] || unset P11K_TRANSIENT_PROMPT
+# Zero-width prompt-ready signal: `%{...%}` is how zle is told a sequence takes no columns.
+# Without it the OSC bytes are counted as visible width and the buffer lands in the wrong column.
+_p11k_signal=$'%{\e]1337;p11k;p\a%}'
 _p11k_status=0
 _p11k_pwd=$PWD
 
@@ -19,8 +22,14 @@ _p11k_precmd() {
   # Capture $pipestatus right away: any command below resets it.
   _p11k_pipes="${pipestatus}"
   _p11k_pwd=$PWD
-  # Used to restore PROMPT after the transient fold; carries the prompt-ready signal too.
-  PROMPT="$P11K_PROMPT_LEAD"
+  # The prompt is the blank rows + prompt-ready signal + the prefix for this exit code. The
+  # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
+  # painting it later would overwrite the first characters on a completion redraw.
+  if (( _p11k_status == 0 )); then
+    PROMPT="$P11K_PROMPT_LEAD$_p11k_signal$P11K_PREFIX_OK"
+  else
+    PROMPT="$P11K_PROMPT_LEAD$_p11k_signal$P11K_PREFIX_ERR"
+  fi
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
@@ -58,7 +67,7 @@ fi
 # PROMPT carries the placeholder plus the zero-width prompt-ready signal (OSC 1337;p11k;p).
 # The signal is what a serialised prompt protocol keys on: it occupies no columns and the
 # engine reads it out of the byte stream.
-PROMPT="$P11K_PROMPT_LEAD"
+PROMPT="$P11K_PROMPT_LEAD$_p11k_signal$P11K_PREFIX_OK"
 RPROMPT=''
 PROMPT2='> '
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
@@ -130,7 +139,10 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 /// directly, and the engine byte-matches it to paint the prefix over it. resize detects size
 /// changes via trap WINCH and announces `r`.
 pub const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol layer + user config.
-PS1="$P11K_PROMPT_LEAD"
+# Zero-width prompt-ready signal. `\[...\]` tells readline the sequence takes no columns; a bare
+# OSC would be counted as visible width and the buffer would start in the wrong column.
+_p11k_signal=$'\e]1337;p11k;p\a'
+PS1="$P11K_PROMPT_LEAD\[$_p11k_signal\]"
 
 # PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
 # then wait for the engine ack before returning.
@@ -138,6 +150,13 @@ _p11k_prompt_command() {
   local _st=$?
   # Capture $PIPESTATUS right away: any command below resets it.
   local _pipes="${PIPESTATUS[*]}"
+  # The prefix belongs in PS1: readline draws the buffer right after it, and painting it later
+  # would overwrite the first characters on a completion redraw.
+  if [[ $_st -eq 0 ]]; then
+    PS1="$P11K_PROMPT_LEAD\[$_p11k_signal\]$P11K_PREFIX_OK"
+  else
+    PS1="$P11K_PROMPT_LEAD\[$_p11k_signal\]$P11K_PREFIX_ERR"
+  fi
   printf 'h\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
@@ -164,7 +183,7 @@ elif [[ -r "$HOME/.bashrc" ]]; then
 fi
 
 # ===== protocol invariants =====
-PS1="$P11K_PROMPT_LEAD"
+PS1="$P11K_PROMPT_LEAD\[$_p11k_signal\]"
 PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
 "#;
@@ -190,7 +209,11 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
-        printf '%s' "$P11K_PROMPT_LEAD"
+        if test $_st -eq 0
+            printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_OK"
+        else
+            printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_ERR"
+        end
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -198,7 +221,11 @@ function fish_prompt
         sleep 0.005
     end
     rm -f $P11K_ACK
-    printf '%s' "$P11K_PROMPT_LEAD"
+    if test $_st -eq 0
+        printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_OK"
+    else
+        printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_ERR"
+    end
 end
 
 # ===== user config =====
@@ -219,7 +246,11 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
-        printf '%s' "$P11K_PROMPT_LEAD"
+        if test $_st -eq 0
+            printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_OK"
+        else
+            printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_ERR"
+        end
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -227,7 +258,11 @@ function fish_prompt
         sleep 0.005
     end
     rm -f $P11K_ACK
-    printf '%s' "$P11K_PROMPT_LEAD"
+    if test $_st -eq 0
+        printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_OK"
+    else
+        printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_ERR"
+    end
 end
 "#;
 
@@ -272,7 +307,12 @@ function global:P11kEnginePrompt {
     # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
-    $env:P11K_PROMPT_LEAD
+    # The prefix belongs in the prompt string: PSReadLine draws the buffer right after it.
+    if ($P11kCode -eq 0) {
+        "$env:P11K_PROMPT_LEAD`e]1337;p11k;p`a$env:P11K_PREFIX_OK"
+    } else {
+        "$env:P11K_PROMPT_LEAD$env:P11K_PREFIX_ERR"
+    }
 }
 
 function global:prompt { P11kEnginePrompt }
