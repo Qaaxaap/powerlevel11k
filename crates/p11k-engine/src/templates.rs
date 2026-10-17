@@ -25,10 +25,19 @@ _p11k_precmd() {
   # The prompt is the blank rows + prompt-ready signal + the prefix for this exit code. The
   # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
   # painting it later would overwrite the first characters on a completion redraw.
+  #
+  # The first prompt prints no blank rows: the engine already drew the instant header, and it
+  # overwrites it in place when the signal arrives. Printing rows here would push that header
+  # up and leave it on screen.
+  local _lead="$P11K_PROMPT_LEAD"
+  if [[ -n "${P11K_INSTANT:-}" ]]; then
+    _lead=''
+    unset P11K_INSTANT
+  fi
   if (( _p11k_status == 0 )); then
-    PROMPT="$P11K_PROMPT_LEAD$_p11k_signal$P11K_PREFIX_OK"
+    PROMPT="$_lead$_p11k_signal$P11K_PREFIX_OK"
   else
-    PROMPT="$P11K_PROMPT_LEAD$_p11k_signal$P11K_PREFIX_ERR"
+    PROMPT="$_lead$_p11k_signal$P11K_PREFIX_ERR"
   fi
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
