@@ -333,7 +333,11 @@ pub fn run() -> anyhow::Result<()> {
     // half a header is left behind.
     let mut instant_widths =
         theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
-    theme::render_prompt(&mut stdout, &prefix.text)?;
+    // Draw the instant prefix without the save/restore-cursor dance: there is no placeholder
+    // here, so restoring the cursor would put it back at column 0 and the user's typing would
+    // overwrite the prefix. With a plain `\r` the cursor ends up right after it.
+    write!(stdout, "\r{}", prefix.text)?;
+    write!(stdout, "\x1b]133;B\x07")?;
     stdout.flush()?;
     let mut instant_drawn = true;
     /// Terminal rows the instant header actually occupies at the given column count;
@@ -426,7 +430,10 @@ pub fn run() -> anyhow::Result<()> {
                         &instant_info,
                         None,
                     )?;
-                    theme::render_prompt(&mut stdout, &prefix.text)?;
+                    // Same as the initial instant draw: no placeholder, so keep the cursor after
+                    // the prefix instead of restoring it to column 0.
+                    write!(stdout, "\r{}", prefix.text)?;
+                    write!(stdout, "\x1b]133;B\x07")?;
                     stdout.flush()?;
                 }
                 // pwsh cannot hook SIGWINCH and only compares the window size inside its
