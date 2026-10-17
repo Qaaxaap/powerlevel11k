@@ -331,8 +331,7 @@ pub fn run() -> anyhow::Result<()> {
     // the pty when drawing (a fresh window whose size has not synced yet), content wraps and
     // erasing must convert to actual rows using the column width of that moment, otherwise
     // half a header is left behind.
-    let mut instant_widths =
-        theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
+    theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
     // Draw the instant prefix without the save/restore-cursor dance: there is no placeholder
     // here, so restoring the cursor would put it back at column 0 and the user's typing would
     // overwrite the prefix. With a plain `\r` the cursor ends up right after it.
@@ -340,17 +339,8 @@ pub fn run() -> anyhow::Result<()> {
     write!(stdout, "\x1b]133;B\x07")?;
     stdout.flush()?;
     let mut instant_drawn = true;
-    /// Terminal rows the instant header actually occupies at the given column count;
-    /// content wider than the terminal wraps onto more rows.
-    fn instant_rows_at(widths: &[usize], cols: u16) -> usize {
-        let c = cols.max(1) as usize;
-        widths.iter().map(|w| w.div_ceil(c).max(1)).sum()
-    }
-    // What the inner shell passed through to the terminal during the instant phase: byte
-    // count + newline count. Zero newlines means the only header on screen is ours (safe to
-    // erase in place and repaint); otherwise the rc really printed something, those lines
-    // sit below ours and must be kept.
-    let mut instant_bytes = 0usize;
+    // What the inner shell passed through during the instant phase. A newline means the rc
+    // really printed something; after that the rows we drew have been pushed down.
     let mut instant_newlines = 0usize;
 
     let mut scanner = SignalScanner::new();
@@ -423,7 +413,7 @@ pub fn run() -> anyhow::Result<()> {
                 // reflow "move up N rows" is unreliable, and this is the only safe option.
                 if instant_drawn && instant_newlines == 0 {
                     write!(stdout, "\x1b[2J\x1b[H")?;
-                    instant_widths = theme::render_header_cfg(
+                    theme::render_header_cfg(
                         &mut stdout,
                         c as usize,
                         &config,
@@ -669,11 +659,9 @@ pub fn run() -> anyhow::Result<()> {
                         typed_since_prompt = false;
                     }
                     stdout.write_all(&scan.after)?;
-                    // Instant-phase bookkeeping: when the shell printed something during init
-                    // (rc echo/warning), the rows we drew have been pushed down and must not be
-                    // erased later.
+                    // Instant-phase bookkeeping: a newline means the shell printed something
+                    // during init (rc echo/warning), so the rows we drew have been pushed down.
                     if instant_drawn {
-                        instant_bytes += n;
                         instant_newlines += buf[..n].iter().filter(|b| **b == b'\n').count();
                     }
                     stdout.flush()?;
