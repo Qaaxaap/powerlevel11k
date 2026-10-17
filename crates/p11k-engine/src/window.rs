@@ -5,20 +5,11 @@ use std::io::{self, Write};
 use crate::config::Config;
 use crate::theme::{self, GitStatus, HeaderInfo};
 
-/// Write bytes through to the terminal and remember the tail of what has been written: the marker
-/// match looks at the blank rows in front of it, and on a read boundary those may already be out.
-pub fn emit(out: &mut dyn Write, recent: &mut Vec<u8>, bytes: &[u8], cap: usize) -> io::Result<()> {
-    out.write_all(bytes)?;
-    recent.extend_from_slice(bytes);
-    if recent.len() > cap {
-        recent.drain(..recent.len() - cap);
-    }
-    Ok(())
-}
-
-/// Paint the header and the input-line prefix over a placeholder the shell has just printed:
-/// the cursor sits right after the marker, so moving up `header_rows` rows lands on the blank
-/// rows the shell left there for the header.
+/// Paint the header and the input-line prefix after the shell's prompt-ready signal.
+///
+/// The cursor is at the start of the input line (the shell printed the blank rows and the
+/// signal, nothing else), so the header is filled by moving up `header_rows` rows, and the
+/// prefix is drawn with a plain `\r`: it ends up exactly where the user's input starts.
 pub fn paint_prompt(
     out: &mut dyn Write,
     config: &Config,
@@ -32,7 +23,10 @@ pub fn paint_prompt(
         .filter(|(cwd, _)| cwd == &info.cwd)
         .and_then(|(_, s)| s.as_ref());
     theme::redraw_header_cfg(out, rows, config, info, vcs)?;
-    // The prefix is generated dynamically from the current exit code.
+    // The prefix is generated dynamically from the current exit code, and its width is not
+    // constrained: the cursor simply ends up after it.
     let text = crate::render::input_prefix(config, current).text;
-    theme::render_prompt(out, &text)
+    write!(out, "\r{text}")?;
+    // OSC 133 B: tell the terminal the cursor now rests at the input position.
+    write!(out, "\x1b]133;B\x07")
 }
