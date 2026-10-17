@@ -20,7 +20,7 @@ _p11k_precmd() {
   _p11k_pipes="${pipestatus}"
   _p11k_pwd=$PWD
   # Used to restore PROMPT after the transient fold; carries the prompt-ready signal too.
-  PROMPT="$P11K_PLACEHOLDER"$'\e]1337;p11k;p\a'
+  PROMPT="$P11K_PROMPT_LEAD"
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   rm -f "$P11K_ACK"
@@ -58,7 +58,7 @@ fi
 # PROMPT carries the placeholder plus the zero-width prompt-ready signal (OSC 1337;p11k;p).
 # The signal is what a serialised prompt protocol keys on: it occupies no columns and the
 # engine reads it out of the byte stream.
-PROMPT="$P11K_PLACEHOLDER"$'\e]1337;p11k;p\a'
+PROMPT="$P11K_PROMPT_LEAD"
 RPROMPT=''
 PROMPT2='> '
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
@@ -130,7 +130,7 @@ zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-dir
 /// directly, and the engine byte-matches it to paint the prefix over it. resize detects size
 /// changes via trap WINCH and announces `r`.
 pub const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol layer + user config.
-PS1="$P11K_PLACEHOLDER"'\[\e]1337;p11k;p\a\]'
+PS1="$P11K_PROMPT_LEAD"
 
 # PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
 # then wait for the engine ack before returning.
@@ -164,7 +164,7 @@ elif [[ -r "$HOME/.bashrc" ]]; then
 fi
 
 # ===== protocol invariants =====
-PS1="$P11K_PLACEHOLDER"'\[\e]1337;p11k;p\a\]'
+PS1="$P11K_PROMPT_LEAD"
 PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
 "#;
@@ -190,7 +190,7 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
-        printf '%s\e]1337;p11k;p\a' "$P11K_PLACEHOLDER"
+        printf '%s' "$P11K_PROMPT_LEAD"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -198,7 +198,7 @@ function fish_prompt
         sleep 0.005
     end
     rm -f $P11K_ACK
-    printf '%s\e]1337;p11k;p\a' "$P11K_PLACEHOLDER"
+    printf '%s' "$P11K_PROMPT_LEAD"
 end
 
 # ===== user config =====
@@ -219,7 +219,7 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
-        printf '%s\e]1337;p11k;p\a' "$P11K_PLACEHOLDER"
+        printf '%s' "$P11K_PROMPT_LEAD"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -227,7 +227,7 @@ function fish_prompt
         sleep 0.005
     end
     rm -f $P11K_ACK
-    printf '%s\e]1337;p11k;p\a' "$P11K_PLACEHOLDER"
+    printf '%s' "$P11K_PROMPT_LEAD"
 end
 "#;
 
@@ -272,7 +272,7 @@ function global:P11kEnginePrompt {
     # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
-    "$env:P11K_PLACEHOLDER`e]1337;p11k;p`a"
+    $env:P11K_PROMPT_LEAD
 }
 
 function global:prompt { P11kEnginePrompt }

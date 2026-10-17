@@ -30,13 +30,11 @@ use crate::cli::{Shell, detect_shell, load_config, load_config_file, theme_file}
 use crate::git::{GitRequest, GitResult, spawn_git_worker};
 use crate::i18n::t;
 use crate::log::log;
-use crate::protocol::{
-    AnnMsg, blank_rows_before, drain_announce, find_bytes, is_terminal_reply, marker_prefix_tail,
-};
+use crate::protocol::{AnnMsg, SignalScanner, drain_announce, is_terminal_reply};
 use crate::state::{RawTerminal, StateDir, tty_size};
 use crate::theme;
 use crate::theme::{GitStatus, HeaderInfo};
-use crate::window::{emit, paint_prompt};
+use crate::window::paint_prompt;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 pub fn run() -> anyhow::Result<()> {
@@ -76,18 +74,23 @@ pub fn run() -> anyhow::Result<()> {
     let mut prefix = crate::render::input_prefix(&config, None);
     // The placeholder carries header_rows newlines so the shell's prompt geometry counts
     // the header rows too; only then can zsh fold transient cleanly with reset-prompt.
-    // marker is the visible placeholder bytes after the newlines; bash/fish match it to
-    // tell the placeholder has been printed.
+    // The prompt skeleton each shell prints: `header_rows` blank rows for the header, then the
+    // zero-width prompt-ready signal. Handed over as data so no template carries it. The engine
+    // fills the blank rows and draws the input-line prefix when the signal arrives, which keeps
+    // the prefix's styling in the theme and its width unconstrained.
     let header_rows = config.layout.left.len().max(config.layout.right.len());
-    let marker = "_".repeat(prefix.width.max(1));
-    let placeholder = format!("{}{}", "\n".repeat(header_rows), marker);
+    let prompt_lead = format!(
+        "{}{}",
+        "\n".repeat(header_rows),
+        String::from_utf8_lossy(crate::protocol::PROMPT_SIGNAL)
+    );
     let state = StateDir::create(shell)?;
     log(&format!(
-        "engine start: dir={} announce={} ack={} placeholder={:?} shell={:?}",
+        "engine start: dir={} announce={} ack={} prompt_lead={:?} shell={:?}",
         state.dir.display(),
         state.announce.display(),
         state.ack.display(),
-        placeholder,
+        prompt_lead,
         shell
     ));
 
@@ -136,7 +139,7 @@ pub fn run() -> anyhow::Result<()> {
     cmd.env("P11K_ACK", &state.ack);
     // The prompt skeleton each shell prints: header_rows newlines plus a marker exactly as wide
     // as the prefix the engine paints over it. Handed over as data so no template carries it.
-    cmd.env("P11K_PLACEHOLDER", &placeholder);
+    cmd.env("P11K_PROMPT_LEAD", &prompt_lead);
     // `p11k reload` runs in the inner shell: it needs to find this engine and the file the
     // theme came from. An empty P11K_CONFIG means the theme is a preset or the built-in one,
     // and there is nothing to re-read.
@@ -247,19 +250,6 @@ pub fn run() -> anyhow::Result<()> {
     // to pass through (~60ms) before painting the prefix, so the prompt is not painted
     // before zle repaints (and gets covered by the placeholder) or ahead of the buffer.
     let mut resize_prompt_at: Option<std::time::Instant> = None;
-    // bash has no zle-line-init (no `p` announce): after the ack bash prints the PS1
-    // placeholder directly and the engine matches it in the pass-through stream to paint
-    // the prefix over it. Content before the placeholder is accumulated in a buffer.
-    let mut pending_placeholder = false;
-    // Whether the current prompt has already been painted over its placeholder. Reprints of it
-    // (completion lists, Ctrl-L, paging) have to be covered for as long as it is on screen —
-    // until the next precmd starts a new cycle — even though `at_prompt` goes false on any enter.
-    let mut prompt_painted = false;
-    let mut placeholder_buf: Vec<u8> = Vec::new();
-    // Tail of what has already gone out to the real terminal: the marker match needs the blank
-    // rows in front of it, and on a read boundary those may already have been written.
-    let mut recent: Vec<u8> = Vec::new();
-    let recent_cap = header_rows * 2;
     // Whether the user has typed since the current prompt became ready: the empty enter
     // sent to pwsh on shrink runs only while the input line is still empty, otherwise it
     // would submit a half-written command.
@@ -304,6 +294,8 @@ pub fn run() -> anyhow::Result<()> {
     // sit below ours and must be kept.
     let mut instant_bytes = 0usize;
     let mut instant_newlines = 0usize;
+
+    let mut scanner = SignalScanner::new();
 
     loop {
         // `p11k reload`: read the theme file again and repaint. A file that no longer parses
@@ -439,12 +431,7 @@ pub fn run() -> anyhow::Result<()> {
                         .take()
                         .map(|t| t.elapsed().as_secs_f64())
                         .unwrap_or(0.0);
-                    at_prompt = false; // new prompt cycle: the cursor is not on the input line until the header is backfilled
-                    // The next placeholder belongs to a new prompt: stop covering reprints of
-                    // the previous one until this cycle has painted its own (see the marker
-                    // match below, which is not tied to `at_prompt` — an enter inside readline's
-                    // completion pager is not a submitted command, yet it does clear at_prompt).
-                    prompt_painted = false;
+                    at_prompt = false; // new prompt cycle: the next signal paints the input line
                     if instant_drawn {
                         // First precmd: replace the instant header with the real state.
                         //
@@ -492,11 +479,7 @@ pub fn run() -> anyhow::Result<()> {
                     // top of the placeholder's own newlines.
                     theme::prompt_start(&mut stdout)?;
                     stdout.flush()?;
-                    File::create(&state.ack)?; // release precmd → the shell prints the placeholder
-                    if shell != Shell::Zsh {
-                        pending_placeholder = true;
-                        placeholder_buf.clear();
-                    }
+                    File::create(&state.ack)?; // release precmd → the shell prints the prompt
                     // Compute git in the background and repaint the header asynchronously when
                     // it finishes.
                     git_gen += 1;
@@ -523,7 +506,6 @@ pub fn run() -> anyhow::Result<()> {
                     )?;
                     stdout.flush()?;
                     at_prompt = true; // input line ready
-                    prompt_painted = true;
                     typed_since_prompt = false;
                 }
                 AnnMsg::Resize => {
@@ -551,9 +533,7 @@ pub fn run() -> anyhow::Result<()> {
                                 std::time::Instant::now() + std::time::Duration::from_millis(60),
                             );
                         } else {
-                            log("r: wait for the shell to reprint the placeholder");
-                            pending_placeholder = true;
-                            placeholder_buf.clear();
+                            log("r: wait for the shell to reprint the prompt");
                         }
                     } else {
                         log("r: skip redraw (not at prompt)");
@@ -633,94 +613,32 @@ pub fn run() -> anyhow::Result<()> {
             match reader.read(&mut buf) {
                 Ok(0) => break, // shell exited
                 Ok(n) => {
-                    // bash/fish/pwsh: the shell prints the placeholder as its prompt, and every
-                    // time it redraws the input line over itself — completion lists, Ctrl-L,
-                    // paging through a list — the whole PS1 is reprinted, placeholder included.
-                    // Those reprints have to be covered for as long as the prompt is on screen,
-                    // which is what `prompt_painted` tracks: it survives an enter, because
-                    // readline's pager takes one to page on while `at_prompt` reads it as a
-                    // submitted command.
-                    //
-                    // zsh reprints PROMPT (blank rows + marker) as well, just not for those
-                    // reasons: when an asynchronous event lands while the input line is idle — a
-                    // background job finishing, so zle prints the notification and redraws the
-                    // prompt — nothing announces it, and the bare marker stays on screen.
-                    // `at_prompt` is the exact test for zsh: it is set by the `p` announce, which
-                    // covers the placeholder printed right after `h` (so nothing is drawn twice),
-                    // and it is cleared when the user submits (so command output is never
-                    // matched).
-                    let covering = if shell == Shell::Zsh {
-                        at_prompt
-                    } else {
-                        pending_placeholder || prompt_painted
-                    };
-                    if covering {
-                        placeholder_buf.extend_from_slice(&buf[..n]);
-                        // Paint over every placeholder the buffer holds. The blank rows in front of
-                        // the marker may sit in an earlier read — a reprint can straddle a read
-                        // boundary — so the tail already written is part of the match. The copy is
-                        // a couple of bytes at most, and a match refreshes it with the marker.
-                        let behind: Vec<u8> = recent.clone();
-                        let mut from = 0;
-                        while let Some(rel) =
-                            find_bytes(&placeholder_buf[from..], marker.as_bytes())
-                        {
-                            let pos = from + rel;
-                            if !blank_rows_before(&behind, &placeholder_buf[..pos], header_rows) {
-                                from = pos + 1;
-                                continue;
-                            }
-                            let end = pos + marker.len();
-                            // Pass the placeholder through first (blank lines + placeholder),
-                            // moving the cursor past it.
-                            emit(
-                                &mut stdout,
-                                &mut recent,
-                                &placeholder_buf[..end],
-                                recent_cap,
-                            )?;
-                            // Move up header rows to backfill the real header, then return to
-                            // line start and overwrite the placeholder.
-                            paint_prompt(
-                                &mut stdout,
-                                &config,
-                                last_size.1 as usize,
-                                current_info.as_ref(),
-                                &instant_info,
-                                last_vcs.as_ref(),
-                            )?;
-                            placeholder_buf.drain(..end);
-                            from = 0;
-                            pending_placeholder = false;
-                            prompt_painted = true;
-                            at_prompt = true; // bash/fish "prompt ready" (equivalent to zsh's p announce)
-                            typed_since_prompt = false;
-                        }
-                        // Hold back only what could still grow into the marker: a run of `_` right
-                        // behind a newline, i.e. the blank row the prompt prints. A `_` typed in
-                        // the middle of the line is output at once — holding a tail back by
-                        // marker length would make the echo lag by exactly that many characters.
-                        let keep = marker_prefix_tail(&placeholder_buf, &behind, marker.as_bytes());
-                        let cut = placeholder_buf.len() - keep;
-                        emit(
+                    // The shell prints the prompt as blank rows for the header, then the
+                    // zero-width signal, then nothing. Everything up to the signal goes out
+                    // first; the header and the input-line prefix are painted on top; what
+                    // follows the signal is forwarded after that. A completion list, Ctrl-L or a
+                    // pager page reprints the whole prompt, which arrives as another signal.
+                    let scan = scanner.push(&buf[..n]);
+                    stdout.write_all(&scan.before)?;
+                    for _ in 0..scan.signals {
+                        paint_prompt(
                             &mut stdout,
-                            &mut recent,
-                            &placeholder_buf[..cut],
-                            recent_cap,
+                            &config,
+                            last_size.1 as usize,
+                            current_info.as_ref(),
+                            &instant_info,
+                            last_vcs.as_ref(),
                         )?;
-                        placeholder_buf.drain(..cut);
-                    } else {
-                        // Count pass-through content during the instant phase: a newline means
-                        // the inner shell really printed to the screen (rc echo/warning/error),
-                        // in which case our own rows cannot be erased (they have been pushed
-                        // down); control sequences alone (setting the title and such, common in
-                        // user rcs) do not count and still take the clean-erase path. p10k keeps
-                        // the output and warns.
-                        if instant_drawn {
-                            instant_bytes += n;
-                            instant_newlines += buf[..n].iter().filter(|b| **b == b'\n').count();
-                        }
-                        emit(&mut stdout, &mut recent, &buf[..n], recent_cap)?;
+                        at_prompt = true;
+                        typed_since_prompt = false;
+                    }
+                    stdout.write_all(&scan.after)?;
+                    // Instant-phase bookkeeping: when the shell printed something during init
+                    // (rc echo/warning), the rows we drew have been pushed down and must not be
+                    // erased later.
+                    if instant_drawn {
+                        instant_bytes += n;
+                        instant_newlines += buf[..n].iter().filter(|b| **b == b'\n').count();
                     }
                     stdout.flush()?;
                 }
@@ -770,30 +688,6 @@ pub fn run() -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use crate::cli::pick_shell;
-
-    #[test]
-    fn blank_rows_before_ignores_the_escapes_between_the_rows() {
-        // fish opens every prompt row with `\r\n\x1b[K`, bash just sends `\r\n`.
-        assert!(blank_rows_before(b"", b"\r\n\x1b[K\r\n\x1b[K\r\n", 3));
-        assert!(blank_rows_before(b"", b"\r\n", 1));
-        // The rows can be split across a read boundary.
-        assert!(blank_rows_before(b"\r\n\x1b[K", b"\r\n\x1b[K\r\n", 3));
-        // Ordinary output is not a placeholder, however many newlines it carries.
-        assert!(!blank_rows_before(b"", b"echo ", 1));
-        assert!(!blank_rows_before(b"", b"echo\n\n", 3));
-        assert!(!blank_rows_before(b"", b"", 1));
-    }
-
-    #[test]
-    fn marker_prefix_tail_waits_only_behind_a_newline() {
-        let marker = b"____";
-        // A partial marker right behind the prompt's blank row is held back …
-        assert_eq!(marker_prefix_tail(b"\n__", b"", marker), 2);
-        assert_eq!(marker_prefix_tail(b"_", b"\n", marker), 1);
-        // … one typed in the middle of the line is not.
-        assert_eq!(marker_prefix_tail(b"x__", b"", marker), 0);
-        assert_eq!(marker_prefix_tail(b"__", b"echo ", marker), 0);
-    }
 
     #[test]
     fn shell_names_match_the_cli_flag() {
