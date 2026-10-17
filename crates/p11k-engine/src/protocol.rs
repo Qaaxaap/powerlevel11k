@@ -128,6 +128,60 @@ pub fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+/// The zero-width prompt-ready signal a shell appends to its prompt string:
+/// `ESC ] 1337 ; p11k ; p BEL`. It occupies no columns, and terminals ignore unknown OSC
+/// sequences, so it passes through the terminal untouched while the engine sees it in the
+/// byte stream.
+pub const PROMPT_SIGNAL: &[u8] = b"\x1b]1337;p11k;p\x07";
+
+/// Length of the longest suffix of `hay` that is a proper prefix of `needle`.
+///
+/// A read can split the signal anywhere. This is how much of the tail has to wait for the
+/// next read before it can be forwarded as ordinary output; only real prefixes are held
+/// back, so plain output is never delayed.
+fn signal_prefix_tail(hay: &[u8], needle: &[u8]) -> usize {
+    let max = hay.len().min(needle.len() - 1);
+    (1..=max)
+        .rev()
+        .find(|&n| hay[hay.len() - n..] == needle[..n])
+        .unwrap_or(0)
+}
+
+/// Strips prompt signals out of the inner shell's byte stream.
+///
+/// The engine forwards everything the shell writes, so a signal has to be removed before it
+/// is forwarded; one split across two reads is held back until the next read confirms it.
+#[derive(Default)]
+pub struct SignalScanner {
+    pending: Vec<u8>,
+}
+
+impl SignalScanner {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feed one read's worth of bytes. Returns what is safe to forward now and how many
+    /// complete signals the chunk completed.
+    pub fn push(&mut self, chunk: &[u8]) -> (Vec<u8>, usize) {
+        self.pending.extend_from_slice(chunk);
+        let mut out = Vec::with_capacity(self.pending.len());
+        let mut signals = 0;
+        let mut from = 0;
+        while let Some(rel) = find_bytes(&self.pending[from..], PROMPT_SIGNAL) {
+            let at = from + rel;
+            out.extend_from_slice(&self.pending[from..at]);
+            signals += 1;
+            from = at + PROMPT_SIGNAL.len();
+        }
+        let rest = &self.pending[from..];
+        let keep = signal_prefix_tail(rest, PROMPT_SIGNAL);
+        out.extend_from_slice(&rest[..rest.len() - keep]);
+        self.pending = rest[rest.len() - keep..].to_vec();
+        (out, signals)
+    }
+}
+
 /// Whether the newlines the prompt prints in front of the marker sit right before it: one per
 /// header row, ending at `held` (the bytes still buffered) and running back into `behind` (what
 /// has already been written). The tty turns each newline into `\r\n` (ONLCR) and shells dress the
@@ -210,4 +264,44 @@ pub fn marker_prefix_tail(held: &[u8], behind: &[u8], marker: &[u8]) -> usize {
         behind.last() == Some(&b'\n')
     };
     if behind_newline { n } else { 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signal_scanner_strips_signals_and_holds_split_ones() {
+        let mut s = SignalScanner::new();
+        let (out, n) = s.push(b"abc");
+        assert_eq!((out.as_slice(), n), (b"abc".as_slice(), 0));
+
+        // A signal cut in the middle must not leak its head as output.
+        let (out, n) = s.push(b"\x1b]1337;p11");
+        assert!(out.is_empty(), "head of a split signal leaked: {out:?}");
+        assert_eq!(n, 0);
+        let (out, n) = s.push(b"k;p\x07tail");
+        assert_eq!((out.as_slice(), n), (b"tail".as_slice(), 1));
+
+        // Two signals in one read, with output between them.
+        let (out, n) = s.push(b"a\x1b]1337;p11k;p\x07b\x1b]1337;p11k;p\x07c");
+        assert_eq!((out.as_slice(), n), (b"abc".as_slice(), 2));
+    }
+
+    #[test]
+    fn signal_scanner_does_not_delay_plain_output() {
+        let mut s = SignalScanner::new();
+        // A lone ESC is not a prefix of the signal, so it goes out immediately.
+        let (out, n) = s.push(b"\x1b[31m");
+        assert_eq!((out.as_slice(), n), (b"\x1b[31m".as_slice(), 0));
+    }
+
+    #[test]
+    fn signal_prefix_tail_matches_only_real_prefixes() {
+        assert_eq!(signal_prefix_tail(b"", PROMPT_SIGNAL), 0);
+        assert_eq!(signal_prefix_tail(b"xyz", PROMPT_SIGNAL), 0);
+        assert_eq!(signal_prefix_tail(b"abc\x1b]13", PROMPT_SIGNAL), 4);
+        // A complete signal is not a proper prefix; the caller has already consumed it.
+        assert_eq!(signal_prefix_tail(PROMPT_SIGNAL, PROMPT_SIGNAL), 0);
+    }
 }
