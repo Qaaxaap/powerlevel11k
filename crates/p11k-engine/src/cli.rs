@@ -25,6 +25,14 @@ impl Shell {
             Shell::Pwsh => "pwsh",
         }
     }
+
+    /// Whether the line editor opens a fresh row when the cursor is not at column 0. zle and
+    /// PSReadLine do; readline and fish repaint over the current row instead. The engine draws an
+    /// input-line prefix during the instant phase, so this decides how far the real header has to
+    /// step back to land on the rows the instant header occupies.
+    pub fn prompt_starts_on_a_new_row(self) -> bool {
+        matches!(self, Shell::Zsh | Shell::Pwsh)
+    }
 }
 
 /// The `--shell <name>` argument, verbatim: an unrecognised name has to fall through to the

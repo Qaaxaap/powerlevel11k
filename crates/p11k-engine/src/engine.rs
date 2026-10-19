@@ -37,30 +37,6 @@ use crate::theme::{GitStatus, HeaderInfo};
 use crate::window::paint_prompt;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-/// Visible text of a rendered prefix: the ANSI colouring is dropped so the shell can put it in
-/// its prompt string without knowing which byte runs are non-printing. Wrapping the whole
-/// prefix in zsh's `%{...%}` would make it zero-width and start the buffer at column 0.
-fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\u{1b}' {
-            out.push(c);
-            continue;
-        }
-        // CSI: ESC [ ... final byte in 0x40..=0x7e.
-        let it = chars.by_ref();
-        if it.next() == Some('[') {
-            for c in it.by_ref() {
-                if ('\u{40}'..='\u{7e}').contains(&c) {
-                    break;
-                }
-            }
-        }
-    }
-    out
-}
-
 pub fn run() -> anyhow::Result<()> {
     // The config comes first: it may name the shell, and it decides the input-line prefix
     // width, from which the placeholder is built.
@@ -179,18 +155,22 @@ pub fn run() -> anyhow::Result<()> {
         history: 0,
         pipestatus: Vec::new(),
     };
-    // zsh gets its own prompt syntax (`%F{...}`, zero width for zle); the other shells get the
-    // visible text, since their line editors count bare ANSI as width.
-    let (prefix_ok, prefix_err) = if shell == Shell::Zsh {
-        (
+    // Each shell marks non-printing sequences its own way: zsh `%F{...}`, bash `\[...\]`, and
+    // fish/pwsh read ANSI directly. The prefix must carry its colour in that syntax, or the line
+    // editor counts the escape bytes as visible width and shifts the buffer.
+    let (prefix_ok, prefix_err) = match shell {
+        Shell::Zsh => (
             crate::render::prefix_text_zsh(&config, None),
             crate::render::prefix_text_zsh(&config, Some("ERROR")),
-        )
-    } else {
-        (
-            strip_ansi(&crate::render::input_prefix(&config, None).text),
-            strip_ansi(&crate::render::input_prefix(&config, Some(&err_info)).text),
-        )
+        ),
+        Shell::Bash => (
+            crate::render::prefix_text_bash(&config, None),
+            crate::render::prefix_text_bash(&config, Some("ERROR")),
+        ),
+        Shell::Fish | Shell::Pwsh => (
+            crate::render::input_prefix(&config, None).text,
+            crate::render::input_prefix(&config, Some(&err_info)).text,
+        ),
     };
     cmd.env("P11K_PREFIX_OK", &prefix_ok);
     cmd.env("P11K_PREFIX_ERR", &prefix_err);
@@ -640,10 +620,12 @@ pub fn run() -> anyhow::Result<()> {
                     let scan = scanner.push(&buf[..n]);
                     stdout.write_all(&scan.before)?;
                     for _ in 0..scan.signals {
-                        // The instant header is still on screen above the input line: step over
-                        // its rows first, so the real header replaces it in place instead of
-                        // being painted below it.
-                        if instant_drawn {
+                        // The instant header sits above the input line, and the real header has to
+                        // replace it in place. bash and fish repaint the prompt over the row the
+                        // engine drew its instant prefix on, so stepping up over the header lands
+                        // on the instant header. zsh and pwsh open a fresh row instead, so the
+                        // prompt sits one row lower and the step has to start one row higher.
+                        if instant_drawn && shell.prompt_starts_on_a_new_row() {
                             write!(stdout, "\x1b[1A")?;
                         }
                         paint_prompt(
