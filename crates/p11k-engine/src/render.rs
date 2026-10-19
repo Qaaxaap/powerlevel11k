@@ -97,18 +97,29 @@ fn segment_has_state(config: &Config, state: &str) -> bool {
     config.segment("prompt_char").states.contains_key(state)
 }
 
-/// Input line prefix text for a state (frame last_prefix + prompt_char char + space).
-fn prefix_text(config: &Config, state: Option<&str>) -> String {
+/// Builds the input-line prefix (frame last-prefix piece + prompt char + trailing space) with
+/// the given colouring function. Each shell needs its own syntax for marking non-printing
+/// sequences, so the shape lives here and the colouring is passed in.
+fn prefix_text_with(
+    config: &Config,
+    state: Option<&str>,
+    colour: impl Fn(&str, &Style) -> String,
+) -> String {
     let mut text = String::new();
     if !config.frame.last_prefix.text.is_empty() {
         let piece = &config.frame.last_prefix;
-        text.push_str(&paint(&piece.text, &config.frame_piece_style(piece)));
+        text.push_str(&colour(&piece.text, &config.frame_piece_style(piece)));
     }
     let pc = config.segment("prompt_char");
     let st = pc.effective_style(state, &config.defaults);
-    text.push_str(&paint(pc.char_for(state, "❯"), &st));
+    text.push_str(&colour(pc.char_for(state, "❯"), &st));
     text.push(' '); // space after the prefix (uncolored), matching the original `❯ ` geometry
     text
+}
+
+/// Input line prefix text for a state, in plain ANSI (fish and pwsh read ANSI directly).
+fn prefix_text(config: &Config, state: Option<&str>) -> String {
+    prefix_text_with(config, state, paint)
 }
 
 fn prefix_width(config: &Config, state: Option<&str>) -> usize {
@@ -120,16 +131,13 @@ fn prefix_width(config: &Config, state: Option<&str>) -> usize {
 /// shell (the engine cannot paint the prefix itself: zle draws the buffer immediately after the
 /// prompt and a later paint would overwrite it).
 pub fn prefix_text_zsh(config: &Config, state: Option<&str>) -> String {
-    let mut text = String::new();
-    if !config.frame.last_prefix.text.is_empty() {
-        let piece = &config.frame.last_prefix;
-        text.push_str(&paint_zsh(&piece.text, &config.frame_piece_style(piece)));
-    }
-    let pc = config.segment("prompt_char");
-    let st = pc.effective_style(state, &config.defaults);
-    text.push_str(&paint_zsh(pc.char_for(state, "❯"), &st));
-    text.push(' '); // space after the prefix (uncolored), matching the original `❯ ` geometry
-    text
+    prefix_text_with(config, state, paint_zsh)
+}
+
+/// Input-line prefix in bash's prompt syntax: the SGR runs are wrapped in `\[...\]` so readline
+/// counts them as zero width.
+pub fn prefix_text_bash(config: &Config, state: Option<&str>) -> String {
+    prefix_text_with(config, state, paint_bash)
 }
 
 /// zsh prompt colouring: `%F{...}` sets the foreground and `%f` resets it, both zero width.
@@ -2833,11 +2841,8 @@ fn arrow(ch: &str, fg: Color, bg: Color) -> String {
     s
 }
 
-/// Colors text with a style (foreground + background block + bold; plain text, no separators).
-fn paint(text: &str, style: &Style) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
+/// ANSI SGR sequence that turns on the given style; empty when the style asks for nothing.
+fn ansi_style(style: &Style) -> String {
     let mut s = String::new();
     match &style.fg {
         Color::Default => {}
@@ -2854,9 +2859,31 @@ fn paint(text: &str, style: &Style) -> String {
     if style.bold {
         s.push_str("\x1b[1m");
     }
+    s
+}
+
+/// Colors text with a style (foreground + background block + bold; plain text, no separators).
+fn paint(text: &str, style: &Style) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    let mut s = ansi_style(style);
     s.push_str(text);
     s.push_str("\x1b[0m");
     s
+}
+
+/// bash prompt colouring: the SGR run and the reset are wrapped in `\[...\]` so readline
+/// counts them as zero width instead of shifting the buffer.
+fn paint_bash(text: &str, style: &Style) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    let sgr = ansi_style(style);
+    if sgr.is_empty() {
+        return text.to_string();
+    }
+    format!("\\[{sgr}\\]{text}\\[\\e[0m\\]")
 }
 
 /// Maps the standard 16 color names to 256-color indexes.

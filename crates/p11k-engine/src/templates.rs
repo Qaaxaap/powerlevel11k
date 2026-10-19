@@ -161,10 +161,21 @@ _p11k_prompt_command() {
   local _pipes="${PIPESTATUS[*]}"
   # The prefix belongs in PS1: readline draws the buffer right after it, and painting it later
   # would overwrite the first characters on a completion redraw.
+  #
+  # The first prompt prints no blank rows: the engine already drew the instant header and
+  # overwrites it in place when the signal arrives. Printing rows here would push that header up
+  # and leave it on screen.
+  local _lead="$P11K_PROMPT_LEAD"
+  if [[ -n "${P11K_INSTANT:-}" ]]; then
+    _lead=''
+    unset P11K_INSTANT
+  fi
+  # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
+  # before the shell starts, and without this readline would append the prompt after it.
   if [[ $_st -eq 0 ]]; then
-    PS1="$P11K_PROMPT_LEAD\[$_p11k_signal\]$P11K_PREFIX_OK"
+    PS1='\r'"$_lead\[$_p11k_signal\]$P11K_PREFIX_OK"
   else
-    PS1="$P11K_PROMPT_LEAD\[$_p11k_signal\]$P11K_PREFIX_ERR"
+    PS1='\r'"$_lead\[$_p11k_signal\]$P11K_PREFIX_ERR"
   fi
   printf 'h\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
@@ -214,14 +225,21 @@ function fish_prompt
     set -l _st $status
     # Capture $pipestatus right away: any command below resets it.
     set -l _pipes "$pipestatus"
+    # The first prompt prints no blank rows: the engine already drew the instant header and
+    # overwrites it in place when the signal arrives.
+    set -l _lead "$P11K_PROMPT_LEAD"
+    if test -n "$P11K_INSTANT"
+        set _lead ''
+        set -e P11K_INSTANT
+    end
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
         if test $_st -eq 0
-            printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_OK"
+            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_OK"
         else
-            printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_ERR"
+            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_ERR"
         end
         return
     end
@@ -231,9 +249,9 @@ function fish_prompt
     end
     rm -f $P11K_ACK
     if test $_st -eq 0
-        printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_OK"
+        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_OK"
     else
-        printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_ERR"
+        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_ERR"
     end
 end
 
@@ -245,20 +263,30 @@ else if test -r "$HOME/.config/fish/config.fish"
 end
 
 # ===== protocol invariants =====
+# The greeting prints a line between the instant header and the first prompt, which pushes the
+# header up and leaves a copy of it on screen. p11k owns the prompt area, so it is disabled.
+set -g fish_greeting ''
 set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 function fish_prompt
     set -l _st $status
     # Capture $pipestatus right away: any command below resets it.
     set -l _pipes "$pipestatus"
+    # The first prompt prints no blank rows: the engine already drew the instant header and
+    # overwrites it in place when the signal arrives.
+    set -l _lead "$P11K_PROMPT_LEAD"
+    if test -n "$P11K_INSTANT"
+        set _lead ''
+        set -e P11K_INSTANT
+    end
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
         if test $_st -eq 0
-            printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_OK"
+            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_OK"
         else
-            printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_ERR"
+            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_ERR"
         end
         return
     end
@@ -268,9 +296,9 @@ function fish_prompt
     end
     rm -f $P11K_ACK
     if test $_st -eq 0
-        printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_OK"
+        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_OK"
     else
-        printf '%s\e]1337;p11k;p\a%s' "$P11K_PROMPT_LEAD" "$P11K_PREFIX_ERR"
+        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_ERR"
     end
 end
 "#;
@@ -317,10 +345,19 @@ function global:P11kEnginePrompt {
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
     # The prefix belongs in the prompt string: PSReadLine draws the buffer right after it.
+    # The first prompt prints no blank rows: the engine already drew the instant header and
+    # overwrites it in place when the signal arrives.
+    $P11kLead = $env:P11K_PROMPT_LEAD
+    if ($env:P11K_INSTANT) {
+        $P11kLead = ''
+        Remove-Item Env:P11K_INSTANT -ErrorAction SilentlyContinue
+    }
+    # `r` puts the prompt at column 0: the engine draws the instant prefix on the input line
+    # before the shell starts, and without it PSReadLine would start the prompt after that.
     if ($P11kCode -eq 0) {
-        "$env:P11K_PROMPT_LEAD`e]1337;p11k;p`a$env:P11K_PREFIX_OK"
+        "$P11kLead`e]1337;p11k;p`a$env:P11K_PREFIX_OK"
     } else {
-        "$env:P11K_PROMPT_LEAD`e]1337;p11k;p`a$env:P11K_PREFIX_ERR"
+        "$P11kLead`e]1337;p11k;p`a$env:P11K_PREFIX_ERR"
     }
 }
 
@@ -395,20 +432,26 @@ mod tests {
         );
     }
 
-    /// The placeholder reaches the shell through `P11K_PLACEHOLDER`, so its width and its row
-    /// count stay the engine's to decide. No template may carry a literal `__` again: a copy
+    /// The prompt skeleton reaches the shell through environment variables, so the row count and
+    /// the prefix stay the engine's to decide. No template may carry a literal `__` again: a copy
     /// baked into a template would desync the geometry the moment the theme changes it.
     #[test]
-    fn templates_take_the_placeholder_from_the_environment() {
+    fn templates_take_the_prompt_skeleton_from_the_environment() {
         for (name, template) in [
             ("ZSHRC_TEMPLATE", ZSHRC_TEMPLATE),
             ("BASHRC_TEMPLATE", BASHRC_TEMPLATE),
             ("FISH_TEMPLATE", FISH_TEMPLATE),
             ("PWSH_TEMPLATE", PWSH_TEMPLATE),
         ] {
+            for var in ["P11K_PROMPT_LEAD", "P11K_PREFIX_OK", "P11K_PREFIX_ERR"] {
+                assert!(
+                    template.contains(var),
+                    "{name} must use {var}, which the engine passes in"
+                );
+            }
             assert!(
-                template.contains("P11K_PLACEHOLDER"),
-                "{name} must print the placeholder the engine passes in"
+                template.contains("1337;p11k;p"),
+                "{name} must emit the prompt-ready signal"
             );
             assert!(
                 !template.contains("__"),
