@@ -132,7 +132,7 @@
 - `time`—当前时间 HH:MM:SS。
 - `command_execution_time`—上次命令耗时，达到 `threshold-seconds` 才显示（`3s`、`1m5s`、`1h2m3s`）。
 - `background_jobs`—后台任务数。
-- `prompt_char`—不在 header 绘制；渲染输入行提示符（输入行由 shell 画，提示符紧跟 `frame.last-prefix` 之后）。字符由 `char` 属性配置（默认 `❯`），可为任意字符串，纯字面（不做环境变量展开）；`state ERROR`（上次退出码非 0）可覆盖字符与样式。各态的提示符必须等宽（宽度启动期定死，占位符协议依赖它）；不等宽 → 引擎报错，进入干净 shell 而不是加载主题。扩展状态对齐 p10k 的 `STATUS_EXTENDED_STATES`，判据来自管道的各段退出码：`OK_PIPE`（前段失败、最后一段成功）、`ERROR_PIPE`（管道失败）、`ERROR_SIGNAL`（被信号杀死，即退出码 > 128 且不是管道）。配置里没声明的状态回退到 `ERROR`，`OK_PIPE` 回退到无状态，所以只认 `ERROR` 的配置不受影响。各 shell 上报 `$pipestatus`；pwsh 没有这一列，因此不会进入这三个状态。
+- `prompt_char`—不在 header 绘制；渲染输入行提示符（输入行由 shell 画，提示符紧跟 `frame.last-prefix` 之后）。字符由 `char` 属性配置（默认 `❯`），可为任意字符串，纯字面（不做环境变量展开）；`state ERROR`（上次退出码非 0）可覆盖字符与样式。各态的提示符必须等宽；不等宽 → 引擎报错，进入干净 shell 而不是加载主题。扩展状态对齐 p10k 的 `STATUS_EXTENDED_STATES`，判据来自管道的各段退出码：`OK_PIPE`（前段失败、最后一段成功）、`ERROR_PIPE`（管道失败）、`ERROR_SIGNAL`（被信号杀死，即退出码 > 128 且不是管道）。配置里没声明的状态回退到 `ERROR`，`OK_PIPE` 回退到无状态，所以只认 `ERROR` 的配置不受影响。各 shell 上报 `$pipestatus`；pwsh 没有这一列，因此不会进入这三个状态。
 - `os`—发行版徽标。
 - `context`—SSH 下 `user@host`，本地 root 显示 `user`，否则隐藏。
 - `user`—当前用户名。
@@ -187,7 +187,7 @@
 
 - `defaults fg=… bg=… bold=#true`—所有**段**回退的终点（对应 p10k 段继承的全局 `POWERLEVEL9K_BACKGROUND`）：段没写 `bg` 就继承它，`defaults` 也没写 `bg` 时该段**透明**（终端自己的底色，早期版本会强制黑底）。帧字符和 `text` 元素只继承这里的 `fg` / `bold`，**不吃 `bg`**——p10k 的 `╭─` / `╰─` 在 classic 里也只有前景色、是透明的。所以统一底色的主题（classic）是**逐段写 `bg`**，wizard 之后新增的段（时间段等）会按当前风格补上同样的底色。
 - `separators { segment … sub … end … left-tail … right-tail … right-start … right-segment … right-sub … gap … }`—powerline 箭头家族，值为字符串（如 `"\u{e0b0}"`）。节点上还可带三个颜色属性：`gap-foreground`（左右栏之间填充字符的前景，p10k 的 `MULTILINE_FIRST_PROMPT_GAP_FOREGROUND`）、`sub-foreground` / `right-sub-foreground`（**同底**细线的前景，p10k 的 `sep_color`；缺省跟后段前景色）。箭头本身不用这些属性：它按前后段底色渐变（powerline 风格）。
-- `frame fg=… bg=… bold=#true { first-prefix … first-suffix … newline-prefix … newline-suffix … last-prefix … last-suffix … }`—每行行首/行尾的装饰：第一个 header 行用 `first-*`，后续 header 行用 `newline-*`，输入行用 `last-*`。帧级样式（`fg`/`bg`/`bold`）作用于所有块，单块可带自己的样式覆盖（如 `last-prefix "╰─" fg=196`）。输入前缀的宽度参与几何：引擎按它生成等宽占位符。
+- `frame fg=… bg=… bold=#true { first-prefix … first-suffix … newline-prefix … newline-suffix … last-prefix … last-suffix … }`—每行行首/行尾的装饰：第一个 header 行用 `first-*`，后续 header 行用 `newline-*`，输入行用 `last-*`。帧级样式（`fg`/`bg`/`bold`）作用于所有块，单块可带自己的样式覆盖（如 `last-prefix "╰─" fg=196`）。输入行的块（`last-*`）属于 shell 的提示符字符串，其宽度不影响头部几何。
 - `vcs-remote-icons { github="\u{f113}" … }`—远端域名子串 → 图标，按书写顺序匹配，未匹配用默认 git 图标。
 - `dir-classes { class "~/work/**" state="WORK" icon="★" … }`—按顺序拿 `$PWD` 匹配，第一条命中的规则决定 dir 段的 state（用 `state WORK fg=…` 上色）与图标；`icon=""` 表示**不要图标**（同 p10k）。配了 `show-writable` 时 state 还会拼上 `_NOT_WRITABLE` / `_NON_EXISTENT` 后缀（p10k 规则）。模式方言与 p10k 的 zsh 扩展 glob 不同：`~` 展开成 $HOME、`*` `?` `[…]` 不跨 `/`、`**` 跨目录、模式以 `/` 结尾表示整棵子树。
 - 不写 `dir-classes` 时，dir 图标走 p10k 自带的四条规则：`/etc` 及其下级 → `etc`、`$HOME` → `home`、它下面的任意目录 → `home-sub`、其余 → `folder`。它们就是普通图标表条目，可以用 `icon { home-sub { all "H" } }` 覆盖。

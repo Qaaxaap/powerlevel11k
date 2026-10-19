@@ -53,7 +53,7 @@ The engine is a pty host and a transparent proxy: it starts a theme-less shell i
 
 Once a shell hook announces that the prompt is ready, the engine draws the theme header and hands control back when it is done. The input line is still drawn by the shell's own line editor, so completion, history and vi mode stay geometrically consistent.
 
-The geometry is guaranteed by the placeholder protocol: the shell renders a theme skeleton made of placeholders, and the engine fills in the real header once that skeleton is on screen. The engine does not parse ANSI sequences out of the pty stream, and does not touch user input.
+The geometry is guaranteed by a zero-width prompt-ready signal: the shell's prompt string carries `OSC 1337;p11k;p` after the blank rows the header needs, and the engine paints the header into those rows when the signal reaches it. The prefix belongs to the shell's prompt so that the line editor draws the buffer right after it. The engine does not parse ANSI sequences out of the pty stream, and does not touch user input.
 
 ## Installing
 
@@ -165,7 +165,7 @@ That branch is not the main line of development; `main` carries the engine, but 
 Done:
 
 - gitstatusd-compatible core (v1.5.5 protocol) and the performance core: index parsing, `fstatat` scanning, parallel shards, untracked cache
-- placeholder protocol: self-consistent multi-line geometry across zsh / bash / fish / pwsh
+- prompt-ready signal protocol: self-consistent multi-line geometry across zsh / bash / fish / pwsh
 - instant / transient prompt, vi_mode, history, loose layout
 - 80+ segments, the KDL theme language, three icon tiers and `icon{}` overrides
 - the `p11k configure` wizard, gettext catalogs (zh_CN), CI
