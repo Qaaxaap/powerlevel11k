@@ -9,7 +9,7 @@
 //! - `capture-pane` is the rendered screen — what the user is looking at — so a case can assert on
 //!   the screen instead of reconstructing it.
 //! - `pipe-pane` still hands over the raw byte stream the engine wrote, so the byte-level
-//!   assertions (the placeholder protocol, the header backfill) stay as sharp as they were.
+//!   assertions (the signal protocol, the header backfill) stay as sharp as they were.
 //!
 //! The engine does not parse pty output; the bytes it paints are the same ones the user sees in the
 //! terminal, and those bytes are what most assertions land on.
@@ -158,8 +158,8 @@ impl Drop for Tmux {
     }
 }
 
-/// No line on the pane may be nothing but underscores: that is the placeholder the engine failed to
-/// cover, whatever its width (the marker is as wide as the prefix).
+/// No line on the pane may be nothing but underscores: that is the old placeholder marker, and a
+/// line of it would mean a regression to a protocol the engine no longer covers.
 fn assert_no_bare_placeholder(screen: &str) {
     assert!(
         !screen.lines().any(|line| {
@@ -242,9 +242,8 @@ fn spawn_engine_with_config_home(config_home: &str) -> Engine {
     spawn_engine_shell("zsh", config_home)
 }
 
-/// `shell` is passed to `--shell`. The placeholder protocol differs per shell: zsh announces the
-/// rendered prompt through zle-line-init, while bash, fish and pwsh leave the engine to match the
-/// placeholder in the pass-through stream.
+/// `shell` is passed to `--shell`. Every shell prints the same skeleton (blank rows, the
+/// zero-width signal, the prefix); only the surrounding hooks differ.
 fn spawn_engine_shell(shell: &str, config_home: &str) -> Engine {
     let socket = format!(
         "p11k-proxy-{shell}-{}",
@@ -453,9 +452,8 @@ fn zsh_job_notification_reprint_is_covered() {
     );
 }
 
-/// The placeholder carries one newline per header row and the tty turns each of them into
-/// `\r\n`, so the marker match has to tolerate the CRs: a two-row header must still be
-/// backfilled, in every shell that matches the marker itself.
+/// The prompt string carries one newline per header row and the tty turns each of them into
+/// `\r\n`, so a two-row header must still be backfilled from the signal.
 #[test]
 fn bash_two_row_header_is_backfilled() {
     let home = std::env::temp_dir().join(format!("p11k-two-rows-{}", std::process::id()));

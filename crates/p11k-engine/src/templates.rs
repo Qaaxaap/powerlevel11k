@@ -1,11 +1,10 @@
 //! The per-shell bootstrap rc files: the protocol layer each shell sources, plus the prompt
-//! placeholder the engine backfills.
+//! skeleton the engine backfills.
 
 /// Generate the bootstrap .zshrc handed to the shell.
-/// Sequence: precmd announces `h` → polls ack → zsh renders the placeholder PROMPT (zle)
-/// → zle-line-init announces `p` → the engine returns to line start and paints the prefix
-/// over the placeholder. The placeholder prompt is rendered by zle or its equivalent; the
-/// theme is always the engine's job.
+/// Sequence: precmd announces `h` → polls ack → zsh prints the prompt string (header blank
+/// rows + zero-width signal + prefix) through zle → the engine backfills the header. The prompt
+/// string is printed by zle or its equivalent; the theme is always the engine's job.
 pub const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap -- protocol layer + user config.
 # ===== engine protocol =====
 # Empty when the engine does not enable transient; clear it so a stale value
@@ -44,14 +43,14 @@ _p11k_precmd() {
   rm -f "$P11K_ACK"
 }
 
-# Announce `p` after zle renders the placeholder prompt; the engine then paints the real
-# prefix over it at line start. The zle hook only writes the file; the engine polls (~5ms).
+# zle calls this when it takes over the input line. The prompt is already on screen by then
+# (the signal drew the header, the prompt string carries the prefix), so the hook only reports
+# the keymap. It writes the file; the engine polls (~5ms).
 _p11k_line_init() {
   [[ ${CONTEXT:-start} == cont ]] && return
   if [[ -n "${_p11k_user_line_init:-}" ]] && (( $+functions[$_p11k_user_line_init] )); then
     "$_p11k_user_line_init"   # user-registered handler (e.g. autosuggestions) runs first
   fi
-  print -r -- "p" >> "$P11K_ANNOUNCE"
   # Report the current keymap: vi mode (zle resets to viins at prompt-ready) reports viins →
   # INSERT; emacs (main) reports main → the vi_mode segment hides. Switching (NORMAL/VISUAL)
   # is reported by keymap-select.
@@ -73,7 +72,7 @@ elif [[ -r "$HOME/.zshrc" ]]; then
 fi
 
 # ===== protocol invariants =====
-# PROMPT carries the placeholder plus the zero-width prompt-ready signal (OSC 1337;p11k;p).
+# PROMPT carries the zero-width prompt-ready signal (OSC 1337;p11k;p) and the input-line prefix.
 # The signal is what a serialised prompt protocol keys on: it occupies no columns and the
 # engine reads it out of the byte stream.
 PROMPT="$P11K_PROMPT_LEAD$_p11k_signal$P11K_PREFIX_OK"
@@ -144,9 +143,9 @@ zstyle ':completion:*' special-dirs true
 zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
 "#;
 
-/// bash has no `p` announce: after the ack bash prints PS1 (the `P11K_PLACEHOLDER` value)
-/// directly, and the engine byte-matches it to paint the prefix over it. resize detects size
-/// changes via trap WINCH and announces `r`.
+/// bash has no `p` announce: after the ack bash prints PS1 (the prompt lead + signal + prefix)
+/// directly, and the engine reads the signal out of the stream to backfill the header. resize
+/// detects size changes via trap WINCH and announces `r`.
 pub const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol layer + user config.
 # Zero-width prompt-ready signal. `\[...\]` tells readline the sequence takes no columns; a bare
 # OSC would be counted as visible width and the buffer would start in the wrong column.
@@ -208,11 +207,11 @@ PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
 "#;
 
-/// fish protocol layer (injected via XDG_CONFIG_HOME redirection). fish_prompt placeholder + announce.
+/// fish protocol layer (injected via XDG_CONFIG_HOME redirection). fish_prompt + announce.
 ///
-/// fish has no precmd/zle/PROMPT_COMMAND: the `h` announce lives in `fish_prompt`, which
-/// returns the placeholder after the ack; the engine byte-matches the placeholder and
-/// paints the prefix over it (same as bash, no `p` announce). resize uses `--on-signal WINCH`.
+/// fish has no precmd/zle/PROMPT_COMMAND: the `h` announce lives in `fish_prompt`, which prints
+/// the prompt string after the ack; the engine reads the signal out of that string and backfills
+/// the header. resize uses `--on-signal WINCH`.
 pub const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) -- protocol layer + user config.
 
 set -g _p11k_last_cols $COLUMNS
@@ -306,10 +305,9 @@ end
 /// pwsh protocol layer (injected via `-NoProfile -NoExit -Command ". <rc>"`).
 ///
 /// pwsh likewise has no precmd/zle/PROMPT_COMMAND: the `h` announce lives in the prompt
-/// function, which returns the placeholder only after the engine ack → the engine
-/// byte-matches the placeholder in the pass-through stream and paints the prefix over it
-/// (same as bash/fish, no `p` announce). resize compares the window size inside prompt and
-/// then announces `r`: pwsh does not turn SIGWINCH into a hookable event.
+/// function, which prints the prompt string only after the engine ack; the engine reads the
+/// signal out of that string and backfills the header. resize compares the window size inside
+/// prompt and then announces `r`: pwsh does not turn SIGWINCH into a hookable event.
 ///
 /// The body is a standalone function and prompt only forwards: after a user profile
 /// overrides prompt, the tail points it back at the engine implementation.
@@ -326,9 +324,9 @@ function global:P11kEnginePrompt {
     if ($P11kSize.Width -ne $script:P11kCols -or $P11kSize.Height -ne $script:P11kRows) {
         $script:P11kCols = $P11kSize.Width
         $script:P11kRows = $P11kSize.Height
-        # Announcing only `r` and returning would leave the placeholder on screen: the engine
-        # may not be in prompt state right now (just pressed enter), so it neither moves up to
-        # backfill nor paints over the placeholder. Hence fall through to the normal announce.
+        # Announcing only `r` and returning would leave the old prompt on screen: the engine
+        # may not be in prompt state right now (just pressed enter), so it would not repaint.
+        # Hence fall through to the normal announce.
         [IO.File]::AppendAllText($script:P11kAnnounce, "r`n")
     }
     $P11kJobs = @(Get-Job -ErrorAction SilentlyContinue).Count
@@ -338,7 +336,7 @@ function global:P11kEnginePrompt {
     # After Clear-History there is nothing left to read, so it reports 0.
     $P11kHist = if ($h = Get-History -Count 1) { $h.Id } else { 0 }
     [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n")
-    # Wait for the engine ack: the placeholder is printed first, the header is backfilled after.
+    # Wait for the engine ack: the prompt string is printed first, the header is backfilled after.
     while (-not [IO.File]::Exists($script:P11kAck)) { Start-Sleep -Milliseconds 5 }
     [IO.File]::Delete($script:P11kAck)
     # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
@@ -381,12 +379,12 @@ function global:prompt { P11kEnginePrompt }
 mod tests {
     use super::*;
 
-    /// pwsh has no zle: the engine byte-matches the placeholder in the pass-through stream,
-    /// so the protocol layer must do all three of announce `h`, wait for the ack and return
-    /// the placeholder (resize only appends an `r` and must not return early — then nothing
-    /// backfills the placeholder and it stays on screen).
+    /// pwsh has no zle: the signal travels inside the prompt string, so the protocol layer must
+    /// do all three of announce `h`, wait for the ack and emit the signal plus the prefix (resize
+    /// only appends an `r` and must not return early — then nothing backfills the header and the
+    /// old prompt stays on screen).
     #[test]
-    fn pwsh_template_implements_the_placeholder_protocol() {
+    fn pwsh_template_implements_the_signal_protocol() {
         let t = PWSH_TEMPLATE;
         assert!(
             t.contains("function global:prompt"),
@@ -400,7 +398,7 @@ mod tests {
         assert!(t.contains(r#""r`n""#), "resize must announce r");
         assert!(
             t.contains("while (-not [IO.File]::Exists($script:P11kAck))"),
-            "must wait for the engine ack, otherwise header refill and placeholder output get out of order"
+            "must wait for the engine ack, otherwise the header backfill and the prompt string get out of order"
         );
         assert!(
             t.contains("[IO.File]::Delete($script:P11kAck)"),
@@ -455,7 +453,7 @@ mod tests {
             );
             assert!(
                 !template.contains("__"),
-                "{name} must not carry a placeholder of its own"
+                "{name} must not carry a prompt skeleton of its own"
             );
         }
     }

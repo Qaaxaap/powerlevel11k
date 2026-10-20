@@ -11,8 +11,6 @@ use crate::theme::HeaderInfo;
 pub enum AnnMsg {
     /// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`: precmd announce, draws the header.
     Header(HeaderInfo),
-    /// `p`: zle-line-init announce, paints the input-line prefix over the placeholder.
-    Prompt,
     /// `r`: resize announce (zsh's TRAPWINCH, bash's trap WINCH, fish's `--on-signal
     /// WINCH`, pwsh compares the window size inside prompt); resize the pty + repaint.
     Resize,
@@ -23,7 +21,7 @@ pub enum AnnMsg {
 
 /// Read new lines from the announce file and parse them into prompt messages.
 /// Line format (first field is the message type, the rest are tab-separated):
-/// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`, `p`, `r`, `v\t<keymap>`.
+/// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`, `r`, `v\t<keymap>`.
 /// Missing fields are tolerated: a failed `<exit>` parse is None, a missing `<cwd>` is an
 /// empty string, missing or invalid `<jobs>`/`<history>` are 0. Only zsh and pwsh send
 /// `<history>`; bash/fish have no such column.
@@ -86,7 +84,6 @@ pub fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
                     pipestatus,
                 }));
             }
-            Some("p") => out.push(AnnMsg::Prompt),
             Some("r") => out.push(AnnMsg::Resize),
             Some("v") => {
                 let mode = parts

@@ -12,7 +12,6 @@
 use std::fmt::Write as _;
 
 use crate::config::{AttachText, Color, Config, Element, Segment, Style};
-use crate::i18n::t;
 use crate::theme::{GitStatus, HeaderInfo};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,7 +22,7 @@ use unicode_width::UnicodeWidthChar;
 pub static CURRENT_VI_MODE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
 /// Input line prefix: `frame.last_prefix` + `prompt_char` content; `width` is its display
-/// width, from which the engine generates equal-width placeholders.
+/// width, used on reload to detect a prefix the shell was not handed at startup.
 pub struct InputPrefix {
     pub text: String,
     pub width: usize,
@@ -122,10 +121,6 @@ fn prefix_text(config: &Config, state: Option<&str>) -> String {
     prefix_text_with(config, state, paint)
 }
 
-fn prefix_width(config: &Config, state: Option<&str>) -> usize {
-    display_width(&prefix_text(config, state))
-}
-
 /// Input-line prefix in zsh's prompt syntax: `%F{...}` is zero width for zle, so the prefix can
 /// carry its colour without shifting the buffer. Used when the prompt string is built by the
 /// shell (the engine cannot paint the prefix itself: zle draws the buffer immediately after the
@@ -181,28 +176,6 @@ fn zsh_fg(c: &Color) -> String {
         Color::Rgb(r, g, b) => format!("%F{{#{r:02x}{g:02x}{b:02x}}}"),
         Color::Named(n) => format!("%F{{{}}}", named_256(n)),
     }
-}
-
-/// Validates prompt_char: every state with a char (e.g. ERROR) must be as wide as the normal
-/// one. The prompt width must be fixed at startup (the placeholder protocol is generated from
-/// it), so a mismatch breaks the geometry and is reported as a startup error.
-pub fn check_prompt_char_widths(config: &Config) -> Result<(), String> {
-    let pc = config.segment("prompt_char");
-    let base = prefix_width(config, None);
-    for (name, spec) in &pc.states {
-        if spec.char.is_some() {
-            let w = prefix_width(config, Some(name));
-            if w != base {
-                return Err(format!(
-                    "{}: prompt_char state `{name}` is {w} wide, the normal state is {base}",
-                    t(
-                        "prompt_char states must all be the same width (the prompt width is fixed at startup)"
-                    )
-                ));
-            }
-        }
-    }
-    Ok(())
 }
 
 struct SegmentText {
@@ -3587,8 +3560,7 @@ mod tests {
 
     #[test]
     fn input_prefix_width_matches_visual() {
-        // With the frame last-prefix ╰─, the prefix is "╰─❯ " (width 4); placeholders are
-        // generated at this width.
+        // With the frame last-prefix ╰─, the prefix is "╰─❯ " (width 4).
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\nframe {\n  last-prefix \"╰─\"\n}",
         )
@@ -3995,30 +3967,6 @@ mod tests {
     }
 
     #[test]
-    fn prompt_char_states_must_match_width() {
-        // Normal and ERROR chars are equal width (both single chars) → validation passes.
-        let ok_cfg = Config::parse(
-            "layout { left { line { dir #true } } }\n\
-             segments { prompt_char char=\"❯\" {\n  state ERROR char=\"✘\"\n} }",
-        )
-        .unwrap();
-        assert!(
-            check_prompt_char_widths(&ok_cfg).is_ok(),
-            "equal widths should pass validation"
-        );
-        // Unequal widths (✘✘ double width) → validation errors.
-        let bad_cfg = Config::parse(
-            "layout { left { line { dir #true } } }\n\
-             segments { prompt_char char=\"❯\" {\n  state ERROR char=\"✘✘\"\n} }",
-        )
-        .unwrap();
-        assert!(
-            check_prompt_char_widths(&bad_cfg).is_err(),
-            "unequal widths should be rejected"
-        );
-    }
-
-    #[test]
     fn segment_attach_text_slots() {
         // Uses the real dir segment: default folder icon + content overriding the dir text,
         // with all attach slots.
@@ -4099,7 +4047,7 @@ mod tests {
 
     #[test]
     fn row_never_exceeds_cols_at_any_width() {
-        // The row width must never exceed cols: the placeholder protocol assumes one terminal
+        // The row width must never exceed cols: the prompt protocol assumes one terminal
         // row per line, and an overflow wrap would break the header row count (and miscount
         // the rows erased for the instant header).
         let cfg = Config::parse(
@@ -4126,7 +4074,7 @@ mod tests {
     #[test]
     fn right_column_is_dropped_when_the_row_does_not_fit() {
         // p10k: when the width is insufficient the whole right column (gap included) is not
-        // drawn rather than overflowing. An overflowing row breaks the placeholder protocol
+        // drawn rather than overflowing. An overflowing row breaks the prompt protocol
         // (header rows = rows reserved by the shell).
         let cfg = Config::parse(
             "layout {\n  left { line { dir #true } }\n  right { line { time #true } }\n}\n\
