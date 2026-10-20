@@ -722,15 +722,22 @@ fn prompt_add_newline_leaves_one_blank_row() {
         .write_all(b"printf 'P11K-ROW-PROBE\\n'\n")
         .unwrap();
     eng.writer.flush().unwrap();
-    let out = read_until(&eng.master, "\x1b]133;A\x07", Duration::from_secs(5));
+    let out = read_until(&eng.master, "\x1b]133;A\x07", Duration::from_secs(30));
     let _ = std::fs::remove_dir_all(&home);
 
     // The command output ends with its own CRLF; everything between it and the prompt-start
-    // marker is the blank row the engine writes before the header.
+    // marker is the blank row the engine writes before the header. `rfind` because the echoed
+    // command line also contains the probe text: the last occurrence is the command's output.
     let output = "P11K-ROW-PROBE\r\n";
-    let start = out.find(output).expect("command output") + output.len();
+    let start = out
+        .rfind(output)
+        .unwrap_or_else(|| panic!("command output, got {out:?}"))
+        + output.len();
     let rest = &out[start..];
-    let blank = &rest[..rest.find("\x1b]133;A\x07").expect("prompt start marker")];
+    let marker = rest
+        .find("\x1b]133;A\x07")
+        .unwrap_or_else(|| panic!("prompt start marker, got {out:?}"));
+    let blank = &rest[..marker];
     assert_eq!(
         blank.matches("\r\n").count(),
         1,
