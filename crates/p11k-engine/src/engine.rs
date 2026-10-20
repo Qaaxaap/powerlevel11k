@@ -38,8 +38,8 @@ use crate::window::paint_prompt;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 pub fn run() -> anyhow::Result<()> {
-    // The config comes first: it may name the shell, and it decides the input-line prefix
-    // width, from which the placeholder is built.
+    // The config comes first: it may name the shell, and it carries the frame and the input-line
+    // prefix the templates hand to the shell.
     let mut config = load_config();
     let shell = detect_shell(&config);
     // The file the theme came from, kept for `p11k reload` (None for a preset or the built-in
@@ -47,37 +47,12 @@ pub fn run() -> anyhow::Result<()> {
     // command reads it from wherever the shell happens to be, not from the starting directory.
     // A path that cannot be resolved is kept as it is: reloading then reports the real error.
     let config_path = theme_file().map(|p| p.canonicalize().unwrap_or(p));
-    // Every prompt_char state (normal/ERROR) must be the same width.
-    // Unequal widths are a config error: report on the real terminal, then exec a clean shell.
-    if let Err(e) = crate::render::check_prompt_char_widths(&config) {
-        eprintln!("p11k: {}{e}", t("config error: "));
-        eprintln!(
-            "p11k: {}",
-            t(
-                "every prompt_char state must be the same width (the prompt width is fixed at startup). Fix the config and start p11k again."
-            )
-        );
-        use std::os::unix::process::CommandExt;
-        let err = match shell {
-            Shell::Zsh => std::process::Command::new("zsh").arg("-f").exec(),
-            Shell::Bash => std::process::Command::new("bash")
-                .args(["--noprofile", "--norc"])
-                .exec(),
-            Shell::Fish => std::process::Command::new("fish").arg("--no-config").exec(),
-            Shell::Pwsh => std::process::Command::new("pwsh")
-                .args(["-NoProfile", "-NoLogo"])
-                .exec(),
-        };
-        eprintln!("p11k: {}{err}", t("cannot exec a clean shell: "));
-        std::process::exit(1);
-    }
     let mut prefix = crate::render::input_prefix(&config, None);
-    // The placeholder carries header_rows newlines so the shell's prompt geometry counts
-    // the header rows too; only then can zsh fold transient cleanly with reset-prompt.
     // The prompt skeleton each shell prints: `header_rows` blank rows for the header, then the
     // zero-width prompt-ready signal. Handed over as data so no template carries it. The engine
-    // fills the blank rows and draws the input-line prefix when the signal arrives, which keeps
-    // the prefix's styling in the theme and its width unconstrained.
+    // fills the blank rows when the signal arrives; the prefix travels in the same prompt string,
+    // which keeps its styling in the theme and its width unconstrained. Counting the header rows
+    // inside the prompt is also what lets zsh fold transient cleanly with `reset-prompt`.
     let header_rows = config.layout.left.len().max(config.layout.right.len());
     // The blank rows the prompt opens with; the templates append the zero-width signal and the
     // prefix. The signal has to be written by the shell: each shell marks non-printing
@@ -274,15 +249,15 @@ pub fn run() -> anyhow::Result<()> {
     // Last git status for the current cwd.
     let mut last_vcs: Option<(String, Option<GitStatus>)> = None;
     let mut current_info: Option<HeaderInfo> = None;
-    // Whether the cursor is on the input line (after the p announce, before the user
-    // presses enter). Async results repaint only then, otherwise redraw's \e[1A lands on
+    // Whether the cursor is on the input line (after the prompt-ready signal fired, before the
+    // user presses enter). Async results repaint only then, otherwise redraw's \e[1A lands on
     // command output.
     let mut at_prompt = false;
     // Time of the last enter, used by the next precmd to compute command duration.
     let mut last_enter: Option<std::time::Instant> = None;
-    // Defer the prompt repaint after a resize: wait for zle's repainted placeholder+buffer
-    // to pass through (~60ms) before painting the prefix, so the prompt is not painted
-    // before zle repaints (and gets covered by the placeholder) or ahead of the buffer.
+    // Defer the prompt repaint after a resize: wait for zle's repainted prompt and buffer to
+    // pass through (~60ms) before painting the header, so it is not painted before zle has
+    // moved the input line into place.
     let mut resize_prompt_at: Option<std::time::Instant> = None;
     // Whether the user has typed since the current prompt became ready: the empty enter
     // sent to pwsh on shrink runs only while the input line is still empty, otherwise it
@@ -294,9 +269,9 @@ pub fn run() -> anyhow::Result<()> {
     // repeatedly, so it must be throttled).
     let mut last_pwsh_nudge: Option<std::time::Instant> = None;
 
-    // instant header: don't wait for the inner shell to finish loading a slow user rc; draw
-    // a placeholder header + prompt from the engine cwd right away so the prompt is visible
-    // as soon as the window opens, then swap in the real state after the first inner precmd.
+    // instant header: don't wait for the inner shell to finish loading a slow user rc; draw a
+    // provisional header from the engine cwd right away so the prompt is visible as soon as the
+    // window opens, then swap in the real state after the first inner precmd.
     let instant_info = HeaderInfo {
         exit_code: None,
         cwd: std::env::current_dir()
@@ -312,8 +287,8 @@ pub fn run() -> anyhow::Result<()> {
     // erasing must convert to actual rows using the column width of that moment, otherwise
     // half a header is left behind.
     theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
-    // Draw the instant prefix without the save/restore-cursor dance: there is no placeholder
-    // here, so restoring the cursor would put it back at column 0 and the user's typing would
+    // Draw the instant prefix without the save/restore-cursor dance: the shell has not started
+    // yet, so restoring the cursor would put it back at column 0 and the user's typing would
     // overwrite the prefix. With a plain `\r` the cursor ends up right after it.
     write!(stdout, "\r{}", prefix.text)?;
     write!(stdout, "\x1b]133;B\x07")?;
@@ -333,9 +308,9 @@ pub fn run() -> anyhow::Result<()> {
             match config_path.as_deref().map(load_config_file) {
                 Some(Ok(new_config)) => {
                     config = new_config;
-                    // The input-line prefix is written into the shell's PROMPT at startup, so
-                    // its width is fixed: a theme that changes the prompt char width would
-                    // desync the placeholder. Keep the old prefix and say so.
+                    // The input-line prefix travelled to the shell in P11K_PREFIX_OK/P11K_PREFIX_ERR
+                    // at startup, so a reload cannot change it: a theme that resizes the prompt char
+                    // would leave the shell drawing the old prefix. Keep the old one and say so.
                     let new_prefix = crate::render::input_prefix(&config, None);
                     if new_prefix.width == prefix.width {
                         prefix = new_prefix;
@@ -400,8 +375,8 @@ pub fn run() -> anyhow::Result<()> {
                         &instant_info,
                         None,
                     )?;
-                    // Same as the initial instant draw: no placeholder, so keep the cursor after
-                    // the prefix instead of restoring it to column 0.
+                    // Same as the initial instant draw: keep the cursor after the prefix instead
+                    // of restoring it to column 0.
                     write!(stdout, "\r{}", prefix.text)?;
                     write!(stdout, "\x1b]133;B\x07")?;
                     stdout.flush()?;
@@ -431,12 +406,9 @@ pub fn run() -> anyhow::Result<()> {
             }
         }
 
-        // prompt window (announce-driven). Handled before poll/pass-through: in fish's
-        // resize the `r` announce and the placeholder output are nearly simultaneous, so
-        // drain first to arm pending, then byte-match the placeholder while passing the pty
-        // through (otherwise the placeholder passes first and pending is set too late).
+        // prompt window (announce-driven). Handled before poll/pass-through so the ack is
+        // touched while the shell is still waiting for it.
         // - `h` (precmd announce, shell waiting for ack): draw header, touch ack to release.
-        // - `p` (zle-line-init announce): back to line start, paint the prefix over the placeholder.
         // - `r` (resize announce): repaint the prompt window.
         for msg in drain_announce(&state.announce, &mut ann_processed) {
             // Sync a size change to the pty and let right alignment use the new width.
@@ -473,9 +445,9 @@ pub fn run() -> anyhow::Result<()> {
                             write!(stdout, "\r\n")?;
                         }
                     }
-                    // Emit the prompt-start marker before the shell's multi-line placeholder;
-                    // the header is not drawn here, or it would advance the cursor twice on
-                    // top of the placeholder's own newlines.
+                    // Emit the prompt-start marker before the shell prints the prompt string;
+                    // the header is not drawn here, the signal that follows the blank rows is
+                    // what draws it.
                     theme::prompt_start(&mut stdout)?;
                     stdout.flush()?;
                     File::create(&state.ack)?; // release precmd → the shell prints the prompt
@@ -489,33 +461,15 @@ pub fn run() -> anyhow::Result<()> {
                     current_info = Some(info);
                     log("drew header, acked");
                 }
-                AnnMsg::Prompt => {
-                    log("p: fill header + draw prompt prefix");
-                    // zle has rendered the multi-line placeholder (header_rows blank lines +
-                    // the placeholder) and the cursor sits after it: move up header rows to
-                    // backfill the real header, then return to line start and overwrite the
-                    // placeholder with the prefix.
-                    paint_prompt(
-                        &mut stdout,
-                        &config,
-                        last_size.1 as usize,
-                        current_info.as_ref(),
-                        &instant_info,
-                        last_vcs.as_ref(),
-                    )?;
-                    stdout.flush()?;
-                    at_prompt = true; // input line ready
-                    typed_since_prompt = false;
-                }
                 AnnMsg::Resize => {
                     // The size check at the top of the loop already resized the pty.
-                    // zsh: zle repaints the placeholder prompt and the backfill goes through
-                    // the `p` announce; repaint the header here and defer the prefix by ~60ms
-                    // (until zle's repainted placeholder+buffer has passed through).
-                    // Other shells: after a resize the shell prints the placeholder from
-                    // scratch (with new leading newlines) and the marker-matching path above
-                    // backfills it — the placeholder is not out yet, so drawing now would land
-                    // on the previous screen and leave the placeholder uncovered.
+                    // zsh: zle repaints the prompt string and the backfill goes through the
+                    // signal; repaint the header here and defer the prefix by ~60ms (until
+                    // zle's repainted prompt and buffer have passed through).
+                    // Other shells: after a resize the shell reprints the prompt string from
+                    // scratch (with new leading newlines) and the signal path above backfills
+                    // it — the new prompt is not out yet, so drawing now would land on the
+                    // previous screen and leave it uncovered.
                     if at_prompt {
                         if shell == Shell::Zsh {
                             log("r: redraw header, defer prompt");

@@ -2,22 +2,22 @@
 //!
 //! Chain of responsibility:
 //! 1. Start a themeless shell with portable-pty (ZDOTDIR points at a temp dir the engine
-//!    generates; .zshrc sets only a placeholder PROMPT and the announce hooks).
+//!    generates; .zshrc sets only the prompt skeleton and the announce hooks).
 //! 2. Pass through: pty output → real terminal stdout; real terminal stdin → pty. The
-//!    engine does not parse ANSI from the pty: command output, zle, placeholder prompt
-//!    and completion menus are all rendered by the shell, untouched.
+//!    engine does not parse ANSI from the pty: command output, zle, the prompt string and
+//!    completion menus are all rendered by the shell, untouched, except that the
+//!    zero-width prompt-ready signal is stripped out.
 //! 3. The prompt window is painted in two announce-driven strokes:
-//!    - `h` (precmd announce): emit the OSC133A marker + touch ack to let the shell print
-//!      the placeholder; the header is not drawn here.
-//!    - `p` (zle-line-init announce, zle has rendered the placeholder prompt): move up
-//!      header rows to backfill the real header, then return to line start and paint the
-//!      real prefix over the placeholder. The prefix covers only the placeholder columns,
-//!      so a slow engine or a user already typing does not matter.
+//!    - `h` (precmd announce): emit the OSC133A marker + touch ack to let the shell print the
+//!      prompt string; the header is not drawn here.
+//!    - the prompt-ready signal, written by the shell inside the prompt string: move up over
+//!      the header's blank rows and backfill the real header. The prefix already travelled in
+//!      that same string, so the line editor drew it with the buffer in place.
 //!
-//! Geometry protocol: the shell prints `$P11K_PLACEHOLDER` as its prompt — header_rows
-//! newlines plus a marker as wide as the prefix — so the prompt geometry counts the header
-//! rows too.
-//! precmd writes announce then polls ack, ensuring the placeholder is printed first and
+//! Geometry protocol: the shell prints `$P11K_PROMPT_LEAD` (header_rows newlines) followed by
+//! the zero-width `OSC 1337;p11k;p` signal and `$P11K_PREFIX_OK`/`$P11K_PREFIX_ERR`, so the
+//! prompt geometry counts the header rows too.
+//! precmd writes announce then polls ack, ensuring the prompt string is printed first and
 //! the header backfilled after.
 //!
 //! Deployment: add the exec launch to the user rc and use P11K_ENGINE to avoid recursion
