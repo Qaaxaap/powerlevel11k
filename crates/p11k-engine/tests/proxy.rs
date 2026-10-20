@@ -839,13 +839,17 @@ fn marker_shell_runs_a_command(shell: &str, fail: &str) {
     // The waits after a command use the same budget as the startup: on a loaded runner a pwsh
     // session can take seconds to come back with its next prompt, and ten seconds proved too
     // tight there.
-    let out = read_until(&eng.master, "hello-from-proxy", SHELL_READY);
+    let mut out = read_until(&eng.master, "hello-from-proxy", SHELL_READY);
     assert!(
         out.contains("hello-from-proxy"),
         "{shell}: command output should pass through, got {out:?}"
     );
 
-    let out = read_until(&eng.master, "\u{f00c}", SHELL_READY);
+    // The read that caught the command output may already carry the next prompt's header (one
+    // read can span both), in which case waiting for it again would block until the timeout.
+    if !out.contains('\u{f00c}') {
+        out.push_str(&read_until(&eng.master, "\u{f00c}", SHELL_READY));
+    }
     assert!(
         out.contains('\u{f00c}'),
         "{shell}: a new prompt should follow the command, got {out:?}"
