@@ -35,6 +35,7 @@ mod cli;
 mod config;
 mod dir_shorten;
 mod engine;
+mod geometry;
 mod git;
 mod i18n;
 mod log;
