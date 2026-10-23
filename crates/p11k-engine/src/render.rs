@@ -48,7 +48,7 @@ fn vi_state() -> Option<&'static str> {
 /// status state. Extended states mirror p10k's `STATUS_EXTENDED_STATES`: a failing pipeline
 /// is `ERROR_PIPE`, death by signal is `ERROR_SIGNAL`, and a pipeline whose last stage
 /// succeeded while an earlier one failed is `OK_PIPE`.
-fn prompt_state(config: &Config, info: Option<&HeaderInfo>) -> Option<&'static str> {
+pub fn prompt_state(config: &Config, info: Option<&HeaderInfo>) -> Option<&'static str> {
     if let Some(st) = vi_state() {
         let configured = config
             .segment("prompt_char")
@@ -115,7 +115,7 @@ fn prefix_text_with(
 }
 
 /// Input line prefix text for a state, in plain ANSI (fish and pwsh read ANSI directly).
-fn prefix_text(config: &Config, state: Option<&str>) -> String {
+pub fn prefix_text(config: &Config, state: Option<&str>) -> String {
     prefix_text_with(config, state, paint)
 }
 

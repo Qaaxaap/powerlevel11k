@@ -429,13 +429,15 @@ pub fn run() -> anyhow::Result<()> {
                     theme::prompt_start(&mut stdout)?;
                     stdout.flush()?;
                     // Release precmd and hand the shell the prompt shape: the header height on
-                    // the first line, then both prefix strings. The shell re-reads all of them
-                    // every prompt, so a reload that changes the prompt shape takes effect on
-                    // the next one instead of needing a restart.
+                    // the first line, then the prefix for this prompt. The engine picks that
+                    // prefix because it is the only side that knows the exit code, the pipeline
+                    // statuses and the vi mode; a shell choosing between two strings of its own
+                    // could not tell `OK_PIPE` from `OK`.
+                    let state_name = crate::render::prompt_state(&config, Some(&info));
+                    let prefix = Geometry::prefix_for(&config, shell, state_name);
                     let mut ack = File::create(&state.ack)?;
                     writeln!(ack, "{}", geometry.header_rows)?;
-                    writeln!(ack, "{}", geometry.prefix_ok)?;
-                    writeln!(ack, "{}", geometry.prefix_err)?;
+                    writeln!(ack, "{prefix}")?;
                     // Compute git in the background and repaint the header asynchronously when
                     // it finishes.
                     git_gen += 1;

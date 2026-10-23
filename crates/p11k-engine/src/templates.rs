@@ -40,11 +40,7 @@ _p11k_precmd() {
   else
     _lead=$(printf '\n%.0s' $(seq 1 ${_ack[1]:-0}))
   fi
-  if (( _p11k_status == 0 )); then
-    PROMPT="$_lead$_p11k_signal${_ack[2]:-$P11K_PREFIX_OK}"
-  else
-    PROMPT="$_lead$_p11k_signal${_ack[3]:-$P11K_PREFIX_ERR}"
-  fi
+  PROMPT="$_lead$_p11k_signal${_ack[2]:-$P11K_PREFIX_OK}"
 }
 
 # zle calls this when it takes over the input line. The prompt is already on screen by then
@@ -159,9 +155,9 @@ PS1="\[$_p11k_signal\]"
 # PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
 # then wait for the engine ack before returning.
 _p11k_prompt_command() {
-  local _st=$?
-  # Capture $PIPESTATUS right away: any command below resets it.
-  local _pipes="${PIPESTATUS[*]}"
+  # Read both in one `local`: any command in between, `local` included, resets $PIPESTATUS, so
+  # capturing $? first would leave the pipeline statuses reporting the `local` that read it.
+  local _pipes="${PIPESTATUS[*]}" _st=$?
   printf 'h\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   # The ack carries the prompt shape: header height on the first line, then the two prefix
@@ -183,11 +179,7 @@ _p11k_prompt_command() {
   fi
   # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
   # before the shell starts, and without this readline would append the prompt after it.
-  if [[ $_st -eq 0 ]]; then
-    PS1='\r'"$_lead\[$_p11k_signal\]${_ack[1]:-$P11K_PREFIX_OK}"
-  else
-    PS1='\r'"$_lead\[$_p11k_signal\]${_ack[2]:-$P11K_PREFIX_ERR}"
-  fi
+  PS1='\r'"$_lead\[$_p11k_signal\]${_ack[1]:-$P11K_PREFIX_OK}"
 }
 PROMPT_COMMAND=_p11k_prompt_command
 
@@ -227,8 +219,7 @@ set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 # Prompt shape, refreshed from the ack on every prompt; the resize path reuses it.
 set -g _p11k_rows 1
-set -g _p11k_prefix_ok "$P11K_PREFIX_OK"
-set -g _p11k_prefix_err "$P11K_PREFIX_ERR"
+set -g _p11k_prefix "$P11K_PREFIX_OK"
 
 # fish_prompt is called when the main prompt is rendered. Two cases:
 # - size change (resize repaint): announce `r`.
@@ -252,11 +243,7 @@ function fish_prompt
         if test -z "$_instant"
             set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
         end
-        if test $_st -eq 0
-            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix_ok"
-        else
-            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix_err"
-        end
+        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -268,16 +255,11 @@ function fish_prompt
     set -l _ack (cat $P11K_ACK)
     rm -f $P11K_ACK
     set -g _p11k_rows $_ack[1]
-    set -g _p11k_prefix_ok $_ack[2]
-    set -g _p11k_prefix_err $_ack[3]
+    set -g _p11k_prefix $_ack[2]
     if test -z "$_instant"
         set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
     end
-    if test $_st -eq 0
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix_ok"
-    else
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix_err"
-    end
+    printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
 end
 
 # ===== user config =====
@@ -295,8 +277,7 @@ set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 # Prompt shape, refreshed from the ack on every prompt; the resize path reuses it.
 set -g _p11k_rows 1
-set -g _p11k_prefix_ok "$P11K_PREFIX_OK"
-set -g _p11k_prefix_err "$P11K_PREFIX_ERR"
+set -g _p11k_prefix "$P11K_PREFIX_OK"
 function fish_prompt
     set -l _st $status
     # Capture $pipestatus right away: any command below resets it.
@@ -316,11 +297,7 @@ function fish_prompt
         if test -z "$_instant"
             set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
         end
-        if test $_st -eq 0
-            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix_ok"
-        else
-            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix_err"
-        end
+        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -332,16 +309,11 @@ function fish_prompt
     set -l _ack (cat $P11K_ACK)
     rm -f $P11K_ACK
     set -g _p11k_rows $_ack[1]
-    set -g _p11k_prefix_ok $_ack[2]
-    set -g _p11k_prefix_err $_ack[3]
+    set -g _p11k_prefix $_ack[2]
     if test -z "$_instant"
         set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
     end
-    if test $_st -eq 0
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix_ok"
-    else
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix_err"
-    end
+    printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
 end
 "#;
 
@@ -386,8 +358,7 @@ function global:P11kEnginePrompt {
     $P11kAckLines = @(Get-Content $script:P11kAck)
     [IO.File]::Delete($script:P11kAck)
     $P11kHeaderRows = [int]$P11kAckLines[0]
-    $P11kPrefixOk = $P11kAckLines[1]
-    $P11kPrefixErr = $P11kAckLines[2]
+    $P11kPrefix = $P11kAckLines[1]
     # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
@@ -400,11 +371,7 @@ function global:P11kEnginePrompt {
     } else {
         $P11kLead = "`n" * $P11kHeaderRows
     }
-    if ($P11kCode -eq 0) {
-        "$P11kLead`e]1337;p11k;p`a$P11kPrefixOk"
-    } else {
-        "$P11kLead`e]1337;p11k;p`a$P11kPrefixErr"
-    }
+    "$P11kLead`e]1337;p11k;p`a$P11kPrefix"
 }
 
 function global:prompt { P11kEnginePrompt }
