@@ -21,11 +21,9 @@ use unicode_width::UnicodeWidthChar;
 /// not zsh or unreported.
 pub static CURRENT_VI_MODE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 
-/// Input line prefix: `frame.last_prefix` + `prompt_char` content; `width` is its display
-/// width, used on reload to detect a prefix the shell was not handed at startup.
+/// Input line prefix: `frame.last_prefix` + `prompt_char` content, already coloured.
 pub struct InputPrefix {
     pub text: String,
-    pub width: usize,
 }
 
 /// vi state for the current zsh edit mode (p10k's `VIINS`/`VICMD`/`VIVIS`/`VIOWR`).
@@ -147,10 +145,9 @@ fn paint_zsh(text: &str, style: &Style) -> String {
 /// char (prompt_char style, entering ERROR state from `exit_code`) are colored; `width` is
 /// the ANSI-stripped display width.
 pub fn input_prefix(config: &Config, info: Option<&HeaderInfo>) -> InputPrefix {
-    let state = prompt_state(config, info);
-    let text = prefix_text(config, state);
-    let width = display_width(&text);
-    InputPrefix { text, width }
+    InputPrefix {
+        text: prefix_text(config, prompt_state(config, info)),
+    }
 }
 
 /// Single-line prompt for transient folding (zsh format). The engine precomputes the zsh
@@ -3559,17 +3556,18 @@ mod tests {
     }
 
     #[test]
-    fn input_prefix_width_matches_visual() {
-        // With the frame last-prefix ╰─, the prefix is "╰─❯ " (width 4).
+    fn input_prefix_has_the_expected_text() {
+        // With the frame last-prefix ╰─, the visible prefix is "╰─❯ ".
         let cfg = Config::parse(
             "layout { left { line { dir #true } } }\nframe {\n  last-prefix \"╰─\"\n}",
         )
         .unwrap();
         let p = input_prefix(&cfg, None);
         assert_eq!(
-            p.width, 4,
-            "╰─❯ plus space should be width 4, got width={} text={:?}",
-            p.width, p.text
+            display_width(&p.text),
+            4,
+            "╰─❯ plus space should be width 4, got text={:?}",
+            p.text
         );
         assert!(
             p.text.contains('╰'),

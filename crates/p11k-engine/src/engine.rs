@@ -27,6 +27,7 @@ extern "C" fn handle_sigusr1(_sig: libc::c_int) {
 }
 
 use crate::cli::{Shell, detect_shell, load_config, load_config_file, theme_file};
+use crate::geometry::Geometry;
 use crate::git::{GitRequest, GitResult, spawn_git_worker};
 use crate::i18n::t;
 use crate::log::log;
@@ -53,19 +54,18 @@ pub fn run() -> anyhow::Result<()> {
     // fills the blank rows when the signal arrives; the prefix travels in the same prompt string,
     // which keeps its styling in the theme and its width unconstrained. Counting the header rows
     // inside the prompt is also what lets zsh fold transient cleanly with `reset-prompt`.
-    let header_rows = config.layout.left.len().max(config.layout.right.len());
-    // The blank rows the prompt opens with; the templates append the zero-width signal and the
-    // prefix. The signal has to be written by the shell: each shell marks non-printing
-    // sequences differently (`%{...%}` in zsh, `\[...\]` in bash) and the engine handing over a
-    // bare OSC would make the line editor count it as visible width.
-    let prompt_lead = "\n".repeat(header_rows);
+    //
+    // The signal has to be written by the shell: each shell marks non-printing sequences
+    // differently (`%{...%}` in zsh, `\[...\]` in bash), and the engine handing over a bare OSC
+    // would make the line editor count it as visible width.
+    let mut geometry = Geometry::new(&config, shell);
     let state = StateDir::create(shell)?;
     log(&format!(
         "engine start: dir={} announce={} ack={} prompt_lead={:?} shell={:?}",
         state.dir.display(),
         state.announce.display(),
         state.ack.display(),
-        prompt_lead,
+        geometry.prompt_lead,
         shell
     ));
 
@@ -113,42 +113,20 @@ pub fn run() -> anyhow::Result<()> {
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
     // The prompt skeleton each shell prints: `header_rows` blank rows. The templates append the
-    // zero-width signal and the prefix (the engine cannot: each shell has its own syntax for
-    // marking non-printing sequences).
-    cmd.env("P11K_PROMPT_LEAD", &prompt_lead);
+    // zero-width signal and the prefix; neither can come from here, because each shell marks
+    // non-printing sequences in its own syntax.
+    cmd.env("P11K_PROMPT_LEAD", &geometry.prompt_lead);
     // Set while the instant header is on screen: the first prompt must not print blank rows for
     // the header, the engine overwrites the instant header in place instead.
     cmd.env("P11K_INSTANT", "1");
-    // Both states of the input-line prefix, as visible text. zle/readline draw the user's buffer
-    // immediately after the prompt string, so the prefix has to be part of it — painting it
-    // afterwards would overwrite the front of the buffer on every completion redraw.
-    let err_info = HeaderInfo {
-        exit_code: Some(1),
-        cwd: String::new(),
-        exec_seconds: 0.0,
-        jobs: 0,
-        history: 0,
-        pipestatus: Vec::new(),
-    };
-    // Each shell marks non-printing sequences its own way: zsh `%F{...}`, bash `\[...\]`, and
-    // fish/pwsh read ANSI directly. The prefix must carry its colour in that syntax, or the line
-    // editor counts the escape bytes as visible width and shifts the buffer.
-    let (prefix_ok, prefix_err) = match shell {
-        Shell::Zsh => (
-            crate::render::prefix_text_zsh(&config, None),
-            crate::render::prefix_text_zsh(&config, Some("ERROR")),
-        ),
-        Shell::Bash => (
-            crate::render::prefix_text_bash(&config, None),
-            crate::render::prefix_text_bash(&config, Some("ERROR")),
-        ),
-        Shell::Fish | Shell::Pwsh => (
-            crate::render::input_prefix(&config, None).text,
-            crate::render::input_prefix(&config, Some(&err_info)).text,
-        ),
-    };
-    cmd.env("P11K_PREFIX_OK", &prefix_ok);
-    cmd.env("P11K_PREFIX_ERR", &prefix_err);
+    // Both states of the input-line prefix. zle/readline draw the user's buffer immediately after
+    // the prompt string, so the prefix has to be part of it — painting it afterwards would
+    // overwrite the front of the buffer on every completion redraw.
+    cmd.env("P11K_PREFIX_OK", &geometry.prefix_ok);
+    cmd.env("P11K_PREFIX_ERR", &geometry.prefix_err);
+    // `p11k reload` recomputes the geometry of a new theme and compares it with what this shell
+    // was handed; it needs the shell to pick the right prefix syntax.
+    cmd.env("P11K_SHELL", shell.name());
     // `p11k reload` runs in the inner shell: it needs to find this engine and the file the
     // theme came from. An empty P11K_CONFIG means the theme is a preset or the built-in one,
     // and there is nothing to re-read.
@@ -307,33 +285,35 @@ pub fn run() -> anyhow::Result<()> {
         if RELOAD_FLAG.swap(false, Ordering::Relaxed) {
             match config_path.as_deref().map(load_config_file) {
                 Some(Ok(new_config)) => {
-                    config = new_config;
-                    // The input-line prefix travelled to the shell in P11K_PREFIX_OK/P11K_PREFIX_ERR
-                    // at startup, so a reload cannot change it: a theme that resizes the prompt char
-                    // would leave the shell drawing the old prefix. Keep the old one and say so.
-                    let new_prefix = crate::render::input_prefix(&config, None);
-                    if new_prefix.width == prefix.width {
-                        prefix = new_prefix;
-                    } else {
+                    // The shell prints the header rows and the prefix from values it was handed
+                    // at startup, so a theme that changes either cannot take effect here.
+                    // `p11k reload` refuses those before signalling; this is the backstop for a
+                    // signal that arrived anyway (an env change between the two reads).
+                    let new_geometry = Geometry::new(&new_config, shell);
+                    if let Some(conflict) = geometry.reload_conflict(&new_geometry) {
                         log(&format!(
-                            "reload: keeping the old prompt prefix (width {} -> {})",
-                            prefix.width, new_prefix.width
+                            "reload: keeping the current theme: {}",
+                            conflict.message()
                         ));
-                    }
-                    let (tx, rx) = mpsc::channel::<GitRequest>();
-                    req_tx = tx;
-                    spawn_git_worker(&config, rx, res_tx.clone());
-                    log("reload: theme reloaded");
-                    if at_prompt {
-                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                        theme::redraw_header_cfg(
-                            &mut stdout,
-                            last_size.1 as usize,
-                            &config,
-                            current_info.as_ref().unwrap_or(&instant_info),
-                            vcs,
-                        )?;
-                        stdout.flush()?;
+                    } else {
+                        config = new_config;
+                        prefix = crate::render::input_prefix(&config, None);
+                        geometry = new_geometry;
+                        let (tx, rx) = mpsc::channel::<GitRequest>();
+                        req_tx = tx;
+                        spawn_git_worker(&config, rx, res_tx.clone());
+                        log("reload: theme reloaded");
+                        if at_prompt {
+                            let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                            theme::redraw_header_cfg(
+                                &mut stdout,
+                                last_size.1 as usize,
+                                &config,
+                                current_info.as_ref().unwrap_or(&instant_info),
+                                vcs,
+                            )?;
+                            stdout.flush()?;
+                        }
                     }
                 }
                 Some(Err(e)) => log(&format!("reload: keeping the current theme: {e}")),
