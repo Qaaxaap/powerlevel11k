@@ -1,50 +1,23 @@
-//! The prompt geometry the engine and the inner shell agree on at startup.
+//! The prompt geometry the engine and the inner shell agree on.
 //!
-//! Two things have to reach the shell before it starts and cannot change afterwards: how many
-//! blank rows the header occupies, and the input-line prefix strings. Both travel as environment
-//! variables of the inner shell, so a reloaded theme that would change either of them cannot be
-//! applied to the running session.
+//! The shell prints `header_rows` blank lines before the prompt-ready signal, and the prefix
+//! string after it. Both live here so the startup path and the reload path derive them the same
+//! way. The row count travels to the shell in the ack on every prompt, so a reload that changes
+//! the header height takes effect on the next prompt; the prefix is handed over once at startup.
 
 use crate::cli::Shell;
 use crate::config::Config;
-use crate::i18n::t;
 use crate::render::{input_prefix, prefix_text_bash, prefix_text_zsh};
 use crate::theme::HeaderInfo;
 
-/// What the shell was handed at startup, and what a reload has to stay compatible with.
+/// What determines the shape of the prompt area.
 pub struct Geometry {
     /// Blank rows the shell prints before the signal; the header occupies the same rows.
     pub header_rows: usize,
-    /// `P11K_PROMPT_LEAD`: one newline per header row.
-    pub prompt_lead: String,
     /// `P11K_PREFIX_OK`, in the syntax the shell's prompt string needs.
     pub prefix_ok: String,
     /// `P11K_PREFIX_ERR`, likewise.
     pub prefix_err: String,
-}
-
-/// A reloaded theme that cannot be applied without restarting the shell.
-pub enum ReloadConflict {
-    /// The new theme needs a different number of header rows.
-    HeaderRows { was: usize, now: usize },
-    /// The new theme renders a different input-line prefix.
-    Prefix,
-}
-
-impl ReloadConflict {
-    /// The message a user sees when a reload is refused.
-    pub fn message(&self) -> String {
-        match self {
-            ReloadConflict::HeaderRows { was, now } => format!(
-                "{}{was} -> {now}",
-                t("the new theme needs a different number of header rows, which the running shell cannot use: restart p11k instead: ")
-            ),
-            ReloadConflict::Prefix => t(
-                "the new theme changes the input-line prefix, which the running shell cannot pick up: restart p11k instead",
-            )
-            .to_string(),
-        }
-    }
 }
 
 impl Geometry {
@@ -75,24 +48,9 @@ impl Geometry {
         };
         Geometry {
             header_rows,
-            prompt_lead: "\n".repeat(header_rows),
             prefix_ok,
             prefix_err,
         }
-    }
-
-    /// Why `new` cannot replace this geometry in the running session, if it cannot.
-    pub fn reload_conflict(&self, new: &Geometry) -> Option<ReloadConflict> {
-        if new.header_rows != self.header_rows {
-            return Some(ReloadConflict::HeaderRows {
-                was: self.header_rows,
-                now: new.header_rows,
-            });
-        }
-        if new.prefix_ok != self.prefix_ok || new.prefix_err != self.prefix_err {
-            return Some(ReloadConflict::Prefix);
-        }
-        None
     }
 }
 
@@ -111,34 +69,16 @@ mod tests {
             Shell::Zsh,
         );
         assert_eq!(two.header_rows, 2);
-        assert_eq!(two.prompt_lead, "\n\n");
     }
 
     #[test]
-    fn a_different_row_count_is_a_reload_conflict() {
+    fn a_single_line_layout_is_one_row() {
         let one = Geometry::new(&config("layout { left { line { dir } } }"), Shell::Zsh);
-        let two = Geometry::new(
-            &config("layout {\n  left {\n    line { dir }\n    line { time }\n  }\n}"),
-            Shell::Zsh,
-        );
-        match one.reload_conflict(&two) {
-            Some(ReloadConflict::HeaderRows { was, now }) => {
-                assert_eq!((was, now), (1, 2));
-            }
-            _ => panic!("a row count change must be reported"),
-        }
+        assert_eq!(one.header_rows, 1);
     }
 
     #[test]
-    fn the_same_theme_has_no_conflict() {
-        let cfg = config("layout { left { line { dir } } }");
-        let a = Geometry::new(&cfg, Shell::Zsh);
-        let b = Geometry::new(&cfg, Shell::Zsh);
-        assert!(a.reload_conflict(&b).is_none());
-    }
-
-    #[test]
-    fn a_different_prompt_char_is_a_reload_conflict() {
+    fn the_prefix_follows_the_prompt_char() {
         let a = Geometry::new(
             &config("layout { left { line { dir } } }\nsegments { prompt_char char=\"❯\" }"),
             Shell::Zsh,
@@ -147,9 +87,6 @@ mod tests {
             &config("layout { left { line { dir } } }\nsegments { prompt_char char=\"λ\" }"),
             Shell::Zsh,
         );
-        assert!(matches!(
-            a.reload_conflict(&b),
-            Some(ReloadConflict::Prefix)
-        ));
+        assert_ne!(a.prefix_ok, b.prefix_ok);
     }
 }

@@ -14,9 +14,10 @@
 //!      the header's blank rows and backfill the real header. The prefix already travelled in
 //!      that same string, so the line editor drew it with the buffer in place.
 //!
-//! Geometry protocol: the shell prints `$P11K_PROMPT_LEAD` (header_rows newlines) followed by
-//! the zero-width `OSC 1337;p11k;p` signal and `$P11K_PREFIX_OK`/`$P11K_PREFIX_ERR`, so the
-//! prompt geometry counts the header rows too.
+//! Geometry protocol: the ack the engine writes on each precmd carries the header height, and the
+//! shell prints that many blank rows followed by the zero-width `OSC 1337;p11k;p` signal and
+//! `$P11K_PREFIX_OK`/`$P11K_PREFIX_ERR`, so the prompt geometry counts the header rows too and a
+//! reload can change their number.
 //! precmd writes announce then polls ack, ensuring the prompt string is printed first and
 //! the header backfilled after.
 //!

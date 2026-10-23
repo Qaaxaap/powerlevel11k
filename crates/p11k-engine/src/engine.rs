@@ -61,11 +61,11 @@ pub fn run() -> anyhow::Result<()> {
     let mut geometry = Geometry::new(&config, shell);
     let state = StateDir::create(shell)?;
     log(&format!(
-        "engine start: dir={} announce={} ack={} prompt_lead={:?} shell={:?}",
+        "engine start: dir={} announce={} ack={} header_rows={} shell={:?}",
         state.dir.display(),
         state.announce.display(),
         state.ack.display(),
-        geometry.prompt_lead,
+        geometry.header_rows,
         shell
     ));
 
@@ -112,10 +112,6 @@ pub fn run() -> anyhow::Result<()> {
     }
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
-    // The prompt skeleton each shell prints: `header_rows` blank rows. The templates append the
-    // zero-width signal and the prefix; neither can come from here, because each shell marks
-    // non-printing sequences in its own syntax.
-    cmd.env("P11K_PROMPT_LEAD", &geometry.prompt_lead);
     // Set while the instant header is on screen: the first prompt must not print blank rows for
     // the header, the engine overwrites the instant header in place instead.
     cmd.env("P11K_INSTANT", "1");
@@ -285,35 +281,37 @@ pub fn run() -> anyhow::Result<()> {
         if RELOAD_FLAG.swap(false, Ordering::Relaxed) {
             match config_path.as_deref().map(load_config_file) {
                 Some(Ok(new_config)) => {
-                    // The shell prints the header rows and the prefix from values it was handed
-                    // at startup, so a theme that changes either cannot take effect here.
-                    // `p11k reload` refuses those before signalling; this is the backstop for a
-                    // signal that arrived anyway (an env change between the two reads).
-                    let new_geometry = Geometry::new(&new_config, shell);
-                    if let Some(conflict) = geometry.reload_conflict(&new_geometry) {
-                        log(&format!(
-                            "reload: keeping the current theme: {}",
-                            conflict.message()
-                        ));
-                    } else {
-                        config = new_config;
-                        prefix = crate::render::input_prefix(&config, None);
-                        geometry = new_geometry;
-                        let (tx, rx) = mpsc::channel::<GitRequest>();
-                        req_tx = tx;
-                        spawn_git_worker(&config, rx, res_tx.clone());
-                        log("reload: theme reloaded");
-                        if at_prompt {
-                            let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                            theme::redraw_header_cfg(
-                                &mut stdout,
-                                last_size.1 as usize,
-                                &config,
-                                current_info.as_ref().unwrap_or(&instant_info),
-                                vcs,
-                            )?;
-                            stdout.flush()?;
-                        }
+                    // The shell re-reads the header height from the ack on every prompt, so a
+                    // reload that changes it lands on the next one. The prefix travelled to the
+                    // shell at startup and can only change with a restart.
+                    config = new_config;
+                    prefix = crate::render::input_prefix(&config, None);
+                    let new_geometry = Geometry::new(&config, shell);
+                    if new_geometry.prefix_ok != geometry.prefix_ok
+                        || new_geometry.prefix_err != geometry.prefix_err
+                    {
+                        log(
+                            "reload: the input-line prefix changed; it takes effect after a restart",
+                        );
+                    }
+                    let header_rows_changed = new_geometry.header_rows != geometry.header_rows;
+                    geometry = new_geometry;
+                    let (tx, rx) = mpsc::channel::<GitRequest>();
+                    req_tx = tx;
+                    spawn_git_worker(&config, rx, res_tx.clone());
+                    log("reload: theme reloaded");
+                    // A changed row count only takes effect on the next prompt, so repainting
+                    // now would move the cursor by the old amount.
+                    if at_prompt && !header_rows_changed {
+                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                        theme::redraw_header_cfg(
+                            &mut stdout,
+                            last_size.1 as usize,
+                            &config,
+                            current_info.as_ref().unwrap_or(&instant_info),
+                            vcs,
+                        )?;
+                        stdout.flush()?;
                     }
                 }
                 Some(Err(e)) => log(&format!("reload: keeping the current theme: {e}")),
@@ -430,7 +428,11 @@ pub fn run() -> anyhow::Result<()> {
                     // what draws it.
                     theme::prompt_start(&mut stdout)?;
                     stdout.flush()?;
-                    File::create(&state.ack)?; // release precmd → the shell prints the prompt
+                    // Release precmd and tell the shell how many blank rows to print. The
+                    // count is what a reload can change: the shell re-reads it every prompt, so
+                    // a new theme with a different header height takes effect on the next one.
+                    let mut ack = File::create(&state.ack)?;
+                    write!(ack, "{}", geometry.header_rows)?;
                     // Compute git in the background and repaint the header asynchronously when
                     // it finishes.
                     git_gen += 1;

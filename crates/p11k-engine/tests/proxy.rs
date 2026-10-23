@@ -637,6 +637,10 @@ fn bash_ctrl_l_rebuilds_the_prompt() {
     eng.writer.flush().unwrap();
     read_until(&eng.master, "❯", Duration::from_secs(5));
     std::thread::sleep(Duration::from_millis(300));
+    // The background git result repaints the header, and that repaint can still be in flight.
+    // Drop it here, or the next read stops at its prompt and the clear sequence never makes it
+    // into the buffer this case inspects.
+    let _ = eng.master.fresh();
 
     eng.writer.write_all(b"\x0c").unwrap();
     eng.writer.flush().unwrap();
