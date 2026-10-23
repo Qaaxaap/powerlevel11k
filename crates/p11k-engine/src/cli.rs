@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::config::Config;
-use crate::geometry::Geometry;
 use crate::i18n::{msgid, t};
 use crate::presets;
 
@@ -137,56 +136,8 @@ pub fn reload_engine() -> anyhow::Result<()> {
         process::exit(1);
     }
     let path = Path::new(&path);
-    let new_config = match load_config_file(path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("p11k: {path:?}: {e}");
-            process::exit(1);
-        }
-    };
-    // The inner shell prints the header rows and the prefix from the values the engine handed it
-    // at startup, so a theme that changes either of them cannot take effect here. The check runs
-    // in this command rather than in the engine because only the command has a terminal to report
-    // on: the engine would have to write the message into the prompt area.
-    let (handed, shell) = match (
-        std::env::var("P11K_SHELL"),
-        std::env::var("P11K_PROMPT_LEAD"),
-        std::env::var("P11K_PREFIX_OK"),
-        std::env::var("P11K_PREFIX_ERR"),
-    ) {
-        (Ok(shell_name), Ok(lead), Ok(prefix_ok), Ok(prefix_err)) => {
-            match shell_by_name(&shell_name) {
-                Some(shell) => {
-                    let handed = Geometry {
-                        header_rows: lead.matches('\n').count(),
-                        prompt_lead: lead,
-                        prefix_ok,
-                        prefix_err,
-                    };
-                    (handed, shell)
-                }
-                None => {
-                    eprintln!(
-                        "p11k: {}",
-                        t("unknown shell in P11K_SHELL; cannot check the theme against it")
-                    );
-                    process::exit(1);
-                }
-            }
-        }
-        _ => {
-            eprintln!(
-                "p11k: {}",
-                t(
-                    "this session does not expose its prompt geometry; upgrade p11k or restart the session"
-                )
-            );
-            process::exit(1);
-        }
-    };
-    let wanted = Geometry::new(&new_config, shell);
-    if let Some(conflict) = handed.reload_conflict(&wanted) {
-        eprintln!("p11k: {}", conflict.message());
+    if let Err(e) = load_config_file(path) {
+        eprintln!("p11k: {path:?}: {e}");
         process::exit(1);
     }
     // SIGUSR1 only raises a flag; the engine re-reads the file on its next loop pass.
