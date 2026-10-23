@@ -710,12 +710,24 @@ fn prompt_add_newline_leaves_one_blank_row() {
 
     let mut eng = spawn_engine_with_config_home(home.to_str().unwrap());
     wait_ready(&eng.master);
+    // Drop what is still in flight from the first prompt. It carries a prompt-start marker of
+    // its own, and a read that starts before it lands returns that one instead of the marker
+    // after the command this case is about.
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = eng.master.fresh();
 
     eng.writer
         .write_all(b"printf 'P11K-ROW-PROBE\\n'\n")
         .unwrap();
     eng.writer.flush().unwrap();
-    let out = read_until(&eng.master, "\x1b]133;A\x07", Duration::from_secs(30));
+    // Read the command output first, so the marker read below can only be the one that follows
+    // it.
+    let mut out = read_until(&eng.master, "P11K-ROW-PROBE", Duration::from_secs(30));
+    out.push_str(&read_until(
+        &eng.master,
+        "\x1b]133;A\x07",
+        Duration::from_secs(30),
+    ));
     let _ = std::fs::remove_dir_all(&home);
 
     // The command output ends with its own CRLF; everything between it and the prompt-start
