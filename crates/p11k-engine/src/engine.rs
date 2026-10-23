@@ -428,11 +428,14 @@ pub fn run() -> anyhow::Result<()> {
                     // what draws it.
                     theme::prompt_start(&mut stdout)?;
                     stdout.flush()?;
-                    // Release precmd and tell the shell how many blank rows to print. The
-                    // count is what a reload can change: the shell re-reads it every prompt, so
-                    // a new theme with a different header height takes effect on the next one.
+                    // Release precmd and hand the shell the prompt shape: the header height on
+                    // the first line, then both prefix strings. The shell re-reads all of them
+                    // every prompt, so a reload that changes the prompt shape takes effect on
+                    // the next one instead of needing a restart.
                     let mut ack = File::create(&state.ack)?;
-                    write!(ack, "{}", geometry.header_rows)?;
+                    writeln!(ack, "{}", geometry.header_rows)?;
+                    writeln!(ack, "{}", geometry.prefix_ok)?;
+                    writeln!(ack, "{}", geometry.prefix_err)?;
                     // Compute git in the background and repaint the header asynchronously when
                     // it finishes.
                     git_gen += 1;
