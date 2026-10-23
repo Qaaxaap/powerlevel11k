@@ -263,10 +263,22 @@ fn spawn_engine_shell(shell: &str, config_home: &str) -> Engine {
     }
 }
 
-/// Read until `needle` appears in the engine's output or the timeout expires, returning what the
-/// engine wrote since the previous call. Poll with a deadline: a blocking read would turn the
-/// timeout into an indefinite wait.
+/// Read until `needle` appears in the engine's output, returning what the engine wrote since the
+/// previous call. A timeout is a failure, not an empty result: callers that ignored the difference
+/// spent three separate rounds fixing cases that "passed" a read they never satisfied.
 fn read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
+    let acc = try_read_until(master, needle, timeout);
+    assert!(
+        acc.contains(needle),
+        "timed out after {timeout:?} waiting for {needle:?}{}",
+        diagnose(master)
+    );
+    acc
+}
+
+/// Same loop, but a timeout returns what was read so far. For the few callers that check
+/// themselves, such as `wait_ready_within` with its own diagnostics.
+fn try_read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
     let start = Instant::now();
     let mut acc = String::new();
     loop {
@@ -275,13 +287,6 @@ fn read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
             return acc;
         }
         if start.elapsed() >= timeout {
-            // Print the scene instead of returning it: callers parse this string as the engine's
-            // byte stream, so a pane dump inside it would both satisfy and break their
-            // assertions. A failed case shows the capture.
-            eprintln!(
-                "read_until({needle:?}) timed out after {timeout:?}{}",
-                diagnose(master)
-            );
             return acc;
         }
         std::thread::sleep(Duration::from_millis(20));
@@ -313,21 +318,7 @@ fn wait_ready(master: &Tmux) -> String {
 /// Same, with a caller-chosen budget: pwsh loads its runtime on every start, so its first prompt
 /// takes several times as long as zsh's or bash's.
 fn wait_ready_within(master: &Tmux, timeout: Duration) -> String {
-    let out = read_until(master, "\u{f00c}", timeout);
-    if !out.contains('\u{f00c}') {
-        // On timeout all we see is "output was truncated", with no way to tell whether spawn
-        // failed, the engine is stuck on an ack, or the shell never started — include the tail
-        // of the engine log, and the pane, which shows whether the shell came up at all.
-        match std::fs::read_to_string("/tmp/p11k-engine.log") {
-            Ok(log) => {
-                let tail: Vec<&str> = log.lines().rev().take(15).collect();
-                eprintln!("engine log tail (newest first): {tail:#?}");
-            }
-            Err(e) => eprintln!("no engine log at /tmp/p11k-engine.log: {e}"),
-        }
-        eprintln!("pane on timeout:\n{}", master.screen());
-    }
-    out
+    read_until(master, "\u{f00c}", timeout)
 }
 
 #[test]
@@ -399,7 +390,7 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
         .unwrap();
     eng.writer.flush().unwrap();
     let mut out = read_until(&eng.master, "probe-gamma", Duration::from_secs(5));
-    out.push_str(&read_until(&eng.master, "❯", Duration::from_secs(2)));
+    out.push_str(&try_read_until(&eng.master, "❯", Duration::from_secs(2)));
     let _ = std::fs::remove_dir_all(&home);
 
     // The completion redraw reprints the prompt string: the signal fires again and the header
@@ -435,7 +426,7 @@ fn zsh_job_notification_reprint_is_covered() {
     // The next prompt is up while the job still runs; the notification and the redraw follow
     // once it finishes.
     let mut out = read_until(&eng.master, "done", Duration::from_secs(8));
-    out.push_str(&read_until(&eng.master, "❯", Duration::from_secs(3)));
+    out.push_str(&try_read_until(&eng.master, "❯", Duration::from_secs(3)));
 
     let done = out
         .find("done")
@@ -472,7 +463,7 @@ fn bash_two_row_header_is_backfilled() {
     eng.writer.write_all(b"echo two-row-probe\n").unwrap();
     eng.writer.flush().unwrap();
     let mut out = read_until(&eng.master, "two-row-probe", Duration::from_secs(5));
-    out.push_str(&read_until(&eng.master, "❯", Duration::from_secs(2)));
+    out.push_str(&try_read_until(&eng.master, "❯", Duration::from_secs(2)));
     let _ = std::fs::remove_dir_all(&home);
 
     assert!(
@@ -505,7 +496,7 @@ fn bash_long_prefix_is_backfilled() {
     eng.writer.write_all(b"echo wide-probe\n").unwrap();
     eng.writer.flush().unwrap();
     let mut out = read_until(&eng.master, "wide-probe", Duration::from_secs(5));
-    out.push_str(&read_until(&eng.master, "❯", Duration::from_secs(2)));
+    out.push_str(&try_read_until(&eng.master, "❯", Duration::from_secs(2)));
     let _ = std::fs::remove_dir_all(&home);
 
     // The prefix is part of the shell's prompt string now, so the wide one must simply show up;
@@ -537,7 +528,7 @@ fn bash_typed_underscores_are_echoed_immediately() {
     for ch in ["_", "_", "_", "_", "_"] {
         eng.writer.write_all(ch.as_bytes()).unwrap();
         eng.writer.flush().unwrap();
-        let out = read_until(&eng.master, ch, Duration::from_secs(2));
+        let out = try_read_until(&eng.master, ch, Duration::from_secs(2));
         assert!(
             out.contains(ch),
             "the underscore should be echoed right away, got {out:?}"
@@ -559,7 +550,7 @@ fn bash_typed_characters_are_echoed_immediately() {
     for ch in ["i", "m", "m", "e", "d"] {
         eng.writer.write_all(ch.as_bytes()).unwrap();
         eng.writer.flush().unwrap();
-        let out = read_until(&eng.master, ch, Duration::from_secs(2));
+        let out = try_read_until(&eng.master, ch, Duration::from_secs(2));
         assert!(
             out.contains(ch),
             "the character {ch:?} should be echoed right away, got {out:?}"
@@ -606,7 +597,7 @@ fn bash_enter_inside_the_completion_pager_is_covered() {
         std::thread::sleep(Duration::from_millis(20));
     }
     let mut out = read_until(&eng.master, "c899", Duration::from_secs(5));
-    out.push_str(&read_until(&eng.master, "❯", Duration::from_secs(2)));
+    out.push_str(&try_read_until(&eng.master, "❯", Duration::from_secs(2)));
     let _ = std::fs::remove_dir_all(&home);
 
     // Paging reprints the prompt string, so the signal fires again and the header is backfilled.
@@ -655,7 +646,7 @@ fn bash_ctrl_l_rebuilds_the_prompt() {
     );
     // The repaint may already be in the same read as the clear.
     if !cleared.contains('❯') {
-        cleared.push_str(&read_until(&eng.master, "❯", Duration::from_secs(2)));
+        cleared.push_str(&try_read_until(&eng.master, "❯", Duration::from_secs(2)));
     }
     assert!(
         cleared.contains('❯'),
@@ -672,7 +663,7 @@ fn assert_readline_available(eng: &mut Engine) {
         .write_all(b"printf 'RL%sRL\\n' \"$(bind -P | grep -c '^clear-screen')\"\n")
         .unwrap();
     eng.writer.flush().unwrap();
-    let out = read_until(&eng.master, "RL1RL", Duration::from_secs(2));
+    let out = try_read_until(&eng.master, "RL1RL", Duration::from_secs(2));
     assert!(
         out.contains("RL1RL"),
         "the inner bash has no readline (nixpkgs' non-interactive bash build?): {out:?}"
