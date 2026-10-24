@@ -7,8 +7,7 @@
 
 use crate::cli::Shell;
 use crate::config::Config;
-use crate::render::{input_prefix, prefix_text_bash, prefix_text_zsh};
-use crate::theme::HeaderInfo;
+use crate::render::{prefix_text, prefix_text_bash, prefix_text_zsh};
 
 /// What determines the shape of the prompt area.
 pub struct Geometry {
@@ -23,33 +22,23 @@ pub struct Geometry {
 impl Geometry {
     /// Derive the geometry a theme implies for a shell.
     pub fn new(config: &Config, shell: Shell) -> Self {
-        let header_rows = config.layout.left.len().max(config.layout.right.len());
-        let err_info = HeaderInfo {
-            exit_code: Some(1),
-            cwd: String::new(),
-            exec_seconds: 0.0,
-            jobs: 0,
-            history: 0,
-            pipestatus: Vec::new(),
-        };
-        let (prefix_ok, prefix_err) = match shell {
-            Shell::Zsh => (
-                prefix_text_zsh(config, None),
-                prefix_text_zsh(config, Some("ERROR")),
-            ),
-            Shell::Bash => (
-                prefix_text_bash(config, None),
-                prefix_text_bash(config, Some("ERROR")),
-            ),
-            Shell::Fish | Shell::Pwsh => (
-                input_prefix(config, None).text,
-                input_prefix(config, Some(&err_info)).text,
-            ),
-        };
         Geometry {
-            header_rows,
-            prefix_ok,
-            prefix_err,
+            header_rows: config.layout.left.len().max(config.layout.right.len()),
+            prefix_ok: Self::prefix_for(config, shell, None),
+            prefix_err: Self::prefix_for(config, shell, Some("ERROR")),
+        }
+    }
+
+    /// The prefix for one prompt state, in the syntax that shell's prompt string needs.
+    ///
+    /// The state is the engine's to decide: it is the only side that sees the exit code, the
+    /// pipeline statuses and the vi mode, and a shell that had to pick for itself could not tell
+    /// `OK_PIPE` from `OK` or follow a mode change.
+    pub fn prefix_for(config: &Config, shell: Shell, state: Option<&str>) -> String {
+        match shell {
+            Shell::Zsh => prefix_text_zsh(config, state),
+            Shell::Bash => prefix_text_bash(config, state),
+            Shell::Fish | Shell::Pwsh => prefix_text(config, state),
         }
     }
 }

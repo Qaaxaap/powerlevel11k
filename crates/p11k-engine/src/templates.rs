@@ -23,9 +23,9 @@ _p11k_precmd() {
   _p11k_pwd=$PWD
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
-  # The ack carries the header height, so a reloaded theme with a different number of header
-  # rows takes effect on this prompt instead of needing a restart.
-  local _rows=$(<"$P11K_ACK")
+  # The ack carries the prompt shape: header height on the first line, then the two prefix
+  # strings. Reading them every prompt is what lets a reload change either without a restart.
+  local -a _ack=("${(@f)$(<"$P11K_ACK")}")
   rm -f "$P11K_ACK"
   # The prompt is the blank rows + prompt-ready signal + the prefix for this exit code. The
   # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
@@ -34,17 +34,19 @@ _p11k_precmd() {
   # The first prompt prints no blank rows: the engine already drew the instant header, and it
   # overwrites it in place when the signal arrives. Printing rows here would push that header
   # up and leave it on screen.
+  # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
+  # newline, so the capture would always come back empty and the shell would print no blank rows
+  # at all — the header would then be backfilled over the command output above it.
   local _lead=''
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
   else
-    _lead=$(printf '\n%.0s' $(seq 1 ${_rows:-0}))
+    local _i
+    for (( _i = 0; _i < ${_ack[1]:-0}; _i++ )); do
+      _lead+=$'\n'
+    done
   fi
-  if (( _p11k_status == 0 )); then
-    PROMPT="$_lead$_p11k_signal$P11K_PREFIX_OK"
-  else
-    PROMPT="$_lead$_p11k_signal$P11K_PREFIX_ERR"
-  fi
+  PROMPT="$_lead$_p11k_signal${_ack[2]:-$P11K_PREFIX_OK}"
 }
 
 # zle calls this when it takes over the input line. The prompt is already on screen by then
@@ -159,14 +161,15 @@ PS1="\[$_p11k_signal\]"
 # PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
 # then wait for the engine ack before returning.
 _p11k_prompt_command() {
-  local _st=$?
-  # Capture $PIPESTATUS right away: any command below resets it.
-  local _pipes="${PIPESTATUS[*]}"
+  # Read both in one `local`: any command in between, `local` included, resets $PIPESTATUS, so
+  # capturing $? first would leave the pipeline statuses reporting the `local` that read it.
+  local _pipes="${PIPESTATUS[*]}" _st=$?
   printf 'h\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
-  # The ack carries the header height, so a reloaded theme with a different number of header
-  # rows takes effect on this prompt instead of needing a restart.
-  local _rows=$(cat "$P11K_ACK")
+  # The ack carries the prompt shape: header height on the first line, then the two prefix
+  # strings. Reading them every prompt is what lets a reload change either without a restart.
+  local -a _ack
+  mapfile -t _ack < "$P11K_ACK"
   rm -f "$P11K_ACK"
   # The prefix belongs in PS1: readline draws the buffer right after it, and painting it later
   # would overwrite the first characters on a completion redraw.
@@ -174,19 +177,21 @@ _p11k_prompt_command() {
   # The first prompt prints no blank rows: the engine already drew the instant header and
   # overwrites it in place when the signal arrives. Printing rows here would push that header up
   # and leave it on screen.
+  # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
+  # newline, so the capture would always come back empty and the shell would print no blank rows
+  # at all — the header would then be backfilled over the command output above it.
   local _lead=''
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
   else
-    _lead=$(printf '\n%.0s' $(seq 1 ${_rows:-0}))
+    local _i
+    for (( _i = 0; _i < ${_ack[0]:-0}; _i++ )); do
+      _lead+=$'\n'
+    done
   fi
   # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
   # before the shell starts, and without this readline would append the prompt after it.
-  if [[ $_st -eq 0 ]]; then
-    PS1='\r'"$_lead\[$_p11k_signal\]$P11K_PREFIX_OK"
-  else
-    PS1='\r'"$_lead\[$_p11k_signal\]$P11K_PREFIX_ERR"
-  fi
+  PS1='\r'"$_lead\[$_p11k_signal\]${_ack[1]:-$P11K_PREFIX_OK}"
 }
 PROMPT_COMMAND=_p11k_prompt_command
 
@@ -224,8 +229,9 @@ pub const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) -- protocol la
 
 set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
-# Header height, refreshed from the ack on every prompt; the resize path reuses it.
+# Prompt shape, refreshed from the ack on every prompt; the resize path reuses it.
 set -g _p11k_rows 1
+set -g _p11k_prefix "$P11K_PREFIX_OK"
 
 # fish_prompt is called when the main prompt is rendered. Two cases:
 # - size change (resize repaint): announce `r`.
@@ -247,31 +253,26 @@ function fish_prompt
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
         if test -z "$_instant"
-            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
+            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
         end
-        if test $_st -eq 0
-            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_OK"
-        else
-            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_ERR"
-        end
+        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
     end
-    # The ack carries the header height, so a reloaded theme with a different number of header
-    # rows takes effect on this prompt instead of needing a restart.
-    set -g _p11k_rows (cat $P11K_ACK)
+    # The ack carries the prompt shape: header height on the first line, then the two prefix
+    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    set -l _ack (cat $P11K_ACK)
     rm -f $P11K_ACK
+    set -g _p11k_rows $_ack[1]
+    set -g _p11k_prefix $_ack[2]
     if test -z "$_instant"
-        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
+        # `string collect` keeps the newlines a command substitution would strip.
+        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
     end
-    if test $_st -eq 0
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_OK"
-    else
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_ERR"
-    end
+    printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
 end
 
 # ===== user config =====
@@ -287,8 +288,9 @@ end
 set -g fish_greeting ''
 set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
-# Header height, refreshed from the ack on every prompt; the resize path reuses it.
+# Prompt shape, refreshed from the ack on every prompt; the resize path reuses it.
 set -g _p11k_rows 1
+set -g _p11k_prefix "$P11K_PREFIX_OK"
 function fish_prompt
     set -l _st $status
     # Capture $pipestatus right away: any command below resets it.
@@ -306,31 +308,26 @@ function fish_prompt
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
         if test -z "$_instant"
-            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
+            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
         end
-        if test $_st -eq 0
-            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_OK"
-        else
-            printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_ERR"
-        end
+        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
     end
-    # The ack carries the header height, so a reloaded theme with a different number of header
-    # rows takes effect on this prompt instead of needing a restart.
-    set -g _p11k_rows (cat $P11K_ACK)
+    # The ack carries the prompt shape: header height on the first line, then the two prefix
+    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    set -l _ack (cat $P11K_ACK)
     rm -f $P11K_ACK
+    set -g _p11k_rows $_ack[1]
+    set -g _p11k_prefix $_ack[2]
     if test -z "$_instant"
-        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
+        # `string collect` keeps the newlines a command substitution would strip.
+        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
     end
-    if test $_st -eq 0
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_OK"
-    else
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$P11K_PREFIX_ERR"
-    end
+    printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
 end
 "#;
 
@@ -370,10 +367,12 @@ function global:P11kEnginePrompt {
     [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n")
     # Wait for the engine ack: the prompt string is printed first, the header is backfilled after.
     while (-not [IO.File]::Exists($script:P11kAck)) { Start-Sleep -Milliseconds 5 }
-    # The ack carries the header height, so a reloaded theme with a different number of header
-    # rows takes effect on this prompt instead of needing a restart.
-    $P11kHeaderRows = [int][IO.File]::ReadAllText($script:P11kAck)
+    # The ack carries the prompt shape: header height on the first line, then the two prefix
+    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    $P11kAckLines = @(Get-Content $script:P11kAck)
     [IO.File]::Delete($script:P11kAck)
+    $P11kHeaderRows = [int]$P11kAckLines[0]
+    $P11kPrefix = $P11kAckLines[1]
     # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
@@ -386,11 +385,7 @@ function global:P11kEnginePrompt {
     } else {
         $P11kLead = "`n" * $P11kHeaderRows
     }
-    if ($P11kCode -eq 0) {
-        "$P11kLead`e]1337;p11k;p`a$env:P11K_PREFIX_OK"
-    } else {
-        "$P11kLead`e]1337;p11k;p`a$env:P11K_PREFIX_ERR"
-    }
+    "$P11kLead`e]1337;p11k;p`a$P11kPrefix"
 }
 
 function global:prompt { P11kEnginePrompt }
@@ -464,23 +459,21 @@ mod tests {
         );
     }
 
-    /// The prompt skeleton reaches the shell through environment variables, so the row count and
-    /// the prefix stay the engine's to decide. No template may carry a literal `__` again: a copy
-    /// baked into a template would desync the geometry the moment the theme changes it.
+    /// The prompt shape reaches the shell through the ack, so the row count and the prefix stay
+    /// the engine's to decide. No template may carry a literal `__` again: a copy baked into a
+    /// template would desync the geometry the moment the theme changes it.
     #[test]
-    fn templates_take_the_prompt_skeleton_from_the_environment() {
+    fn templates_take_the_prompt_shape_from_the_ack() {
         for (name, template) in [
             ("ZSHRC_TEMPLATE", ZSHRC_TEMPLATE),
             ("BASHRC_TEMPLATE", BASHRC_TEMPLATE),
             ("FISH_TEMPLATE", FISH_TEMPLATE),
             ("PWSH_TEMPLATE", PWSH_TEMPLATE),
         ] {
-            for var in ["P11K_PREFIX_OK", "P11K_PREFIX_ERR"] {
-                assert!(
-                    template.contains(var),
-                    "{name} must use {var}, which the engine passes in"
-                );
-            }
+            assert!(
+                template.contains("P11K_ACK"),
+                "{name} must read the prompt shape from the ack"
+            );
             assert!(
                 template.contains("1337;p11k;p"),
                 "{name} must emit the prompt-ready signal"
