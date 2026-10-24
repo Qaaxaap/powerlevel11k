@@ -34,11 +34,17 @@ _p11k_precmd() {
   # The first prompt prints no blank rows: the engine already drew the instant header, and it
   # overwrites it in place when the signal arrives. Printing rows here would push that header
   # up and leave it on screen.
+  # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
+  # newline, so the capture would always come back empty and the shell would print no blank rows
+  # at all — the header would then be backfilled over the command output above it.
   local _lead=''
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
   else
-    _lead=$(printf '\n%.0s' $(seq 1 ${_ack[1]:-0}))
+    local _i
+    for (( _i = 0; _i < ${_ack[1]:-0}; _i++ )); do
+      _lead+=$'\n'
+    done
   fi
   PROMPT="$_lead$_p11k_signal${_ack[2]:-$P11K_PREFIX_OK}"
 }
@@ -171,11 +177,17 @@ _p11k_prompt_command() {
   # The first prompt prints no blank rows: the engine already drew the instant header and
   # overwrites it in place when the signal arrives. Printing rows here would push that header up
   # and leave it on screen.
+  # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
+  # newline, so the capture would always come back empty and the shell would print no blank rows
+  # at all — the header would then be backfilled over the command output above it.
   local _lead=''
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
   else
-    _lead=$(printf '\n%.0s' $(seq 1 ${_ack[0]:-0}))
+    local _i
+    for (( _i = 0; _i < ${_ack[0]:-0}; _i++ )); do
+      _lead+=$'\n'
+    done
   fi
   # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
   # before the shell starts, and without this readline would append the prompt after it.
@@ -241,7 +253,7 @@ function fish_prompt
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
         if test -z "$_instant"
-            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
+            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
         end
         printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
         return
@@ -257,7 +269,8 @@ function fish_prompt
     set -g _p11k_rows $_ack[1]
     set -g _p11k_prefix $_ack[2]
     if test -z "$_instant"
-        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
+        # `string collect` keeps the newlines a command substitution would strip.
+        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
     end
     printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
 end
@@ -295,7 +308,7 @@ function fish_prompt
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
         if test -z "$_instant"
-            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
+            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
         end
         printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
         return
@@ -311,7 +324,8 @@ function fish_prompt
     set -g _p11k_rows $_ack[1]
     set -g _p11k_prefix $_ack[2]
     if test -z "$_instant"
-        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows))
+        # `string collect` keeps the newlines a command substitution would strip.
+        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
     end
     printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
 end
