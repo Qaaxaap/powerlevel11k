@@ -83,11 +83,18 @@
             fish
             powershell
             tmux
+            # The transient-prompt hook has to coexist with plugins that hook the same zle
+            # widgets; issue #29 needed zsh-autocomplete plus zsh-syntax-highlighting to
+            # reproduce, so the regression case loads the real ones instead of a mock.
+            zsh-autocomplete
+            zsh-syntax-highlighting
           ];
           preCheck = ''
             export LANG=C.UTF-8
             export LOCALE_ARCHIVE=${localesOf pkgs}/lib/locale/locale-archive
             export TERMINFO_DIRS=${pkgs.ncurses.out}/share/terminfo
+            export P11K_TEST_ZSH_AUTOCOMPLETE=${pkgs.zsh-autocomplete}/share/zsh-autocomplete/zsh-autocomplete.plugin.zsh
+            export P11K_TEST_ZSH_SYNTAX_HIGHLIGHTING=${pkgs.zsh-syntax-highlighting}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
             export HOME=$TMPDIR
             git config --global user.email "ci@example.com"
             git config --global user.name "CI"
