@@ -85,6 +85,11 @@ pub struct Index {
     /// Shard boundaries: each pair of adjacent indices is one shard
     /// (index.cc splits_).
     pub splits: Vec<usize>,
+    /// `ScanOpts::include_untracked` the cached `IndexDir::unmatched` state was
+    /// produced under. The original rebuilds the tree on every request, so the option cannot
+    /// go stale there. This cache outlives a request. Reusing untracked state gathered with
+    /// the option off would hide every untracked file until `.git/index` changes.
+    pub include_untracked: bool,
 }
 
 impl Index {
@@ -164,6 +169,7 @@ impl Index {
             entries,
             dirs,
             splits: Vec::new(),
+            include_untracked: false,
         }
     }
 
