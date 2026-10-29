@@ -144,6 +144,17 @@ impl Tmux {
         String::from_utf8_lossy(&all[from..]).into_owned()
     }
 
+    /// Put `n` bytes back into the unread window.
+    ///
+    /// [`try_read_until`] stops at the needle, but a single `fresh()` call can return much more
+    /// than that: the bytes after the needle are already in its accumulator and the read cursor
+    /// has moved past them. Without this the caller cannot reach them again, and a case that
+    /// reads one marker and then another loses the race whenever both arrive in the same chunk.
+    fn unread(&self, n: usize) {
+        let cur = self.consumed.get();
+        self.consumed.set(cur.saturating_sub(n));
+    }
+
     /// The rendered pane: the screen the user would be looking at.
     fn screen(&self) -> String {
         let out = Self::tmux(&self.socket, &["capture-pane", "-p", "-t", Self::SESSION]);
@@ -297,7 +308,13 @@ fn try_read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
     let mut acc = String::new();
     loop {
         acc.push_str(&master.fresh());
-        if acc.contains(needle) {
+        if let Some(pos) = acc.find(needle) {
+            // Stop consuming at the end of the needle. Everything after it goes back into the
+            // unread window, so the next read can find it; otherwise a case that reads two
+            // markers in sequence fails whenever one read delivers both.
+            let end = pos + needle.len();
+            master.unread(acc.len() - end);
+            acc.truncate(end);
             return acc;
         }
         if start.elapsed() >= timeout {
@@ -727,10 +744,8 @@ fn bash_ctrl_l_rebuilds_the_prompt() {
         cleared.contains("\x1b[J") || cleared.contains("\x1b[2J"),
         "readline clears the screen on Ctrl-L, got {cleared:?}"
     );
-    // The repaint may already be in the same read as the clear.
-    if !cleared.contains('❯') {
-        cleared.push_str(&try_read_until(&eng.master, "❯", Duration::from_secs(2)));
-    }
+    // The bar sits in its own row above the prompt, so the repaint is a separate read now.
+    cleared.push_str(&try_read_until(&eng.master, "❯", Duration::from_secs(2)));
     assert!(
         cleared.contains('❯'),
         "the prompt should be rebuilt after Ctrl-L, got {cleared:?}"
@@ -856,7 +871,9 @@ fn prompt_char_turns_error_color_on_failure() {
 
     eng.writer.write_all(b"false\n").unwrap();
     eng.writer.flush().unwrap();
-    let out = read_until(&eng.master, "\x1b[38;5;196m", Duration::from_secs(5));
+    // Wait for the coloured prefix itself, not just the colour code: the code also appears in
+    // the status segment of the header, which is drawn before the prompt line.
+    let out = read_until(&eng.master, "\x1b[38;5;196m❯", Duration::from_secs(5));
     assert!(
         out.contains("\x1b[38;5;196m❯"),
         "after a failure prompt_char should turn red in the ERROR state (196), got {out:?}"
@@ -940,11 +957,7 @@ fn marker_shell_runs_a_command(shell: &str, fail: &str) {
         "{shell}: command output should pass through, got {out:?}"
     );
 
-    // The read that caught the command output may already carry the next prompt's header (one
-    // read can span both), in which case waiting for it again would block until the timeout.
-    if !out.contains('\u{f00c}') {
-        out.push_str(&read_until(&eng.master, "\u{f00c}", SHELL_READY));
-    }
+    out.push_str(&read_until(&eng.master, "\u{f00c}", SHELL_READY));
     assert!(
         out.contains('\u{f00c}'),
         "{shell}: a new prompt should follow the command, got {out:?}"
