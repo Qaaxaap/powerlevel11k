@@ -550,18 +550,24 @@ impl Repo {
     fn get_index_stats(&mut self) -> IndexStats {
         // Config switches: explicit false zeroes the corresponding counts
         // (-U/-W/-D override and ignore).
+        //
+        // The effect is per request. The original keeps the `Limits` it was handed at Repo
+        // construction and restores them before every request. Writing into `self.limits`
+        // instead makes the zeroing permanent for the lifetime of the process. Flipping
+        // `status.showUntrackedFiles` back to true then has no effect.
+        let mut limits = self.limits.clone();
         if let Ok(cfg) = self.git.config() {
             let off = |name: &str| cfg.get_bool(name).map(|v| !v).unwrap_or(false);
-            if !self.limits.ignore_status_show_untracked_files && off("status.showUntrackedFiles") {
-                self.limits.max_num_untracked = 0;
+            if !limits.ignore_status_show_untracked_files && off("status.showUntrackedFiles") {
+                limits.max_num_untracked = 0;
             }
-            if !self.limits.ignore_bash_show_untracked_files && off("bash.showUntrackedFiles") {
-                self.limits.max_num_untracked = 0;
+            if !limits.ignore_bash_show_untracked_files && off("bash.showUntrackedFiles") {
+                limits.max_num_untracked = 0;
             }
-            if !self.limits.ignore_bash_show_dirty_state && off("bash.showDirtyState") {
-                self.limits.max_num_staged = 0;
-                self.limits.max_num_unstaged = 0;
-                self.limits.max_num_conflicted = 0;
+            if !limits.ignore_bash_show_dirty_state && off("bash.showDirtyState") {
+                limits.max_num_staged = 0;
+                limits.max_num_unstaged = 0;
+                limits.max_num_conflicted = 0;
             }
         }
 
@@ -578,7 +584,7 @@ impl Repo {
 
         // Index-tree cache: reuse when .git/index is unchanged (the dirs'
         // untracked state persists; readdir pruned by mtime).
-        let mut index = self.index_tree_or_rebuild(&git_index);
+        let mut index = self.index_tree_or_rebuild(&git_index, limits.max_num_untracked != 0);
 
         // Caps (RepoCaps; config missing → default true).
         let caps = self.repo_caps(&git_index);
@@ -590,7 +596,7 @@ impl Repo {
 
         // ── staged path (GetIndexStats' staged branch) ──
         // Enabled when the cap is non-zero (size_t semantics: -1 = unlimited).
-        let want_staged = self.limits.max_num_staged != 0 || self.limits.max_num_conflicted != 0;
+        let want_staged = limits.max_num_staged != 0 || limits.max_num_conflicted != 0;
         if !want_staged {
             self.staged_head = None;
             self.staged_stats = StagedStats::default();
@@ -633,28 +639,26 @@ impl Repo {
                 assume_unchanged: assume,
             };
         }
-        stats.num_staged = cap(self.staged_stats.staged, self.limits.max_num_staged);
-        stats.num_conflicted = cap(self.staged_stats.conflicted, self.limits.max_num_conflicted);
+        stats.num_staged = cap(self.staged_stats.staged, limits.max_num_staged);
+        stats.num_conflicted = cap(self.staged_stats.conflicted, limits.max_num_conflicted);
         stats.num_staged_new = cap(self.staged_stats.staged_new, stats.num_staged as i64);
         stats.num_staged_deleted = cap(self.staged_stats.staged_deleted, stats.num_staged as i64);
         stats.num_skip_worktree = self.staged_stats.skip_worktree;
         stats.num_assume_unchanged = self.staged_stats.assume_unchanged;
 
         // ── dirty path (GetIndexStats' candidate + StartDirtyScan) ──
-        let dirty_allowed = self.limits.dirty_max_index_size < 0
-            || index_size <= self.limits.dirty_max_index_size as usize;
-        if dirty_allowed
-            && (self.limits.max_num_unstaged != 0 || self.limits.max_num_untracked != 0)
-        {
+        let dirty_allowed =
+            limits.dirty_max_index_size < 0 || index_size <= limits.dirty_max_index_size as usize;
+        if dirty_allowed && (limits.max_num_unstaged != 0 || limits.max_num_untracked != 0) {
             let root_fd = self.open_workdir_fd();
             if let Some(root_fd) = root_fd {
                 let opts = crate::scan::ScanOpts {
-                    include_untracked: self.limits.max_num_untracked != 0,
+                    include_untracked: limits.max_num_untracked != 0,
                     untracked_cache_enabled: self.untracked.enabled(),
                 };
                 let candidates = index.get_dirty_candidates(root_fd, &caps, &opts);
                 unsafe { libc::close(root_fd) };
-                self.compute_dirty(&index, &candidates, &mut stats);
+                self.compute_dirty(&limits, &index, &candidates, &mut stats);
             }
         }
 
@@ -672,7 +676,7 @@ impl Repo {
     ///    refresh only the stat fields. Avoids a full rebuild of a 50k-entry
     ///    index on every racy write-back (measured 200ms+ spikes).
     /// 3. Path set really changed (git add/rm) → full rebuild.
-    fn index_tree_or_rebuild(&mut self, git_index: &GitIndex) -> Index {
+    fn index_tree_or_rebuild(&mut self, git_index: &GitIndex, include_untracked: bool) -> Index {
         let mut index_path = self.git.path().to_path_buf();
         index_path.push("index");
         let cur_stat = {
@@ -684,7 +688,10 @@ impl Repo {
             ok.then_some((st.st_mtime, st.st_mtime_nsec, st.st_size))
         };
         if let Some(tree) = self.index_tree.take() {
-            if self.index_stat == cur_stat {
+            // The untracked state in the cached tree was gathered under one value of
+            // `include_untracked`. Reusing it under the other value reports every untracked
+            // file as absent, or scans for nothing.
+            if self.index_stat == cur_stat && tree.include_untracked == include_untracked {
                 return tree;
             }
             let new_entries = copy_entries(git_index);
@@ -697,12 +704,23 @@ impl Repo {
             if same_paths {
                 let mut tree = tree;
                 tree.update_stats(&new_entries);
+                if tree.include_untracked != include_untracked {
+                    // The cached untracked state belongs to the other setting.
+                    // Drop it, so the scan below reads the dirs again instead of reporting
+                    // the stale result.
+                    tree.include_untracked = include_untracked;
+                    for dir in &mut tree.dirs {
+                        dir.st = None;
+                        dir.unmatched.clear();
+                    }
+                }
                 self.index_stat = cur_stat;
                 return tree;
             }
         }
         let entries = copy_entries(git_index);
         let mut index = Index::from_entries(entries);
+        index.include_untracked = include_untracked;
         index.init_splits(self.limits.num_threads);
         self.index_stat = cur_stat;
         index
@@ -778,12 +796,18 @@ impl Repo {
     /// the cost is no content-level confirmation in extreme racy cases (git
     /// status is stat-dominated anyway). Differential tests confirm
     /// byte-identical output.
-    fn compute_dirty(&self, index: &Index, candidates: &[Vec<u8>], stats: &mut IndexStats) {
+    fn compute_dirty(
+        &self,
+        limits: &Options,
+        index: &Index,
+        candidates: &[Vec<u8>],
+        stats: &mut IndexStats,
+    ) {
         if candidates.is_empty() {
             return;
         }
-        let m_unstaged = self.limits.max_num_unstaged;
-        let m_untracked = self.limits.max_num_untracked;
+        let m_unstaged = limits.max_num_unstaged;
+        let m_untracked = limits.max_num_untracked;
         for c in candidates {
             if c.last() == Some(&b'/') {
                 // Directory candidate: count 1 only if it contains unignored
