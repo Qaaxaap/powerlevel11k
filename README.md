@@ -76,6 +76,13 @@ On Debian and Ubuntu, from the `.deb` attached to a [release](https://github.com
 sudo apt install ./p11k_<version>_amd64.deb
 ```
 
+On Arch linux, via the [AUR](https://aur.archlinux.org):
+```bash
+  yay -S powerlevel11k # using any AUR helper
+  # alternatively, you can install powerlevel11k-git to get the latest fixes as fast as possible. 
+```
+
+
 Anywhere else, unpack the tarball. `bin/` and `share/` are relocatable: the catalogs are looked up in the system directory and next to the executables alike.
 
 ```bash
