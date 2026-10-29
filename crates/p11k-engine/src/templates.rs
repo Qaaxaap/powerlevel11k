@@ -109,19 +109,45 @@ fi
 zle -N zle-keymap-select _p11k_vi_mode
 # transient: on command submit fold the multi-line header into a single ❯ line.
 # Let zsh render the folded prompt itself.
+#
+# Call the widget that was bound to `zle-line-finish` before this one.
+# zsh-autocomplete and zsh-syntax-highlighting bind their own hooks there.
+# Replacing that binding instead of chaining to it breaks them.
+#
+# `zle -A` stores the previous widget under an alias.
+# `zle .<alias>` calls it with the widget context intact.
+# A saved function name loses that context.
+# p10k chains the same way.
+#
+# The guard below stops re-entry.
+# A plugin hook can call `reset-prompt`, which enters this widget again.
+# Without the guard, zsh prints "job table full or recursion limit exceeded" on each command.
+# `$CONTEXT` stays `start` for the whole chain, so it cannot detect the re-entry.
 _p11k_line_finish() {
-  if [[ -n "${_p11k_user_line_finish:-}" ]] && (( $+functions[$_p11k_user_line_finish] )); then
-    "$_p11k_user_line_finish"
-  fi
-  if [[ -n "${P11K_TRANSIENT_PROMPT:-}" ]]; then
-    PROMPT="$P11K_TRANSIENT_PROMPT"
-    RPROMPT=''
-    zle reset-prompt
-  fi
+  ((${+_p11k_busy})) && return 0
+  typeset -g _p11k_busy=1
+  {
+    # The previous widget runs inside the guard too: a re-entrant call must not run the plugin
+    # hook a second time.
+    zle ._p11k_prev_line_finish -- "$@"
+    if [[ -n "${P11K_TRANSIENT_PROMPT:-}" ]]; then
+      PROMPT="$P11K_TRANSIENT_PROMPT"
+      RPROMPT=''
+      # `.reset-prompt` names the builtin widget.
+      # The undotted form resolves by widget name and can land on a plugin's own widget.
+      zle .reset-prompt
+    fi
+  } always {
+    unset _p11k_busy
+  }
 }
-if [[ -n "${widgets[zle-line-finish]:-}" && "${widgets[zle-line-finish]}" != user:_p11k_line_finish ]]; then
-  _p11k_user_line_finish=${widgets[zle-line-finish]#user:}
-fi
+# The chained widget must exist before the hook calls it.
+# With an empty user rc there is no previous `zle-line-finish`.
+# `zle .name` for a missing widget then fails and prints "No such widget" over the prompt.
+# The code installs a no-op first, then replaces it with the real previous widget when there is one.
+_p11k_noop() { :; }
+zle -N ._p11k_prev_line_finish _p11k_noop
+[[ -n "${widgets[zle-line-finish]:-}" ]] && zle -A zle-line-finish ._p11k_prev_line_finish
 zle -N zle-line-finish _p11k_line_finish
 # resize announce: SIGWINCH → zsh defers the TRAPWINCH run,
 # detects the change, announces `r`; the engine clears and repaints the prompt window.

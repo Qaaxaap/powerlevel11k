@@ -61,7 +61,7 @@ struct Tmux {
 impl Tmux {
     const SESSION: &'static str = "engine";
 
-    fn start(socket: &str, shell: &str, config_home: &str) -> Tmux {
+    fn start(socket: &str, shell: &str, config_home: &str, user_rc: &str) -> Tmux {
         assert_on_path("tmux");
         assert_on_path(shell);
         // A case that panicked before Drop left its server behind.
@@ -76,7 +76,7 @@ impl Tmux {
         // status scanning cannot jitter the prompt timing); the user rcs point at `/dev/null` (a
         // real `~/.zshrc` with oh-my-zsh/p10k is slow and disruptive to the assertions).
         let cmd = format!(
-            "sleep 0.3; cd /tmp && XDG_CONFIG_HOME={config_home} P11K_USER_ZSHRC=/dev/null \
+            "sleep 0.3; cd /tmp && XDG_CONFIG_HOME={config_home} P11K_USER_ZSHRC={user_rc} \
              P11K_USER_PROFILE=/dev/null exec '{}' --shell {shell}",
             env!("CARGO_BIN_EXE_p11k")
         );
@@ -257,9 +257,23 @@ fn spawn_engine_shell(shell: &str, config_home: &str) -> Engine {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     });
     Engine {
-        master: Box::new(Tmux::start(&socket, shell, config_home)),
+        master: Box::new(Tmux::start(&socket, shell, config_home, "/dev/null")),
         writer: Box::new(TmuxKeys { socket }),
         _pwsh_guard: pwsh_guard,
+    }
+}
+
+/// Like [`spawn_engine_shell`], but the inner shell sources `user_rc` first. Used by the cases
+/// that have to reproduce a user setup that p11k must coexist with.
+fn spawn_engine_shell_with_rc(shell: &str, config_home: &str, user_rc: &str) -> Engine {
+    let socket = format!(
+        "p11k-rc-{shell}-{}",
+        SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    Engine {
+        master: Box::new(Tmux::start(&socket, shell, config_home, user_rc)),
+        writer: Box::new(TmuxKeys { socket }),
+        _pwsh_guard: None,
     }
 }
 
@@ -615,6 +629,75 @@ fn bash_enter_inside_the_completion_pager_is_covered() {
 /// Ctrl-L makes readline clear the screen and reprint the prompt. The header was on screen
 /// before the clear, so the engine has to rebuild it from the reprint: the screen must not
 /// end up with a bare marker and no header.
+/// A plugin that hooks the same zle widgets must not send the transient hook into recursion.
+/// When it does, zsh prints `_p11k_line_finish:1: job table full or recursion limit exceeded`
+/// on every command while the rest of the shell keeps working, which is how issue #29 presented.
+///
+/// The real combination is required: a single `zle reset-prompt` inside one hook (what
+/// zsh-autocomplete does on its own) does not reproduce it, and mocks of the chain do not either.
+/// The plugins come from the flake's check inputs; a plain `cargo test` on a machine without them
+/// skips this case instead of passing vacuously.
+#[test]
+fn transient_hook_survives_reentrant_zle_plugins() {
+    let Some(autocomplete) = std::env::var_os("P11K_TEST_ZSH_AUTOCOMPLETE") else {
+        eprintln!("skipping: P11K_TEST_ZSH_AUTOCOMPLETE is unset (set by `just nix-check`)");
+        return;
+    };
+    let Some(syntax) = std::env::var_os("P11K_TEST_ZSH_SYNTAX_HIGHLIGHTING") else {
+        eprintln!("skipping: P11K_TEST_ZSH_SYNTAX_HIGHLIGHTING is unset (set by `just nix-check`)");
+        return;
+    };
+
+    let home = std::env::temp_dir().join(format!("p11k-reentrant-{}", std::process::id()));
+    let dir = home.join("p11k");
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("p11k.kdl"),
+        "layout {\n    left { line { dir } }\n    right { line { status } }\n    transient-prompt #true\n}\nsegments {\n    status verbose=#true\n}\n",
+    )
+    .unwrap();
+
+    // The reporter's shell setup, minus the parts that do not matter here: vi keybindings and
+    // the two plugins that both hook zle-line-finish / zle-line-pre-redraw.
+    let rc = home.join("plugins.zsh");
+    std::fs::write(
+        &rc,
+        format!(
+            "HISTSIZE=1000\n\
+             SAVEHIST=1000\n\
+             HISTFILE=~/.histfile\n\
+             unsetopt autocd\n\
+             bindkey -v\n\
+             autoload -Uz compinit\n\
+             zstyle :compinstall filename \"$HOME/.zshrc\"\n\
+             compinit\n\
+             source {autocomplete}\n\
+             source {syntax}\n",
+            autocomplete = autocomplete.to_string_lossy(),
+            syntax = syntax.to_string_lossy(),
+        ),
+    )
+    .unwrap();
+
+    let mut eng = spawn_engine_shell_with_rc("zsh", home.to_str().unwrap(), rc.to_str().unwrap());
+    wait_ready(&eng.master);
+
+    eng.writer.write_all(b"echo P11K-REENTRY\n").unwrap();
+    eng.writer.flush().unwrap();
+    let out = read_until(&eng.master, "P11K-REENTRY", SHELL_READY);
+    let _ = std::fs::remove_dir_all(&home);
+
+    assert!(
+        !out.contains("job table full"),
+        "the line-finish hook must not recurse, got {out:?}"
+    );
+    assert!(
+        out.contains("P11K-REENTRY"),
+        "the command must still run, got {out:?}"
+    );
+}
+
 #[test]
 fn bash_ctrl_l_rebuilds_the_prompt() {
     let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
