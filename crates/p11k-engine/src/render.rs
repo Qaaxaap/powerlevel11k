@@ -533,6 +533,13 @@ fn render_segment(
     } else {
         style.clone()
     };
+    // Icon placement: the column decides by default (left column puts the icon first, the right
+    // column puts it last, so both read outward from the line). `icon-before-content` overrides
+    // that per segment, which is p10k's `POWERLEVEL9K_<SEG>_ICON_BEFORE_CONTENT`.
+    let icon_first = match seg.prop("icon-before-content") {
+        Some(crate::config::Prop::Bool(b)) => *b,
+        _ => !right,
+    };
     let icon_text = match icon {
         Some(ic) if text.is_empty() => {
             if icon_is_content(name) {
@@ -542,11 +549,18 @@ fn render_segment(
             }
         }
         // The space between icon and content (p10k `LEFT_MIDDLE_WHITESPACE` /
-        // `RIGHT_MIDDLE_WHITESPACE`) sits between them: left column has the icon first →
-        // icon + space; right column has it last → space + icon. The reverse would give
-        // "content icon " on the right.
-        Some(ic) if right => paint(&format!(" {ic}"), &icon_style),
-        Some(ic) => paint(&format!("{ic} "), &icon_style),
+        // `RIGHT_MIDDLE_WHITESPACE`) sits between them. Its width comes from
+        // `icon-padding` (p10k `POWERLEVEL9K_ICON_PADDING`): one space by default, two with
+        // `moderate`. It goes on the content side, so the icon stays flush against the
+        // segment's outer edge.
+        Some(ic) => {
+            let pad = config.icon_padding.spaces();
+            if icon_first {
+                paint(&format!("{ic}{pad}"), &icon_style)
+            } else {
+                paint(&format!("{pad}{ic}"), &icon_style)
+            }
+        }
         None => String::new(),
     };
     // Attach text slots: left (before the icon) / middle (between icon and content, requires
@@ -575,13 +589,6 @@ fn render_segment(
             .unwrap_or_default()
     } else {
         String::new()
-    };
-    // Icon placement: the column decides by default (left column puts the icon first, the right
-    // column puts it last, so both read outward from the line). `icon-before-content` overrides
-    // that per segment, which is p10k's `POWERLEVEL9K_<SEG>_ICON_BEFORE_CONTENT`.
-    let icon_first = match seg.prop("icon-before-content") {
-        Some(crate::config::Prop::Bool(b)) => *b,
-        _ => !right,
     };
     if icon_first {
         body.push_str(&icon_text);
@@ -3986,6 +3993,23 @@ mod tests {
         assert!(
             text_at < icon_at,
             "icon-before-content=false should put the icon after the text, got {line:?}"
+        );
+    }
+
+    /// `icon-padding "moderate"` widens the gap between the icon and the content (p10k
+    /// `POWERLEVEL9K_ICON_PADDING=moderate`); the default keeps one space.
+    #[test]
+    fn icon_padding_moderate_widens_the_gap() {
+        let layout = "layout {\n    left { line { dir } }\n}\n";
+        let none = Config::parse(layout).unwrap();
+        let moderate = Config::parse(&format!("icon-padding \"moderate\"\n{layout}")).unwrap();
+        let draw = |c: &Config| render_header_lines(c, &info("/tmp", Some(0)), None, 80)[0].clone();
+        let narrow = display_width(&draw(&none));
+        let wide = display_width(&draw(&moderate));
+        assert_eq!(
+            wide,
+            narrow + 1,
+            "moderate should add one more space between icon and content: {narrow} -> {wide}"
         );
     }
 
