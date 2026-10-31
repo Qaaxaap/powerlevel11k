@@ -13,9 +13,11 @@
 
 ## 结构
 
-目前的顶层节点：`layout`（必写）、`segments`、`defaults`、`separators`、`frame`、`vcs-remote-icons`、`mode`、`icon`、`dir-classes`、`shell`。未识别的顶层节点会被忽略并跳过渲染。
+目前的顶层节点：`layout`（必写）、`segments`、`defaults`、`separators`、`frame`、`vcs-remote-icons`、`mode`、`icon`、`dir-classes`、`shell`、`icon-padding`。未识别的顶层节点会被忽略并跳过渲染。
 
 `shell "zsh"` 指定引擎代理哪个 shell，这样 rc 里的启动行不必再写 `--shell`；命令行的 `--shell` 优先级更高，两者都没有时回退到 `$SHELL`。
+
+`icon-padding "moderate"` 让图标与相邻内容之间空两格，缺省（`none`）空一格。对应 p10k 的 `POWERLEVEL9K_ICON_PADDING`，两档取值与 p10k 一致。
 
 ## 图标模式
 
@@ -86,7 +88,10 @@
 - 行内可以放 `text "…"` 静态文本，按 `text` 段样式渲染；其中的 `$VAR` / `${VAR}` 会展开成环境变量。
 - 需要空行就声明 `line {}`。
 - `layout { prompt-add-newline <N> … }` 在连续 prompt 之间插入 N 个空行（p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` + `_COUNT`）。写 `#true` 等于 1，写 `0` 关闭。
-- `layout { transient-prompt #true … }` 在命令提交瞬间把多行 header 折叠成单行 `❯`（p10k `TRANSIENT_PROMPT`）。仅 zsh 支持：依赖 `zle reset-prompt`，bash/fish 会忽略。
+- `layout { transient-prompt … }` 在命令提交瞬间把多行 header 折叠成单行 `❯`（p10k `TRANSIENT_PROMPT`）。仅 zsh 支持：依赖 `zle reset-prompt`，bash/fish 会忽略。取值三种：
+  - `#true` / `"always"` 每条命令后都折叠。旧主题写的是 `#true`，含义不变。
+  - `"same-dir"` 只在命令结束时 shell 仍位于起始目录才折叠。`cd` 之后那一轮保留 header，目录变化能看见。
+  - `#false` / 不写则关闭。
 - `layout { show-ruler #true … }` 在 header 之上再铺一整行标尺（p10k `SHOW_RULER`，缺省关）。字符取图标名 `ruler`（nerdfont/compatible 档 `─`、ascii 档 `-`），颜色取 `segments { ruler fg=… }`，没配就用 `defaults`。
 - `layout { right-indent <N> }` 让右栏右侧空出 N 格（p10k 空一格，因为 zsh 的 `ZLE_RPROMPT_INDENT` 默认是 1）。缺省 1，写 `0` 则右栏贴最后一格。整行内容加这个缩进放不下时，直接丢掉右栏（连带它的连接分隔符），不会溢出换行。
 
@@ -95,8 +100,10 @@
 - `segments { <名字> fg=……}` 的每个子节点配置一个段的样式，节点名即段名。段名由引擎定义，为与实现同名写成 snake_case（`command_execution_time`、`background_jobs`、`prompt_char`）。引用引擎没实现的段名不会报错，只是静默跳过。要新增段只能扩展引擎，或改用 `text`。
 - 样式属性：`fg`、`bg`、`bold`。
 - `state <NAME> fg=…` 是情境覆盖：样式 + 可选 `char`（按字符渲染的段用它，如 `state ERROR char="✘"`）；回退链见下。
-- `text-left` / `text-middle` / `text-right` 是附加文字槽，每个是子节点 `text-left "…"`（可选 `fg=…`）。它们把文字拼进段——`left` 在图标前，`middle` 在图标与内容之间（仅当段既有图标又有内容时渲染），`right` 在内容后——不单独成块。颜色缺省跟段走，`fg` 覆盖前景（bg/bold 仍跟段）。
+- `text-left` / `text-middle` / `text-right` 是附加文字槽，每个是子节点 `text-left "…"`（可选 `fg=…`）。它们把文字拼进段——`left` 在图标前，`middle` 在图标与内容之间（仅当段既有图标又有内容时渲染），`right` 在内容后——不单独成块。颜色缺省跟段走，`fg` 覆盖前景（bg/bold 仍跟段）。附加文字槽只塑造单个段，不能让两个段共用一个块（见下文 `_joined`）。
+- 段名带 `_joined` 后缀（`vcs_joined`）时与**左侧**的段共用一块：两者背景不同也不画分隔符（p10k 的 `<seg>_joined`）。该后缀只影响左侧边界，写在一行的第一个段上不起作用。背景本来就相同的两个段不需要它——引擎会在它们之间画细 `sub` 分隔线，这是 p10k 对同色相邻段的处理。
 - 图标不是段属性。每个段引用一个**图标名**（`dir` → `folder`、`vcs` → `git`、`time` → `time`…），按当前 `mode` 从引擎默认表取字符，也可在顶层 `icon {}` 里按图标名覆盖（见[图标模式](#图标模式)）。各段的默认：`dir` 文件夹、`time` 时钟、`background_jobs` 齿轮（任务数为 0 也显示）、`os` 发行版徽标（随发行版动态）、`vcs` git（或按远端域名，见 `vcs-remote-icons`）；语言 / 云 / 系统段映射到各自的图标名（go、python、aws…），其余无图标。
+- `icon-before-content #true|#false` 覆盖段图标摆在哪一侧。缺省由栏位决定：左栏的段图标在前，右栏的段图标在后，两栏都朝行的外侧读。该属性对单个段反转这一默认（p10k 的 `POWERLEVEL9K_<SEG>_ICON_BEFORE_CONTENT`）。
 - `content="…"` 预留。
 - `disabled #true` 让段保持解析和样式但跳过渲染；影响所有用到该段的位置。
 - 其余属性都进段的行为属性表，由该段的渲染代码读取。目前实现的：

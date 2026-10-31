@@ -174,7 +174,7 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 
 待办：
 
-- p10k 尚未实现的开关，均只在非默认取值下才有差异：`ICON_PADDING=moderate`、显式的 `ICON_BEFORE_CONTENT` 覆盖、`TRANSIENT_PROMPT=same-dir`（`transient-prompt #true` 等价于 p10k 的 `always`）、`LEGACY_ICON_SPACING`。按 p10k 默认配置渲染时已经一致。`DIR_MAX_LENGTH` 与 `DIR_MIN_COMMAND_COLUMNS(_PCT)` 无法实现：它们需要读取 zle 的 buffer，而引擎看不到。
+- p10k 的 `ICON_PADDING`、`ICON_BEFORE_CONTENT` 与 `TRANSIENT_PROMPT` 在各档取值下都与 p10k 一致，包括 `moderate`、显式的逐段覆盖与 `same-dir`。唯一没做的是 `LEGACY_ICON_SPACING`，它复刻的是 powerlevel9k 的布局 bug。`DIR_MAX_LENGTH` 与 `DIR_MIN_COMMAND_COLUMNS(_PCT)` 无法实现：它们需要读取 zle 的 buffer，而引擎看不到。
 - macOS 支持
 - daemon 与引擎的长期维护和加固
 
