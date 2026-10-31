@@ -3,13 +3,6 @@ use crate::protocol::{self, Request, Response};
 use crate::repo::RepoCache;
 use std::panic::AssertUnwindSafe;
 use std::process::exit;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
-/// Like gitstatusd, one request runs on its own thread, and a burst is capped instead of
-/// spawning without bound.
-const MAX_REQUEST_THREADS: usize = 512;
 
 /// Resident daemon state.
 ///
@@ -20,13 +13,7 @@ pub struct Daemon {
     pub options: Options,
     pub stdin_fd: i32,
     pub stdout_fd: i32,
-    /// Shared with the request threads. gitstatusd serializes requests under one repo lock,
-    /// and so does this: the lock is held across the scan that builds the response.
-    cache: Arc<Mutex<RepoCache>>,
-    /// Serializes response writes; a request thread owns the stream while it writes.
-    write_lock: Arc<Mutex<()>>,
-    /// Request threads in flight.
-    active: Arc<AtomicUsize>,
+    cache: RepoCache,
 }
 
 impl Daemon {
@@ -40,17 +27,19 @@ impl Daemon {
             .format_timestamp(None)
             .try_init();
         Daemon {
-            cache: Arc::new(Mutex::new(RepoCache::new(&options))),
-            write_lock: Arc::new(Mutex::new(())),
-            active: Arc::new(AtomicUsize::new(0)),
+            cache: RepoCache::new(&options),
             options,
             stdin_fd: 0,
             stdout_fd: 1,
         }
     }
 
-    /// Main loop: read request → hand it to a worker → keep reading, until EOF
-    /// or liveness fails.
+    /// Main loop: read request → process → write response, until EOF or
+    /// liveness fails.
+    ///
+    /// Requests run one at a time, in order. The original answers them from a single loop
+    /// (`gitstatus.cc`), and the protocol tests depend on that order. `-t` sizes the scan
+    /// thread pool inside the git status core, not the request count.
     ///
     /// - The buffer is split on MSG_SEP; one read may carry several messages.
     /// - With no complete message buffered, poll stdin with a 1s timeout and
@@ -65,7 +54,22 @@ impl Daemon {
                 let msg: Vec<u8> = buf.drain(..=pos).collect();
                 let bytes = &msg[..msg.len() - 1]; // strip MSG_SEP
                 let req = protocol::parse_request(bytes);
-                self.handle_request(req);
+                if let Err(err) = self.process_request(req) {
+                    match err {
+                        // The shell exited and closed the pipe: the original exits quietly.
+                        RequestError::Write(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                            exit(0)
+                        }
+                        RequestError::Write(e) => {
+                            eprintln!("gitstatusd: write: {e}");
+                            exit(1);
+                        }
+                        RequestError::Panic => {
+                            eprintln!("gitstatusd: error processing request");
+                            exit(1);
+                        }
+                    }
+                }
                 continue;
             }
             // Poll stdin, 1s timeout.
@@ -105,81 +109,56 @@ impl Daemon {
                 exit(0);
             }
             if nread == 0 {
-                // EOF: zsh closed the FIFO write end. In-flight requests still have to answer
-                // on stdout, so wait for them before exiting.
-                while self.active.load(Ordering::Acquire) > 0 {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
+                // EOF: zsh closed the FIFO write end.
                 exit(0);
             }
             buf.extend_from_slice(&chunk[..nread as usize]);
         }
     }
 
-    /// Run one request on its own thread. An empty dir yields a non-repo
-    /// response (the `}hello` handshake also takes this path); otherwise open
-    /// the repo — success gives a repo response, failure gives a non-repo
-    /// response.
-    fn handle_request(&mut self, req: Request) {
-        // Cap the burst: gitstatusd never runs more than 512 requests at once, and neither
-        // does this. The wait is rare and bounded by the scans themselves.
-        while self.active.load(Ordering::Acquire) >= MAX_REQUEST_THREADS {
-            std::thread::sleep(Duration::from_millis(1));
+    /// Handle one request and write the response.
+    ///
+    /// A panicking request is caught so the daemon reports what happened; the caller decides
+    /// whether the loop can continue. An empty dir yields a non-repo response (the `}hello`
+    /// handshake also takes this path); otherwise open the repo — success gives a repo
+    /// response, failure gives a non-repo response.
+    fn process_request(&mut self, req: Request) -> Result<(), RequestError> {
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let resp = match self.cache.get_or_open(&req.dir, req.dir_is_gitdir) {
+                Some(repo) => Response {
+                    id: req.id.clone(),
+                    is_repo: true,
+                    fields: Some(repo.build_fields(req.skip_index)),
+                },
+                None => Response {
+                    id: req.id.clone(),
+                    is_repo: false,
+                    fields: None,
+                },
+            };
+            self.write_response(&resp)
+        }));
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(RequestError::Write(err)),
+            Err(_) => Err(RequestError::Panic),
         }
-
-        let cache = Arc::clone(&self.cache);
-        let write_lock = Arc::clone(&self.write_lock);
-        let active = Arc::clone(&self.active);
-        let stdout_fd = self.stdout_fd;
-        active.fetch_add(1, Ordering::AcqRel);
-        std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                let resp = {
-                    let mut cache = cache
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
-                    match cache.get_or_open(&req.dir, req.dir_is_gitdir) {
-                        Some(repo) => Response {
-                            id: req.id.clone(),
-                            is_repo: true,
-                            fields: Some(repo.build_fields(req.skip_index)),
-                        },
-                        None => Response {
-                            id: req.id.clone(),
-                            is_repo: false,
-                            fields: None,
-                        },
-                    }
-                };
-                let _writing = write_lock
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                write_response(stdout_fd, &resp)
-            }));
-            active.fetch_sub(1, Ordering::AcqRel);
-            match result {
-                Ok(Ok(())) => {}
-                // The shell exited and closed the pipe: the original exits quietly.
-                Ok(Err(err)) if err.kind() == std::io::ErrorKind::BrokenPipe => exit(0),
-                Ok(Err(err)) => {
-                    eprintln!("gitstatusd: write: {err}");
-                    exit(1);
-                }
-                Err(_) => {
-                    eprintln!("gitstatusd: error processing request");
-                    exit(1);
-                }
-            }
-        });
     }
 
-    /// Evict expired repos. A request thread may hold the cache lock while it scans, so this
-    /// waits for that scan and no longer.
-    fn evict_expired(&self) {
-        self.cache
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .evict_expired();
+    /// Write a serialized response to stdout in a loop (short writes, EINTR).
+    ///
+    /// The guard makes the write all-or-nothing: a response that stops midway
+    /// would desynchronize every later reply on the stream.
+    fn write_response(&self, resp: &Response) -> std::io::Result<()> {
+        let bytes = protocol::serialize_response(resp);
+        let mut guard = ResponseGuard::new(self.stdout_fd);
+        guard.write_all(&bytes)?;
+        guard.complete();
+        Ok(())
+    }
+
+    fn evict_expired(&mut self) {
+        self.cache.evict_expired();
     }
 
     /// Liveness probe (`-l` lock fd + `-p` parent pid). Any failure → false,
@@ -210,16 +189,12 @@ impl Daemon {
     }
 }
 
-/// Write a serialized response to stdout in a loop (short writes, EINTR).
-///
-/// The guard makes the write all-or-nothing: a response that stops midway
-/// would desynchronize every later reply on the stream.
-fn write_response(fd: i32, resp: &Response) -> std::io::Result<()> {
-    let bytes = protocol::serialize_response(resp);
-    let mut guard = ResponseGuard::new(fd);
-    guard.write_all(&bytes)?;
-    guard.complete();
-    Ok(())
+/// Why a request could not be answered.
+enum RequestError {
+    /// The response could not be written completely.
+    Write(std::io::Error),
+    /// The handler panicked; the response may be partial.
+    Panic,
 }
 
 /// Writes one protocol response and kills the daemon if it cannot finish.
