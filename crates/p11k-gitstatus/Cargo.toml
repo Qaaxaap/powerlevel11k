@@ -7,16 +7,17 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# 性能内核（openat/fstatat/fcntl/kill/getpgrp）需要 libc。
+# The performance core (openat/fstatat/fcntl/kill/getpgrp) needs libc.
 libc.workspace = true
-# git 对象模型（HEAD/分支/远端/tag/stash/commit message/revwalk），
-# 对应原版对 libgit2 的使用；性能内核（index 解析与扫描）在其上手工实现。
+# git object model (HEAD/branches/remotes/tags/stashes/commit messages/revwalk), matching the
+# original's use of libgit2. The performance core (index parsing and scanning) sits on top of it,
+# written by hand.
 git2.workspace = true
 log = "0.4.35"
 env_logger = "0.11.11"
-# raw FFI：dirty diff 的 notify_cb/range_start/range_end（git2 未绑定），
-# 对齐原版 StartDirtyScan 的区间优化。
+# Raw FFI: notify_cb/range_start/range_end for the dirty diff (git2 does not bind them),
+# matching the original StartDirtyScan range optimization.
 
 [dev-dependencies]
-# 测试用临时目录。
+# Temporary directories for tests.
 tempfile = "3"

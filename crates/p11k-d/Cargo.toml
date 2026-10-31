@@ -14,7 +14,7 @@ path = "src/main.rs"
 p11k-gitstatus = { path = "../p11k-gitstatus" }
 
 [dev-dependencies]
-# 集成测试用临时 git 仓库。
+# Temporary git repositories for the integration tests.
 tempfile = "3"
-# 对拍测试用 git2 构造确定状态的仓库 fixture。
+# Repository fixtures with a fixed state, built with git2 for the differential tests.
 git2 = "0.21"

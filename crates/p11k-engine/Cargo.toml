@@ -22,6 +22,7 @@ unicode-width = { workspace = true }
 [build-dependencies]
 
 [dev-dependencies]
-# 集成测试：在 pty 里跑引擎二进制，断言透传与 prompt 输出。
+# Integration tests: run the engine binary in a pty and assert the passthrough and the prompt
+# output.
 libc = { workspace = true }
 portable-pty = { workspace = true }
