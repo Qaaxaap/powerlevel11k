@@ -181,6 +181,10 @@ struct SegmentText {
     /// Whether the text already carries the segment's trailing padding; segments without a
     /// background get no extra space between them.
     padded: bool,
+    /// The segment was declared with the `_joined` suffix: it shares a block with the segment
+    /// to its left, so no separator is drawn between them even when their backgrounds differ
+    /// (p10k `_p9k_left_join` / `_p9k_right_join`; `p10k.zsh:681-691`).
+    joined_left: bool,
 }
 
 /// Renders the header as per-line content (each line = left segments + right-aligned right
@@ -293,8 +297,10 @@ fn render_row(
     elements
         .iter()
         .map(|el| match el {
-            Element::Seg(name) => render_segment(config, name, info, vcs, right, dir_budget),
-            Element::Joined(name) => render_segment(config, name, info, vcs, right, dir_budget),
+            Element::Seg(name) => render_segment(config, name, info, vcs, right, dir_budget, false),
+            Element::Joined(name) => {
+                render_segment(config, name, info, vcs, right, dir_budget, true)
+            }
             Element::Text(t) => {
                 let mut style = config
                     .segment("text")
@@ -310,6 +316,7 @@ fn render_row(
                     text: paint(&expand_env(t), &style),
                     style,
                     padded: false,
+                    joined_left: false,
                 }
             }
         })
@@ -325,6 +332,7 @@ fn render_segment(
     vcs: Option<&GitStatus>,
     right: bool,
     dir_budget: Option<usize>,
+    joined_left: bool,
 ) -> SegmentText {
     let seg = config.segment(name);
     let mut style = seg.effective_style(None, &config.defaults);
@@ -598,6 +606,7 @@ fn render_segment(
             text: String::new(),
             style,
             padded: false,
+            joined_left,
         };
     }
     let mut out = String::new();
@@ -613,6 +622,7 @@ fn render_segment(
         text: out,
         style,
         padded: true,
+        joined_left,
     }
 }
 
@@ -2666,7 +2676,7 @@ fn assemble_row(
         // separator (same bg → sub, different color / current has none → segment); previous
         // has none → a space. Segments carry their trailing padding (see render_segment), so no
         // extra space is added, avoiding doubles (p10k uses one space between them).
-        if has_left {
+        if has_left && !s.joined_left {
             let prev_has = prev_bg != Color::Default;
             if prev_has {
                 let same = s.style.bg != Color::Default && s.style.bg == prev_bg;
@@ -2715,7 +2725,7 @@ fn assemble_row(
             ));
         }
         for (i, s) in parts.iter().enumerate() {
-            if i > 0 {
+            if i > 0 && !s.joined_left {
                 // Inter-segment separation on the right: same color → right_sub (the segment
                 // foreground drawn on the segment background), different → right_segment
                 // (left triangle, foreground (the triangle block) = the current (right)
@@ -2928,6 +2938,44 @@ mod tests {
         let j = head.rfind("[38;5;")?;
         let rest = &head[j + 6..];
         Some(rest[..rest.find('m')?].to_string())
+    }
+
+    /// A `_joined` segment shares a block with the one to its left: no `segment` arrow and no
+    /// `sub` line between them, even with different backgrounds (p10k's `elif (( joined ))`,
+    /// `p10k.zsh:681-691`).
+    #[test]
+    fn joined_segment_draws_no_separator() {
+        let seps = crate::config::Separators {
+            segment: ">".into(),
+            sub: "|".into(),
+            end: String::new(),
+            ..Default::default()
+        };
+        let seg = |text: &str, bg: u8, joined_left: bool| SegmentText {
+            text: text.to_string(),
+            style: Style {
+                bg: Color::Xterm(bg),
+                ..Default::default()
+            },
+            padded: true,
+            joined_left,
+        };
+
+        let plain = assemble_row(&[seg("A", 1, false), seg("B", 2, false)], &[], 0, &seps, 0);
+        assert!(
+            plain.contains('>'),
+            "different backgrounds without `_joined` should draw the segment arrow, got {plain:?}"
+        );
+
+        let joined = assemble_row(&[seg("A", 1, false), seg("B", 2, true)], &[], 0, &seps, 0);
+        assert!(
+            !joined.contains('>'),
+            "`_joined` should suppress the segment arrow, got {joined:?}"
+        );
+        assert!(
+            !joined.contains('|'),
+            "`_joined` should suppress the sub line too, got {joined:?}"
+        );
     }
 
     #[test]
