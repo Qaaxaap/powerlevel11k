@@ -1,9 +1,5 @@
-//! The announce-file protocol: the shell writes one line per prompt event, the engine reads
-//! them in order, plus the byte-level helpers the pass-through stream needs.
-
-use std::fs::OpenOptions;
-use std::io::{self, Read};
-use std::path::Path;
+//! The announce protocol: the shell writes one line per prompt event into a FIFO, the engine
+//! reads them in order, plus the byte-level helpers the pass-through stream needs.
 
 use crate::theme::HeaderInfo;
 
@@ -19,34 +15,44 @@ pub enum AnnMsg {
     VimMode(String),
 }
 
-/// Read new lines from the announce file and parse them into prompt messages.
+/// Read pending lines from the announce FIFO and parse them into prompt messages.
 /// Line format (first field is the message type, the rest are tab-separated):
 /// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`, `r`, `v\t<keymap>`.
 /// Missing fields are tolerated: a failed `<exit>` parse is None, a missing `<cwd>` is an
 /// empty string, missing or invalid `<jobs>`/`<history>` are 0. Only zsh and pwsh send
 /// `<history>`; bash/fish have no such column.
-pub fn drain_announce(path: &Path, processed: &mut u64) -> Vec<AnnMsg> {
-    let mut out = Vec::new();
-    let Ok(mut f) = OpenOptions::new().read(true).open(path) else {
-        return out;
-    };
-    let Ok(len) = f.metadata().map(|m| m.len()) else {
-        return out;
-    };
-    if len <= *processed {
-        return out;
-    }
-    use std::io::Seek;
-    if f.seek(io::SeekFrom::Start(*processed)).is_err() {
-        return out;
-    }
+///
+/// The caller waits for the FIFO to become readable with poll, so one drain takes everything
+/// that is buffered and returns.
+pub fn drain_announce(fd: i32) -> Vec<AnnMsg> {
     let mut buf = Vec::new();
-    if f.read_to_end(&mut buf).is_err() {
-        return out;
+    loop {
+        let mut chunk = [0u8; 1024];
+        // SAFETY: reads into a stack array; n bounds the slice.
+        let n = unsafe { libc::read(fd, chunk.as_mut_ptr().cast(), chunk.len()) };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            // EAGAIN: nothing buffered. The caller already knows it is readable, so a short
+            // read is normal.
+            break;
+        }
+        if n == 0 {
+            // Every writer closed. The engine keeps its own write end, so this is not EOF
+            // for the read end; it only means this drain saw no data.
+            break;
+        }
+        buf.extend_from_slice(&chunk[..n as usize]);
     }
-    *processed = len;
+    parse_announce_lines(&buf)
+}
 
-    let text = String::from_utf8_lossy(&buf);
+/// Parse announce lines (see [`drain_announce`]).
+fn parse_announce_lines(buf: &[u8]) -> Vec<AnnMsg> {
+    let mut out = Vec::new();
+    let text = String::from_utf8_lossy(buf);
     for line in text.lines() {
         let mut parts = line.split('\t');
         match parts.next() {
