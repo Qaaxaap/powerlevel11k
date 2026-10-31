@@ -2,16 +2,26 @@
   description = "powerlevel11k (p11k) — a Rust successor to powerlevel10k";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # The devShell pins the MSRV from `rust-toolchain.toml`; the release workflow uses the same
+  # version through rustup. nixpkgs alone would drift to whatever Rust it packages.
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, rust-overlay }:
     let
       systems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
       version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
-      eachSystem = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
+      eachSystem =
+        f:
+        nixpkgs.lib.genAttrs systems (
+          system: f (import nixpkgs { inherit system; overlays = [ (import rust-overlay) ]; })
+        );
       localesOf =
         pkgs:
         pkgs.glibcLocales.override {
@@ -42,10 +52,7 @@
       devShells = eachSystem (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            cargo
-            rustc
-            clippy
-            rustfmt
+            (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
             rust-analyzer
             gettext
             zsh
@@ -71,7 +78,6 @@
             typos
             git
             pkg-config
-            openssl
             cmake
             # `just bench-iai` counts instructions with Callgrind: the harness needs the runner,
             # and the runner needs valgrind. Both come from here so no setup step is involved.
@@ -95,7 +101,6 @@
             gettext
             git
           ];
-          buildInputs = with pkgs; [ openssl ];
           nativeCheckInputs = with pkgs; [
             zsh
             bashInteractive
@@ -135,7 +140,6 @@
             cmake
             gettext
           ];
-          buildInputs = with pkgs; [ openssl ];
           doCheck = false;
           P11K_LOCALEDIR = "${placeholder "out"}/share/locale";
           postInstall = ''

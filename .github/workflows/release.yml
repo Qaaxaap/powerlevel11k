@@ -4,33 +4,51 @@ on:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    runs-on: ubuntu-22.04
+  build:
+    runs-on: ubuntu-24.04
+    # The binaries link the container's glibc, so building on 22.04 keeps the minimum at 2.35
+    # and the packages install on older distributions. The runner is only the host.
+    container:
+      image: ubuntu:22.04
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
+      - name: Install Rust
+        run: |
+          apt-get update
+          apt-get install -y curl cmake pkg-config gettext
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+            sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       - name: Build
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake pkg-config libssl-dev gettext
           export P11K_LOCALEDIR=/usr/share/locale
           cargo build --release --locked
 
       - name: Stage
         run: |
           set -eu
-          version="${GITHUB_REF_NAME#v}"
-          cargo_version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
-          if [ "$version" != "$cargo_version" ]; then
-            echo "tag $GITHUB_REF_NAME does not match Cargo.toml ($cargo_version)" >&2
-            exit 1
+          version=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [ "$tag_version" != "$version" ]; then
+              echo "tag $GITHUB_REF_NAME does not match Cargo.toml ($version)" >&2
+              exit 1
+            fi
           fi
           arch=amd64
           deb_version="${version//-/\~}"
@@ -60,7 +78,7 @@ jobs:
             echo "Homepage: https://github.com/Qaaxaap/powerlevel11k"
             echo "Section: utils"
             echo "Priority: optional"
-            echo "Depends: libc6, libgcc-s1, libssl3 | libssl3t64"
+            echo "Depends: libc6 (>= 2.35), libgcc-s1"
             echo "Description: powerlevel10k-compatible prompt engine"
             echo " p11k owns the terminal as a pty host and draws the prompt header while"
             echo " the shell keeps drawing the input line and announces when a prompt is"
@@ -87,9 +105,31 @@ jobs:
             done
           } > runtime-dependencies.md
 
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            p11k-*.tar.gz
+            p11k_*.deb
+            runtime-dependencies.md
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -eu
           version="${GITHUB_REF_NAME#v}"
