@@ -2,7 +2,8 @@
   "projectName": "powerlevel11k",
   "projectOwner": "Qaaxaap",
   "files": [
-    "README.md"
+    "README.md",
+    "README.zh.md"
   ],
   "commitType": "docs",
   "commitConvention": "angular",

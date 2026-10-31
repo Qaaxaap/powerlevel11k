@@ -190,6 +190,26 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 
 构建与测试环境、提交规范、翻译流程与发布流程见 [CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)。
 
+## 贡献者
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Qaaxaap"><img src="https://avatars.githubusercontent.com/u/175310223?v=4&size=100" width="100px" height="100px" alt="Qaaxaap"/><br /><sub><b>Qaaxaap</b></sub></a><br /><a href="https://github.com/Qaaxaap/powerlevel11k/commits?author=Qaaxaap" title="Code">💻</a> <a href="https://github.com/Qaaxaap/powerlevel11k/commits?author=Qaaxaap" title="Documentation">📖</a> <a href="https://github.com/Qaaxaap/powerlevel11k/commits?author=Qaaxaap" title="Tests">⚠️</a> <a href="#infra-Qaaxaap" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#translation-Qaaxaap" title="Translation">🌍</a> <a href="https://github.com/Qaaxaap/powerlevel11k/pulls?q=is%3Apr+reviewed-by%3AQaaxaap" title="Reviewed Pull Requests">👀</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://revitalize.top"><img src="https://avatars.githubusercontent.com/u/247487531?v=4&size=100" width="100px" height="100px" alt="Cwhirly"/><br /><sub><b>Cwhirly</b></sub></a><br /><a href="https://github.com/Qaaxaap/powerlevel11k/commits?author=Cwhirly" title="Code">💻</a> <a href="https://github.com/Qaaxaap/powerlevel11k/commits?author=Cwhirly" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/RafaelJust"><img src="https://avatars.githubusercontent.com/u/74719647?v=4&size=100" width="100px" height="100px" alt="RafaelJust"/><br /><sub><b>RafaelJust</b></sub></a><br /><a href="https://github.com/Qaaxaap/powerlevel11k/commits?author=RafaelJust" title="Documentation">📖</a> <a href="https://github.com/Qaaxaap/powerlevel11k/issues?q=author%3ARafaelJust" title="Bug reports">🐛</a> <a href="#platform-RafaelJust" title="Packaging/porting to new platform">📦</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
 ## 许可证
 
 LGPL-3.0-or-later。[COPYING.LESSER](COPYING.LESSER) 是许可证本身，[COPYING](COPYING) 是它所扩展的 GPL-3.0。
