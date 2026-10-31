@@ -181,7 +181,7 @@ Done:
 
 Roadmap:
 
-- the p10k knobs that are still missing, all of them differing only at non-default settings: `ICON_PADDING=moderate`, explicit `ICON_BEFORE_CONTENT` overrides, `TRANSIENT_PROMPT=same-dir` (`transient-prompt #true` equals p10k's `always`) and `LEGACY_ICON_SPACING`. Rendering under p10k's defaults already matches. `DIR_MAX_LENGTH` and `DIR_MIN_COMMAND_COLUMNS(_PCT)` cannot be implemented: they need to read zle's buffer, which the engine never sees.
+- `ICON_PADDING`, `ICON_BEFORE_CONTENT` and `TRANSIENT_PROMPT` match p10k at every setting, including `moderate`, explicit per-segment overrides and `same-dir`. The one p10k knob left out is `LEGACY_ICON_SPACING`, which reproduces a powerlevel9k layout bug. `DIR_MAX_LENGTH` and `DIR_MIN_COMMAND_COLUMNS(_PCT)` cannot be implemented: they need to read zle's buffer, which the engine never sees.
 - macOS support
 - long-term maintenance and hardening of the daemon and the engine
 
