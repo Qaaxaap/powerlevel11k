@@ -112,6 +112,12 @@ pub fn render_header_cfg(
 /// the prompt string, so the real content is written over them, and `\x1b8` returns to the input
 /// line cursor. Resize redraws and the first fill-in after the signal share this code.
 ///
+/// `last` holds the lines the previous paint wrote. An asynchronous git result arrives after the
+/// header was already painted with the previous result, so when the new lines match it the paint
+/// would write the same bytes onto the same rows. `last` lets the call skip that paint. A caller
+/// that must repaint regardless, because the rows were cleared in between, sets `last` to `None`
+/// first; the call then paints and records the new lines.
+///
 /// Cursor save/restore uses the 7-bit `ESC 7` / `ESC 8` form of DECSC/DECRC rather than the
 /// `CSI s` / `CSI u` aliases: nvim's built-in terminal (libvterm) implements only the 7-bit
 /// form, so with the aliases the restore lands in the top-left corner and the whole prompt
@@ -122,12 +128,17 @@ pub fn redraw_header_cfg(
     config: &crate::config::Config,
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
+    last: &mut Option<Vec<String>>,
 ) -> io::Result<()> {
     let lines = crate::render::render_header_lines(config, info, vcs, cols);
+    if last.as_ref() == Some(&lines) {
+        return Ok(());
+    }
     let n = lines.len().max(1);
     write!(out, "\x1b7\x1b[{}A", n)?;
     header_body(out, &lines)?;
     write!(out, "\x1b8")?;
+    *last = Some(lines);
     Ok(())
 }
 
@@ -165,5 +176,45 @@ mod tests {
             s.ends_with("\x1b]133;B\x07"),
             "should end with the OSC 133 B marker (telling the terminal the prompt is ready)"
         );
+    }
+
+    /// An async git result that renders the same lines as the prompt-time paint must not write
+    /// again: the bytes and the rows are identical. Clearing the cache forces the paint, which is
+    /// what a caller does when the rows were cleared in between.
+    #[test]
+    fn redraw_paints_only_when_the_lines_change() {
+        let config =
+            crate::config::Config::parse("layout {\n    left { line { dir } }\n}\n").unwrap();
+        let header = |cwd: &str| HeaderInfo {
+            exit_code: Some(0),
+            cwd: cwd.to_string(),
+            exec_seconds: 0.0,
+            jobs: 0,
+            history: 0,
+            pipestatus: Vec::new(),
+        };
+        let tmp = header("/tmp");
+        let var = header("/var");
+
+        let mut out = Vec::new();
+        let mut last = None;
+        redraw_header_cfg(&mut out, 80, &config, &tmp, None, &mut last).unwrap();
+        let first = out.len();
+        assert!(first > 0, "the first paint writes the header");
+
+        redraw_header_cfg(&mut out, 80, &config, &tmp, None, &mut last).unwrap();
+        assert_eq!(
+            out.len(),
+            first,
+            "identical lines must not be painted again"
+        );
+
+        redraw_header_cfg(&mut out, 80, &config, &var, None, &mut last).unwrap();
+        let second = out.len();
+        assert!(second > first, "changed lines must repaint");
+
+        last = None;
+        redraw_header_cfg(&mut out, 80, &config, &var, None, &mut last).unwrap();
+        assert!(out.len() > second, "an empty cache must force the paint");
     }
 }
