@@ -78,3 +78,39 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Check
         run: cargo check --all-targets --locked
+
+  # The flake declares aarch64-linux; this job is what makes that true. The runner is native
+  # arm64, so nothing here needs qemu or a cross toolchain.
+  arm:
+    name: aarch64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-aarch64-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-aarch64-
+          gc-max-store-size-linux: 2G
+
+      - name: Check
+        run: nix develop --command just verify
+
+      - name: Flake check
+        run: nix flake check
+
+      - name: Package
+        run: |
+          out=$(nix build --no-link --print-out-paths)
+          for bin in p11k p11k-d; do
+            test -x "$out/bin/$bin"
+          done
+          test -f "$out/share/locale/zh_CN/LC_MESSAGES/p11k.mo"
+          "$out/bin/p11k" --version
