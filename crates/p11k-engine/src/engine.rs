@@ -140,7 +140,7 @@ pub fn run() -> anyhow::Result<()> {
     cmd.env("P11K_ENGINE", "1");
     // transient is zsh-only: hand the shell the single-line prompt the engine precomputes
     // (zsh %F escapes); zle-line-finish swaps PROMPT + reset-prompt to fold it in sync.
-    if config.layout.transient_prompt && shell == Shell::Zsh {
+    if config.layout.transient_prompt.enabled() && shell == Shell::Zsh {
         cmd.env(
             "P11K_TRANSIENT_PROMPT",
             crate::render::transient_prompt_zsh(&config),
@@ -229,6 +229,8 @@ pub fn run() -> anyhow::Result<()> {
     let mut at_prompt = false;
     // Time of the last enter, used by the next precmd to compute command duration.
     let mut last_enter: Option<std::time::Instant> = None;
+    // Workdir of the previous precmd, for the `same-dir` transient prompt.
+    let mut last_prompt_cwd: Option<String> = None;
     // Defer the prompt repaint after a resize: wait for zle's repainted prompt and buffer to
     // pass through (~60ms) before painting the header, so it is not painted before zle has
     // moved the input line into place.
@@ -435,9 +437,25 @@ pub fn run() -> anyhow::Result<()> {
                     // could not tell `OK_PIPE` from `OK`.
                     let state_name = crate::render::prompt_state(&config, Some(&info));
                     let prefix = Geometry::prefix_for(&config, shell, state_name);
+                    // Transient prompt: `same-dir` folds the header only when the command left
+                    // the shell where it was (p10k's `always` / `same-dir` split). The engine
+                    // decides because it already knows both directories; the shell only reads
+                    // the answer.
+                    let transient_on = match config.layout.transient_prompt {
+                        crate::config::TransientPrompt::Off => false,
+                        crate::config::TransientPrompt::Always => true,
+                        // The first prompt has no previous directory to compare against, so it
+                        // folds the way `always` would.
+                        crate::config::TransientPrompt::SameDir => {
+                            last_prompt_cwd.as_deref() == Some(info.cwd.as_str())
+                                || last_prompt_cwd.is_none()
+                        }
+                    };
+                    last_prompt_cwd = Some(info.cwd.clone());
                     let mut ack = File::create(&state.ack)?;
                     writeln!(ack, "{}", geometry.header_rows)?;
                     writeln!(ack, "{prefix}")?;
+                    writeln!(ack, "{}", u8::from(transient_on))?;
                     // Compute git in the background and repaint the header asynchronously when
                     // it finishes.
                     git_gen += 1;

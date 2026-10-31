@@ -27,6 +27,9 @@ _p11k_precmd() {
   # strings. Reading them every prompt is what lets a reload change either without a restart.
   local -a _ack=("${(@f)$(<"$P11K_ACK")}")
   rm -f "$P11K_ACK"
+  # Third ack line: whether this prompt folds (transient). The hook that folds runs later, after
+  # the ack is gone, so the answer is kept in a global.
+  typeset -g _p11k_fold=${_ack[3]:-1}
   # The prompt is the blank rows + prompt-ready signal + the prefix for this exit code. The
   # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
   # painting it later would overwrite the first characters on a completion redraw.
@@ -130,7 +133,10 @@ _p11k_line_finish() {
     # The previous widget runs inside the guard too: a re-entrant call must not run the plugin
     # hook a second time.
     zle ._p11k_prev_line_finish -- "$@"
-    if [[ -n "${P11K_TRANSIENT_PROMPT:-}" ]]; then
+    # The engine decides whether this prompt folds: it knows the previous and the current
+    # workdir, so `transient-prompt "same-dir"` needs no bookkeeping here. The answer arrived in
+    # the ack at prompt time and was kept in `_p11k_fold`, because the ack is gone by now.
+    if [[ -n "${P11K_TRANSIENT_PROMPT:-}" && "${_p11k_fold:-1}" == 1 ]]; then
       PROMPT="$P11K_TRANSIENT_PROMPT"
       RPROMPT=''
       # `.reset-prompt` names the builtin widget.

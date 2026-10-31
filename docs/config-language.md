@@ -86,7 +86,10 @@ The `os` badge is dynamic per distro (arch/ubuntu/…) and is not routed through
 - A line may also contain `text "…"` static text, styled with the `text` segment. `$VAR` / `${VAR}` inside expand to environment variables.
 - For an empty row, declare `line {}`.
 - `layout { prompt-add-newline <N> … }` inserts N blank lines between consecutive prompts (p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` plus `_COUNT`, "loose" layout). `#true` means 1; `0` turns it off.
-- `layout { transient-prompt #true … }` folds the multi-line header down to a single-line `❯` the moment a command is submitted (p10k `TRANSIENT_PROMPT`). zsh-only: it depends on `zle reset-prompt`, so bash/fish ignore it.
+- `layout { transient-prompt … }` folds the multi-line header down to a single-line `❯` the moment a command is submitted (p10k `TRANSIENT_PROMPT`). zsh-only: it depends on `zle reset-prompt`, so bash/fish ignore it. Three values:
+  - `#true` / `"always"` folds after every command. `#true` is what earlier themes wrote and still means this.
+  - `"same-dir"` folds only when the command left the shell in the directory it started in. A `cd` keeps the header for that one prompt, so the directory change stays visible.
+  - `#false` / absent turns it off.
 - `layout { show-ruler #true … }` lays a full-width ruler line above the header (p10k `SHOW_RULER`, off by default). The glyph comes from the `ruler` icon (nerdfont/compatible `─`, ascii `-`) and the color from `segments { ruler fg=… }`, falling back to `defaults`.
 - `layout { right-indent <N> }` keeps N columns free to the right of the right column (p10k leaves one because zsh's `ZLE_RPROMPT_INDENT` defaults to 1). Default 1; `0` butts the right column against the last column. A row whose content plus this indent does not fit drops the right column (and its connecting separator) instead of scrolling.
 

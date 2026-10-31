@@ -681,7 +681,11 @@ fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>>
     )?;
     match b {
         Step::Answer(b) => {
-            cfg.layout.transient_prompt = b;
+            cfg.layout.transient_prompt = if b {
+                crate::config::TransientPrompt::Always
+            } else {
+                crate::config::TransientPrompt::Off
+            };
             Ok(Step::Answer(()))
         }
         s => Ok(early(s)),
