@@ -30,7 +30,7 @@ verify: fmt-check lint test deny spell
 
 # Build the binaries.
 build:
-    cargo build --release
+    cargo build --release --locked
 
 # Run the wall-clock benchmark. Quote its numbers with the machine they came from; the machine's
 # load shows up in them.

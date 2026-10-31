@@ -100,6 +100,8 @@
         };
       });
 
+      formatter = eachSystem (pkgs: pkgs.nixfmt-rfc-style);
+
       checks = eachSystem (pkgs: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "p11k-tests";

@@ -22,10 +22,10 @@ pot="$po/p11k.pot"
 keywords=(--keyword=t:1 --keyword=msgid:1)
 
 sources=()
-for f in "$src"/*.rs; do
+while IFS= read -r -d '' f; do
   [[ $(basename "$f") == i18n.rs ]] && continue
-  sources+=("crates/p11k-engine/src/$(basename "$f")")
-done
+  sources+=("${f#"$root"/}")
+done < <(find "$src" -name '*.rs' -print0 | sort -z)
 
 # Reproducible: POT-Creation-Date comes from the last commit time, so extract does not rewrite a
 # line on every run.
@@ -52,7 +52,7 @@ extract)
     --from-code=UTF-8 \
     --package-name=p11k \
     --package-version="${version:-0.0.0}" \
-    --msgid-bugs-address="https://github.com/powerlevel11k/p11k/issues" \
+    --msgid-bugs-address="https://github.com/Qaaxaap/powerlevel11k/issues" \
     --sort-by-file \
     --output="$pot" \
     "${sources[@]}" 2>"$err"

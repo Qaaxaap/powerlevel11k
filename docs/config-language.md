@@ -1,5 +1,7 @@
 # Config language
 
+[中文](config-language.zh.md)
+
 Themes are written in KDL v2 and passed with `--config <file>`. The rules below govern any change to config parsing or rendering, and they double as a config reference.
 
 ## Syntax

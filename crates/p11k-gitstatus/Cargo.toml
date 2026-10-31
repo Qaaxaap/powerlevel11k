@@ -2,6 +2,7 @@
 name = "p11k-gitstatus"
 description = "Byte-compatible Rust reimplementation of the gitstatusd protocol and engine"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

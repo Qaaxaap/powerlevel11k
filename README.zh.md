@@ -1,6 +1,6 @@
 # powerlevel11k (p11k)
 
-[English](README.md)·[![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml)·[![LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](COPYING.LESSER)
+[English](README.md) · [![All Contributors](https://img.shields.io/github/all-contributors/Qaaxaap/powerlevel11k?color=ee8449&style=flat-square)](#贡献者) · [![CI](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml/badge.svg)](https://github.com/Qaaxaap/powerlevel11k/actions/workflows/ci.yml) · [![LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](COPYING.LESSER)
 
 用 Rust 重写的 powerlevel10k 提示符引擎。
 

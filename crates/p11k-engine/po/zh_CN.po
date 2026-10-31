@@ -8,7 +8,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: p11k\n"
-"Report-Msgid-Bugs-To: https://github.com/powerlevel11k/p11k/issues\n"
+"Report-Msgid-Bugs-To: https://github.com/Qaaxaap/powerlevel11k/issues\n"
 "POT-Creation-Date: 2026-10-24 00:47+0800\n"
 "PO-Revision-Date: 2025-01-01 00:00+0000\n"
 "Last-Translator: p11k\n"

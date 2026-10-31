@@ -5,7 +5,10 @@
 # check instead of passing unnoticed.
 
 [graph]
-targets = [{ triple = "x86_64-unknown-linux-gnu" }]
+targets = [
+  { triple = "x86_64-unknown-linux-gnu" },
+  { triple = "aarch64-unknown-linux-gnu" },
+]
 
 [advisories]
 version = 2
@@ -45,7 +48,9 @@ allow = [
 
 [bans]
 multiple-versions = "warn"
-wildcards = "allow"
+wildcards = "deny"
+# The workspace crates are private and depend on each other by path only.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"
