@@ -8,7 +8,7 @@
 
 ## 开发环境
 
-构建与测试所需的一切固定在 `flake.nix` 里。进入 devShell 后使用 `justfile` 的配方，`just` 不带参数会列出全部配方。
+构建与测试所需的一切固定在 `flake.nix` 里。demo 录制需要额外工具，见[演示图片](#演示图片)。进入 devShell 后使用 `justfile` 的配方，`just` 不带参数会列出全部配方。
 
 ```bash
 nix develop
@@ -47,7 +47,7 @@ just bench-iai   # 指令数，Callgrind
 
 `just bench-iai` 输出指令数。同一份二进制重复跑，两个 50 文件的 case 逐位一致，5000 文件的 case 差 0.03%（`readdir` 顺序取决于文件系统）。判断改动快慢以指令数为准，差异小于 0.1% 视为噪声。
 
-两个 harness 都在临时目录里自建 fixture，不依赖环境变量，也不需要仓库之外的目录。CI 通过 `cargo check --all-targets` 编译它们，但不运行，因为计时需要在安静机器上做。
+两个 harness 都在临时目录里自建 fixture，不依赖环境变量，也不需要仓库之外的目录。CI 通过 `cargo clippy --all-targets` 编译它们，但不运行，因为计时需要在安静机器上做。
 
 devShell 提供 Valgrind 与 `iai-callgrind-runner`。不在 Nix 环境里时，自己安装：
 

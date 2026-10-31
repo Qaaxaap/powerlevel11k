@@ -83,7 +83,18 @@
             # and the runner needs valgrind. Both come from here so no setup step is involved.
             valgrind
             (iaiCallgrindRunner pkgs)
+            # The issue #29 regression case drives zsh-autocomplete and zsh-syntax-highlighting;
+            # the gitstatusd differential tests compare against the original binary. Without these
+            # the tests skip, and a local run would not match CI.
+            zsh-autocomplete
+            zsh-syntax-highlighting
+            gitstatus
           ];
+          shellHook = ''
+            export P11K_TEST_ZSH_AUTOCOMPLETE=${pkgs.zsh-autocomplete}/share/zsh-autocomplete/zsh-autocomplete.plugin.zsh
+            export P11K_TEST_ZSH_SYNTAX_HIGHLIGHTING=${pkgs.zsh-syntax-highlighting}/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+            export GITSTATUSD_PATH=${pkgs.gitstatus}/bin/gitstatusd
+          '';
           LOCALE_ARCHIVE = "${localesOf pkgs}/lib/locale/locale-archive";
           RUST_BACKTRACE = "1";
         };

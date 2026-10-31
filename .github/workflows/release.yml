@@ -21,6 +21,11 @@ jobs:
     # and the packages install on older distributions. The runner is only the host.
     container:
       image: ubuntu:22.04
+    # A container job defaults to `sh` (dash here), which rejects the bash parameter expansion
+    # the Stage step uses. Pin bash for every run step.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
@@ -121,6 +126,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -137,7 +144,21 @@ jobs:
           case "$version" in
             *-*) prerelease="--prerelease" ;;
           esac
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+          # CHANGELOG.md is the single source for release notes. When the changelog has no
+          # section for this tag yet (the tag was cut before `just changelog <tag>`), fall back
+          # to the notes GitHub generates from the pull requests.
+          notes=$(mktemp)
+          awk -v v="$version" '
+            /^## \[/ { keep = index($0, "[" v "]") > 0; if (keep) next }
+            keep { print }
+          ' CHANGELOG.md > "$notes"
+          if [ -s "$notes" ]; then
+            notes_flag="--notes-file $notes"
+          else
+            notes_flag="--generate-notes"
+          fi
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" \
-              --title "p11k $version" $prerelease --generate-notes
+              --title "p11k $version" $prerelease $notes_flag
+          fi
           gh release upload "$GITHUB_REF_NAME" p11k-*.tar.gz p11k_*.deb runtime-dependencies.md --clobber

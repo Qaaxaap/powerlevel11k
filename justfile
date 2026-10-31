@@ -25,6 +25,9 @@ test:
 # Everything a pull request must pass.
 check: fmt-check lint test
 
+# The full local gate: what CI runs.
+verify: fmt-check lint test deny spell
+
 # Build the binaries.
 build:
     cargo build --release
@@ -60,9 +63,10 @@ i18n:
     tools/i18n.sh extract
     tools/i18n.sh update
 
-# Regenerate CHANGELOG.md from the Conventional Commit history.
-changelog:
-    git-cliff --output CHANGELOG.md
+# Regenerate CHANGELOG.md from the Conventional Commit history. Pass a tag to write that
+# version's section instead of Unreleased: `just changelog v1.0.0`.
+changelog tag="":
+    git-cliff --output CHANGELOG.md {{ if tag != "" { "--tag " + tag } else { "" } }}
 
 # Re-record the demo captures (needs zsh, bash, fish, python3, tmux, agg, ImageMagick).
 demo:

@@ -195,7 +195,7 @@ Not done:
 
 ## Contributing
 
-Build and test environment, commit conventions, the translation workflow and the release process are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Build and test environment, commit conventions, the translation workflow and the release process are in [CONTRIBUTING.md](CONTRIBUTING.md). The project follows the [Code of Conduct](CODE_OF_CONDUCT.md), handles vulnerabilities through [SECURITY.md](SECURITY.md), and keeps its history in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributors
 
