@@ -393,102 +393,138 @@ pub fn run() -> anyhow::Result<()> {
             }
         }
 
-        // prompt window (announce-driven). Handled before poll/pass-through so the ack is
-        // touched while the shell is still waiting for it.
+        // prompt window (announce-driven). The announce file is a second channel: a `h` message
+        // can arrive while the command output still sits in the pty buffer. Painting the prompt
+        // blanks before that output would put them above it, so when the pty already holds data,
+        // let the poll below forward it and handle the messages on the next pass.
         // - `h` (precmd announce, shell waiting for ack): draw header, touch ack to release.
         // - `r` (resize announce): repaint the prompt window.
-        for msg in drain_announce(&state.announce, &mut ann_processed) {
-            // Sync a size change to the pty and let right alignment use the new width.
-            let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
-            if (r, c, xp, yp) != last_size {
-                pair.master.resize(PtySize {
-                    rows: r,
-                    cols: c,
-                    pixel_width: xp,
-                    pixel_height: yp,
-                })?;
-                last_size = (r, c, xp, yp);
-            }
-            match msg {
-                AnnMsg::Header(mut info) => {
-                    log(&format!(
-                        "h: exit={:?} cwd={:?} jobs={}",
-                        info.exit_code, info.cwd, info.jobs
-                    ));
-                    // Command duration = last enter → this precmd (0 on the first prompt
-                    // without last_enter).
-                    info.exec_seconds = last_enter
-                        .take()
-                        .map(|t| t.elapsed().as_secs_f64())
-                        .unwrap_or(0.0);
-                    at_prompt = false; // new prompt cycle: the next signal paints the input line
-                    // The instant header stays flagged until the first signal arrives: that is
-                    // where the real header replaces it in place.
-                    if !instant_drawn && config.layout.prompt_add_newline > 0 {
-                        // Relaxed layout: leave N blank rows between consecutive prompts
-                        // (blanked before the header). One CRLF is one blank row; the shell has
-                        // already moved the cursor off the command's output row.
-                        for _ in 0..config.layout.prompt_add_newline {
-                            write!(stdout, "\r\n")?;
+        let pty_ready = {
+            let mut probe = libc::pollfd {
+                fd: master_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            (unsafe { libc::poll(&mut probe, 1, 0) }) > 0 && probe.revents & libc::POLLIN != 0
+        };
+        if !pty_ready {
+            for msg in drain_announce(&state.announce, &mut ann_processed) {
+                // Sync a size change to the pty and let right alignment use the new width.
+                let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
+                if (r, c, xp, yp) != last_size {
+                    pair.master.resize(PtySize {
+                        rows: r,
+                        cols: c,
+                        pixel_width: xp,
+                        pixel_height: yp,
+                    })?;
+                    last_size = (r, c, xp, yp);
+                }
+                match msg {
+                    AnnMsg::Header(mut info) => {
+                        log(&format!(
+                            "h: exit={:?} cwd={:?} jobs={}",
+                            info.exit_code, info.cwd, info.jobs
+                        ));
+                        // Command duration = last enter → this precmd (0 on the first prompt
+                        // without last_enter).
+                        info.exec_seconds = last_enter
+                            .take()
+                            .map(|t| t.elapsed().as_secs_f64())
+                            .unwrap_or(0.0);
+                        at_prompt = false; // new prompt cycle: the next signal paints the input line
+                        // The instant header stays flagged until the first signal arrives: that is
+                        // where the real header replaces it in place.
+                        if !instant_drawn && config.layout.prompt_add_newline > 0 {
+                            // Relaxed layout: leave N blank rows between consecutive prompts
+                            // (blanked before the header). One CRLF is one blank row; the shell has
+                            // already moved the cursor off the command's output row.
+                            for _ in 0..config.layout.prompt_add_newline {
+                                write!(stdout, "\r\n")?;
+                            }
+                        }
+                        // Emit the prompt-start marker before the shell prints the prompt string;
+                        // the header is not drawn here, the signal that follows the blank rows is
+                        // what draws it.
+                        theme::prompt_start(&mut stdout)?;
+                        stdout.flush()?;
+                        // Release precmd and hand the shell the prompt shape: the header height on
+                        // the first line, then the prefix for this prompt. The engine picks that
+                        // prefix because it is the only side that knows the exit code, the pipeline
+                        // statuses and the vi mode; a shell choosing between two strings of its own
+                        // could not tell `OK_PIPE` from `OK`.
+                        let state_name = crate::render::prompt_state(&config, Some(&info));
+                        let prefix = Geometry::prefix_for(&config, shell, state_name);
+                        // Transient prompt: `same-dir` folds the header only when the command left
+                        // the shell where it was (p10k's `always` / `same-dir` split). The engine
+                        // decides because it already knows both directories; the shell only reads
+                        // the answer.
+                        let transient_on = match config.layout.transient_prompt {
+                            crate::config::TransientPrompt::Off => false,
+                            crate::config::TransientPrompt::Always => true,
+                            // The first prompt has no previous directory to compare against, so it
+                            // folds the way `always` would.
+                            crate::config::TransientPrompt::SameDir => {
+                                last_prompt_cwd.as_deref() == Some(info.cwd.as_str())
+                                    || last_prompt_cwd.is_none()
+                            }
+                        };
+                        last_prompt_cwd = Some(info.cwd.clone());
+                        let mut ack = File::create(&state.ack)?;
+                        writeln!(ack, "{}", geometry.header_rows)?;
+                        writeln!(ack, "{prefix}")?;
+                        writeln!(ack, "{}", u8::from(transient_on))?;
+                        // Compute git in the background and repaint the header asynchronously when
+                        // it finishes.
+                        git_gen += 1;
+                        let _ = req_tx.send(GitRequest {
+                            generation: git_gen,
+                            cwd: info.cwd.clone(),
+                        });
+                        current_info = Some(info);
+                        log("drew header, acked");
+                    }
+                    AnnMsg::Resize => {
+                        // The size check at the top of the loop already resized the pty.
+                        // zsh: zle repaints the prompt string and the backfill goes through the
+                        // signal; repaint the header here and defer the prefix by ~60ms (until
+                        // zle's repainted prompt and buffer have passed through).
+                        // Other shells: after a resize the shell reprints the prompt string from
+                        // scratch (with new leading newlines) and the signal path above backfills
+                        // it — the new prompt is not out yet, so drawing now would land on the
+                        // previous screen and leave it uncovered.
+                        if at_prompt {
+                            if shell == Shell::Zsh {
+                                log("r: redraw header, defer prompt");
+                                let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                                // A resize can reflow the rows under the header, so paint
+                                // unconditionally; the signal that follows repaints again on its own.
+                                last_header = None;
+                                theme::redraw_header_cfg(
+                                    &mut stdout,
+                                    last_size.1 as usize,
+                                    &config,
+                                    current_info.as_ref().unwrap_or(&instant_info),
+                                    vcs,
+                                    &mut last_header,
+                                )?;
+                                stdout.flush()?;
+                                resize_prompt_at = Some(
+                                    std::time::Instant::now()
+                                        + std::time::Duration::from_millis(60),
+                                );
+                            } else {
+                                log("r: wait for the shell to reprint the prompt");
+                            }
+                        } else {
+                            log("r: skip redraw (not at prompt)");
                         }
                     }
-                    // Emit the prompt-start marker before the shell prints the prompt string;
-                    // the header is not drawn here, the signal that follows the blank rows is
-                    // what draws it.
-                    theme::prompt_start(&mut stdout)?;
-                    stdout.flush()?;
-                    // Release precmd and hand the shell the prompt shape: the header height on
-                    // the first line, then the prefix for this prompt. The engine picks that
-                    // prefix because it is the only side that knows the exit code, the pipeline
-                    // statuses and the vi mode; a shell choosing between two strings of its own
-                    // could not tell `OK_PIPE` from `OK`.
-                    let state_name = crate::render::prompt_state(&config, Some(&info));
-                    let prefix = Geometry::prefix_for(&config, shell, state_name);
-                    // Transient prompt: `same-dir` folds the header only when the command left
-                    // the shell where it was (p10k's `always` / `same-dir` split). The engine
-                    // decides because it already knows both directories; the shell only reads
-                    // the answer.
-                    let transient_on = match config.layout.transient_prompt {
-                        crate::config::TransientPrompt::Off => false,
-                        crate::config::TransientPrompt::Always => true,
-                        // The first prompt has no previous directory to compare against, so it
-                        // folds the way `always` would.
-                        crate::config::TransientPrompt::SameDir => {
-                            last_prompt_cwd.as_deref() == Some(info.cwd.as_str())
-                                || last_prompt_cwd.is_none()
-                        }
-                    };
-                    last_prompt_cwd = Some(info.cwd.clone());
-                    let mut ack = File::create(&state.ack)?;
-                    writeln!(ack, "{}", geometry.header_rows)?;
-                    writeln!(ack, "{prefix}")?;
-                    writeln!(ack, "{}", u8::from(transient_on))?;
-                    // Compute git in the background and repaint the header asynchronously when
-                    // it finishes.
-                    git_gen += 1;
-                    let _ = req_tx.send(GitRequest {
-                        generation: git_gen,
-                        cwd: info.cwd.clone(),
-                    });
-                    current_info = Some(info);
-                    log("drew header, acked");
-                }
-                AnnMsg::Resize => {
-                    // The size check at the top of the loop already resized the pty.
-                    // zsh: zle repaints the prompt string and the backfill goes through the
-                    // signal; repaint the header here and defer the prefix by ~60ms (until
-                    // zle's repainted prompt and buffer have passed through).
-                    // Other shells: after a resize the shell reprints the prompt string from
-                    // scratch (with new leading newlines) and the signal path above backfills
-                    // it — the new prompt is not out yet, so drawing now would land on the
-                    // previous screen and leave it uncovered.
-                    if at_prompt {
-                        if shell == Shell::Zsh {
-                            log("r: redraw header, defer prompt");
+                    AnnMsg::VimMode(mode) => {
+                        *crate::render::CURRENT_VI_MODE.lock().unwrap() = mode;
+                        if at_prompt {
+                            log("v: update mode, redraw header");
                             let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                            // A resize can reflow the rows under the header, so paint
-                            // unconditionally; the signal that follows repaints again on its own.
-                            last_header = None;
                             theme::redraw_header_cfg(
                                 &mut stdout,
                                 last_size.1 as usize,
@@ -498,30 +534,7 @@ pub fn run() -> anyhow::Result<()> {
                                 &mut last_header,
                             )?;
                             stdout.flush()?;
-                            resize_prompt_at = Some(
-                                std::time::Instant::now() + std::time::Duration::from_millis(60),
-                            );
-                        } else {
-                            log("r: wait for the shell to reprint the prompt");
                         }
-                    } else {
-                        log("r: skip redraw (not at prompt)");
-                    }
-                }
-                AnnMsg::VimMode(mode) => {
-                    *crate::render::CURRENT_VI_MODE.lock().unwrap() = mode;
-                    if at_prompt {
-                        log("v: update mode, redraw header");
-                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                        theme::redraw_header_cfg(
-                            &mut stdout,
-                            last_size.1 as usize,
-                            &config,
-                            current_info.as_ref().unwrap_or(&instant_info),
-                            vcs,
-                            &mut last_header,
-                        )?;
-                        stdout.flush()?;
                     }
                 }
             }
