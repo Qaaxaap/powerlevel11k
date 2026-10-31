@@ -97,6 +97,10 @@ The `os` badge is dynamic per distro (arch/ubuntu/…) and is not routed through
 - `state <NAME> fg=…` is a situational override: style, plus an optional `char` for glyph segments (e.g. `state ERROR char="✘"`); fallback chain below.
 - `text-left` / `text-middle` / `text-right` are attach slots, each a child node `text-left "…"` with an optional `fg=…`. They concatenate text into the segment — `left` before the icon, `middle` between icon and content (rendered only when the segment has both), `right` after the content — and never form their own block. Color follows the segment unless `fg` overrides the foreground (bg/bold still follow).
 - Icons are not a segment attribute. Each segment references an **icon name** (`dir` → `folder`, `vcs` → `git`, `time` → `time`…), rendered from the engine default table for the current `mode` and overridable per icon name in the top-level `icon {}` (see [Icon mode](#icon-mode)). Defaults by segment: `dir` folder, `time` clock, `background_jobs` gear (shown even at zero jobs), `os` distro badge (dynamic per distro), `vcs` git (or per remote domain, see `vcs-remote-icons`); language / cloud / system segments map to their own icon name (go, python, aws…), the rest have none.
+- `icon-before-content #true|#false` overrides which side the segment's icon takes. By default
+  the column decides: left-column segments put the icon first and right-column segments put it
+  last, so both read outward from the line. The property reverses that for one segment (p10k's
+  `POWERLEVEL9K_<SEG>_ICON_BEFORE_CONTENT`).
 - `content="…"` is reserved.
 - `disabled #true` keeps the segment parsed and styled but skips rendering; it affects every place the segment is used.
 - Every other attribute goes into the segment's behavior table, read by that segment's renderer. Implemented so far:
