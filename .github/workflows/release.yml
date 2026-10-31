@@ -140,10 +140,6 @@ jobs:
         run: |
           set -eu
           version="${GITHUB_REF_NAME#v}"
-          prerelease=""
-          case "$version" in
-            *-*) prerelease="--prerelease" ;;
-          esac
           # CHANGELOG.md is the single source for release notes. When the changelog has no
           # section for this tag yet (the tag was cut before `just changelog <tag>`), fall back
           # to the notes GitHub generates from the pull requests.
@@ -152,13 +148,16 @@ jobs:
             /^## \[/ { keep = index($0, "[" v "]") > 0; if (keep) next }
             keep { print }
           ' CHANGELOG.md > "$notes"
+          args=("--title" "p11k $version")
+          case "$version" in
+            *-*) args+=("--prerelease") ;;
+          esac
           if [ -s "$notes" ]; then
-            notes_flag="--notes-file $notes"
+            args+=(--notes-file "$notes")
           else
-            notes_flag="--generate-notes"
+            args+=(--generate-notes)
           fi
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" \
-              --title "p11k $version" $prerelease $notes_flag
+            gh release create "$GITHUB_REF_NAME" "${args[@]}"
           fi
           gh release upload "$GITHUB_REF_NAME" p11k-*.tar.gz p11k_*.deb runtime-dependencies.md --clobber
