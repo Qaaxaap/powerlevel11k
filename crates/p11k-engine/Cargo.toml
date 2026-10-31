@@ -2,6 +2,7 @@
 name = "p11k-engine"
 description = "p11k engine: pty host that proxies a theme-less shell and draws the themed prompt"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -19,7 +20,6 @@ p11k-gitstatus = { path = "../p11k-gitstatus" }
 portable-pty = { workspace = true }
 unicode-width = { workspace = true }
 
-[build-dependencies]
 
 [dev-dependencies]
 # Integration tests: run the engine binary in a pty and assert the passthrough and the prompt

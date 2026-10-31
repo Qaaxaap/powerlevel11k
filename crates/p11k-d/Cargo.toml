@@ -2,6 +2,7 @@
 name = "p11k-d"
 description = "p11k daemon: a gitstatusd-compatible backend first, then the full p11k engine"
 version.workspace = true
+publish = false
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -17,4 +18,4 @@ p11k-gitstatus = { path = "../p11k-gitstatus" }
 # Temporary git repositories for the integration tests.
 tempfile = "3"
 # Repository fixtures with a fixed state, built with git2 for the differential tests.
-git2 = "0.21"
+git2 = { workspace = true }

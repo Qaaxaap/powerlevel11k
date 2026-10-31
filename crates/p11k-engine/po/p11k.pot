@@ -7,8 +7,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: p11k 1.0.0-alpha.1\n"
-"Report-Msgid-Bugs-To: https://github.com/powerlevel11k/p11k/issues\n"
-"POT-Creation-Date: 2026-10-24 00:47+0800\n"
+"Report-Msgid-Bugs-To: https://github.com/Qaaxaap/powerlevel11k/issues\n"
+"POT-Creation-Date: 2026-10-31 23:20+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -120,19 +120,19 @@ msgid ""
 "To use p11k as your theme, add one line to your shell rc — see README.md."
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:427
+#: crates/p11k-engine/src/config.rs:486
 msgid "KDL parse error: "
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1183
+#: crates/p11k-engine/src/config.rs:1266
 msgid "`state` needs a name (a positional string)"
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1201
+#: crates/p11k-engine/src/config.rs:1284
 msgid " needs text (a positional string)"
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1256
+#: crates/p11k-engine/src/config.rs:1339
 msgid "unknown config key: "
 msgstr ""
 
@@ -179,7 +179,7 @@ msgstr ""
 #: crates/p11k-engine/src/wizard.rs:138 crates/p11k-engine/src/wizard.rs:258
 #: crates/p11k-engine/src/wizard.rs:269 crates/p11k-engine/src/wizard.rs:281
 #: crates/p11k-engine/src/wizard.rs:401 crates/p11k-engine/src/wizard.rs:679
-#: crates/p11k-engine/src/wizard.rs:849
+#: crates/p11k-engine/src/wizard.rs:853
 msgid "No."
 msgstr ""
 
@@ -197,7 +197,7 @@ msgstr ""
 
 #: crates/p11k-engine/src/wizard.rs:257 crates/p11k-engine/src/wizard.rs:268
 #: crates/p11k-engine/src/wizard.rs:280 crates/p11k-engine/src/wizard.rs:678
-#: crates/p11k-engine/src/wizard.rs:848
+#: crates/p11k-engine/src/wizard.rs:852
 msgid "Yes."
 msgstr ""
 
@@ -415,31 +415,31 @@ msgstr ""
 msgid "Enable Transient Prompt?"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:714 crates/p11k-engine/src/wizard.rs:777
+#: crates/p11k-engine/src/wizard.rs:718 crates/p11k-engine/src/wizard.rs:781
 msgid "Restart from the beginning."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:715 crates/p11k-engine/src/wizard.rs:778
+#: crates/p11k-engine/src/wizard.rs:719 crates/p11k-engine/src/wizard.rs:782
 msgid "Quit"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:828
+#: crates/p11k-engine/src/wizard.rs:832
 msgid "Preview (current directory + exit code):"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:846
+#: crates/p11k-engine/src/wizard.rs:850
 msgid "p11k config file already exists. Overwrite"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:865
+#: crates/p11k-engine/src/wizard.rs:869
 msgid "New config:"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:867
+#: crates/p11k-engine/src/wizard.rs:871
 msgid "Add one of these to your shell rc:"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:891
+#: crates/p11k-engine/src/wizard.rs:895
 msgid ""
 "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise "
 "they will stack."

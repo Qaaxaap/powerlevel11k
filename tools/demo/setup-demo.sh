@@ -25,6 +25,13 @@ case $HOME_DIR in
         exit 1
         ;;
 esac
+case $HOME_DIR in
+    "${TMPDIR:-/tmp}"/*) ;;
+    *)
+        echo "refusing to remove HOME_DIR=$HOME_DIR outside ${TMPDIR:-/tmp}" >&2
+        exit 1
+        ;;
+esac
 rm -rf "$HOME_DIR"
 mkdir -p "$HOME_DIR/.config"
 
