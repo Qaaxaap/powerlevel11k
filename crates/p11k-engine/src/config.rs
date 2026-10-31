@@ -132,8 +132,9 @@ pub struct Layout {
     /// Aligns with p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` + `_COUNT`.
     pub prompt_add_newline: usize,
     /// Transient prompt: after a command is submitted, collapse the multi-line header into a
-    /// single `❯` line (p10k `TRANSIENT_PROMPT`). zsh only (it needs zle reset-prompt); bash/fish ignore it.
-    pub transient_prompt: bool,
+    /// single `❯` line (p10k `TRANSIENT_PROMPT`). zsh only (it needs zle reset-prompt); bash/fish
+    /// ignore it.
+    pub transient_prompt: TransientPrompt,
     /// Ruler: draw a full line of the `ruler` character above the header (p10k `SHOW_RULER`, off by default).
     pub show_ruler: bool,
     /// Columns kept between the right column and the right edge (zsh `ZLE_RPROMPT_INDENT`,
@@ -148,10 +149,37 @@ impl Default for Layout {
             left: Vec::new(),
             right: Vec::new(),
             prompt_add_newline: 0,
-            transient_prompt: false,
+            transient_prompt: TransientPrompt::Off,
             show_ruler: false,
             right_indent: 1,
         }
+    }
+}
+
+/// When to fold the header into a single line after a command is submitted (p10k
+/// `POWERLEVEL9K_TRANSIENT_PROMPT`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TransientPrompt {
+    /// Never fold (`off`, the default).
+    #[default]
+    Off,
+    /// Fold after every command (`always`).
+    Always,
+    /// Fold only when the command left the shell in the same directory (`same-dir`).
+    SameDir,
+}
+
+impl TransientPrompt {
+    fn from_str(s: &str) -> Self {
+        match s {
+            "always" => Self::Always,
+            "same-dir" => Self::SameDir,
+            _ => Self::Off,
+        }
+    }
+    /// Whether the fold can ever happen; false lets the engine skip the whole handshake.
+    pub fn enabled(self) -> bool {
+        self != Self::Off
     }
 }
 
@@ -560,8 +588,12 @@ impl Config {
                 self.layout.prompt_add_newline as i128,
             ));
         }
-        if self.layout.transient_prompt {
-            ch.nodes_mut().push(leaf("transient-prompt", true));
+        match self.layout.transient_prompt {
+            TransientPrompt::Off => {}
+            // The boolean form is what earlier themes wrote, so an `always` theme round-trips to
+            // the same text it came in with.
+            TransientPrompt::Always => ch.nodes_mut().push(leaf("transient-prompt", true)),
+            TransientPrompt::SameDir => ch.nodes_mut().push(leaf("transient-prompt", "same-dir")),
         }
         if self.layout.show_ruler {
             ch.nodes_mut().push(leaf("show-ruler", true));
@@ -1138,7 +1170,18 @@ fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
                     };
                 }
                 "transient-prompt" => {
-                    layout.transient_prompt = first_value(child).map(bool_val).unwrap_or(false);
+                    // `#true` keeps the meaning it had before the modes existed: fold after
+                    // every command.
+                    layout.transient_prompt = match first_value(child) {
+                        Some(KdlValue::String(s)) => TransientPrompt::from_str(s),
+                        v => {
+                            if v.map(bool_val).unwrap_or(false) {
+                                TransientPrompt::Always
+                            } else {
+                                TransientPrompt::Off
+                            }
+                        }
+                    };
                 }
                 // `show-ruler #true`: add a full ruler line above the header (p10k SHOW_RULER).
                 "show-ruler" => {
@@ -1549,6 +1592,44 @@ icon {
         .unwrap();
         assert_eq!(c.layout.left[0][0], Element::Joined("dir".into()));
         assert_eq!(c.layout.left[0].len(), 2, "#false time should be skipped");
+    }
+
+    /// `transient-prompt` accepts the boolean form earlier themes used plus p10k's `same-dir`
+    /// mode; both survive a round trip through the serializer.
+    #[test]
+    fn parses_the_three_transient_prompt_values() {
+        let parse = |src: &str| {
+            Config::parse(&format!(
+                "layout {{\n    left {{ line {{ dir }} }}\n    {src}\n}}\n"
+            ))
+            .unwrap()
+            .layout
+            .transient_prompt
+        };
+        assert_eq!(parse("transient-prompt #true"), TransientPrompt::Always);
+        assert_eq!(parse("transient-prompt #false"), TransientPrompt::Off);
+        assert_eq!(
+            parse("transient-prompt \"always\""),
+            TransientPrompt::Always
+        );
+        assert_eq!(
+            parse("transient-prompt \"same-dir\""),
+            TransientPrompt::SameDir
+        );
+
+        for mode in [
+            TransientPrompt::Off,
+            TransientPrompt::Always,
+            TransientPrompt::SameDir,
+        ] {
+            let mut c = Config::parse("layout {\n    left { line { dir } }\n}\n").unwrap();
+            c.layout.transient_prompt = mode;
+            let back = Config::parse(&c.to_kdl()).unwrap();
+            assert_eq!(
+                back.layout.transient_prompt, mode,
+                "round trip for {mode:?}"
+            );
+        }
     }
 
     #[test]
