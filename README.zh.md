@@ -89,7 +89,7 @@ tar xzf p11k-<version>-x86_64-linux.tar.gz -C ~/.local
 ~/.local/p11k-<version>-x86_64-linux/bin/p11k --shell zsh
 ```
 
-tar 包需要系统已安装 OpenSSL 3 运行库与系统 C 库，常见发行版默认提供。每个 release 还附带 `runtime-dependencies.md`，由 `ldd` 从二进制生成，列出确切依赖。
+tar 包需要 C 库与 GCC 运行库，常见发行版默认提供。每个 release 还附带 `runtime-dependencies.md`，由 `ldd` 从二进制生成，列出确切依赖。
 
 从源码构建并安装：
 

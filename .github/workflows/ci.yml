@@ -43,3 +43,14 @@ jobs:
           test -f "$out/share/locale/zh_CN/LC_MESSAGES/p11k.mo"
           grep -aq "$out/share/locale" "$out/bin/p11k"
           "$out/bin/p11k" --version
+
+  # The devShell pins this version, but a flake mistake could hide that. This job uses plain
+  # rustup, so it fails on the real toolchain and not on a nix expression.
+  msrv:
+    name: MSRV 1.95.0
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Check
+        run: cargo check --all-targets --locked
