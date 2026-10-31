@@ -20,9 +20,14 @@ env_logger = "0.11.11"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
+iai-callgrind = "0.16.1"
 # Temporary directories for tests.
 tempfile = "3"
 
 [[bench]]
-name = "build_fields"
+name = "build_fields_criterion"
+harness = false
+
+[[bench]]
+name = "build_fields_iai"
 harness = false

@@ -10,9 +10,18 @@ targets = [{ triple = "x86_64-unknown-linux-gnu" }]
 [advisories]
 version = 2
 yanked = "warn"
-# Empty on purpose: git2 0.21 fixed RUSTSEC-2026-0183 and RUSTSEC-2026-0184, and gettext-rs
-# 0.8 marks `setlocale` unsafe for RUSTSEC-2026-0244.
-ignore = []
+# The runtime graph is clean: git2 0.21 fixed RUSTSEC-2026-0183 and RUSTSEC-2026-0184, and
+# gettext-rs 0.8 marks `setlocale` unsafe for RUSTSEC-2026-0244.
+#
+# The two ignores below belong to iai-callgrind, which is a dev-dependency for the benchmark
+# harness and never reaches a release binary.
+# - RUSTSEC-2025-0141: bincode 1.3.3. The team stopped development after a harassment incident
+#   and calls 1.3.3 a complete release. iai-callgrind 0.16.1, the newest version, requires
+#   `bincode = "1"`, so no upgrade removes it.
+# - RUSTSEC-2026-0173: proc-macro-error2 2.0.1. Its author stopped maintaining it.
+#   iai-callgrind-macros pulls it in.
+# Both advisories say unmaintained, not unsafe, and both crates sit outside the runtime graph.
+ignore = ["RUSTSEC-2025-0141", "RUSTSEC-2026-0173"]
 
 [licenses]
 version = 2

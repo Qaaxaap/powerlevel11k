@@ -29,9 +29,17 @@ check: fmt-check lint test
 build:
     cargo build --release
 
-# Run the benchmarks.
+# Run the wall-clock benchmark. Quote its numbers with the machine they came from; the machine's
+# load shows up in them.
 bench:
-    cargo bench --all --benches
+    cargo bench -p p11k-gitstatus --bench build_fields_criterion
+
+# Run the instruction-count benchmark. Callgrind counts do not move with the machine, so this is
+# what judges a change. Needs valgrind and the iai-callgrind runner on PATH:
+#   cargo install iai-callgrind-runner --version 0.16.1 --root .cache/bench-tools
+#   nix shell nixpkgs#valgrind -c bash -lc 'PATH=$PWD/.cache/bench-tools/bin:$PATH just bench-iai'
+bench-iai:
+    cargo bench -p p11k-gitstatus --bench build_fields_iai
 
 # Build through nix, the way a release does.
 nix-build:
