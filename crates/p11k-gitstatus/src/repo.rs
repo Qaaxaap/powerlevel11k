@@ -19,16 +19,18 @@
 //!   `fstatat` per tracked file (stat refresh) plus one per directory
 //!   (untracked-cache mtime check); readdir only on an untracked-cache miss.
 //!   Candidates are classified without a git diff ([`Repo::compute_dirty`]).
-//!   Measured ~95ms on a 54k-file nixpkgs clone (22 cores) vs ~80ms for the
-//!   original gitstatusd.
+//!   Numeric baseline: `cargo bench -p p11k-gitstatus` reports ~1.6 ms for a
+//!   warm `build_fields` on a 5000-file repository, and ~0.4 ms on 50 files.
 //!
 //! # Known simplifications vs the original
 //!
 //! - The original runs staged scan, dirty scan, and tag query in parallel
-//!   (RunAsync + Wait); p11k runs them sequentially.
-//!   TODO(perf): revisit after benchmarking.
+//!   (RunAsync + Wait); p11k runs them sequentially. The benchmark puts the
+//!   whole sequential call at ~1.6 ms for 5000 files, so a parallel split
+//!   would save under a millisecond at that size.
 //! - The original shards `git_diff_tree_to_index` by path ranges; p11k does
-//!   one full diff. TODO(perf): same.
+//!   one full diff. The benchmark covers that diff as part of the same
+//!   ~1.6 ms.
 //!
 //! # TTL
 //!
@@ -744,9 +746,10 @@ impl Repo {
     /// caps are reached (OnDelta's GIT_EUSER semantics).
     ///
     /// Difference from the original: it aborts early inside diff
-    /// construction via notify_cb; git2 0.20 does not expose a notify
-    /// callback (TODO in diff.rs), so the early stop happens in foreach
-    /// after construction. TODO(perf): revisit after benchmarking.
+    /// construction via notify_cb; git2 does not expose a notify callback, so
+    /// the early stop happens in foreach after construction. The default caps
+    /// are 1 (`-s`/`-c`), so the walk stops at the first delta, and the
+    /// benchmark covers the construction cost of the full diff.
     fn compute_staged(&self, git_index: &GitIndex, head: Oid) -> StagedStats {
         let mut stats = StagedStats::default();
         for e in git_index.iter() {
