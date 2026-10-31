@@ -584,14 +584,21 @@ fn render_segment(
     } else {
         String::new()
     };
-    if right {
-        body.push_str(&text);
-        body.push_str(&middle);
+    // Icon placement: the column decides by default (left column puts the icon first, the right
+    // column puts it last, so both read outward from the line). `icon-before-content` overrides
+    // that per segment, which is p10k's `POWERLEVEL9K_<SEG>_ICON_BEFORE_CONTENT`.
+    let icon_first = match seg.prop("icon-before-content") {
+        Some(crate::config::Prop::Bool(b)) => *b,
+        _ => !right,
+    };
+    if icon_first {
         body.push_str(&icon_text);
+        body.push_str(&middle);
+        body.push_str(&text);
     } else {
-        body.push_str(&icon_text);
-        body.push_str(&middle);
         body.push_str(&text);
+        body.push_str(&middle);
+        body.push_str(&icon_text);
     }
     if let Some(r) = &seg.text_right {
         body.push_str(&paint_attach(&style, r));
@@ -4010,6 +4017,24 @@ mod tests {
         assert_eq!(icon_str(&c, "ok").unwrap(), "V");
         let c = nf("mode \"ascii\"\nicon { ok { all \"V\" } }");
         assert_eq!(icon_str(&c, "ok").unwrap(), "V");
+    }
+
+    /// `icon-before-content` overrides the column default: the left column puts the icon first,
+    /// the right column puts it last, and the property reverses either.
+    #[test]
+    fn icon_before_content_overrides_the_column_default() {
+        let c = Config::parse(
+            "layout {\n    left { line { dir } }\n}\nsegments {\n    dir icon-before-content=#false\n}\n",
+        )
+        .unwrap();
+        let lines = render_header_lines(&c, &info("/tmp", Some(0)), None, 80);
+        let line = &lines[0];
+        let text_at = line.find("tmp").expect("directory text");
+        let icon_at = line.find('\u{f115}').expect("folder icon");
+        assert!(
+            text_at < icon_at,
+            "icon-before-content=false should put the icon after the text, got {line:?}"
+        );
     }
 
     #[test]
