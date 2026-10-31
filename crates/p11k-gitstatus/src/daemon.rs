@@ -17,6 +17,14 @@ pub struct Daemon {
 
 impl Daemon {
     pub fn new(options: Options) -> Daemon {
+        // `-v/--log-level` sets the minimum level the daemon reports (gitstatusd's
+        // `g_min_log_level`). `env_logger` writes to stderr, which matters here: stdout carries
+        // the protocol and any other writer would corrupt the responses. Initialising twice is
+        // not an error; tests may build more than one daemon.
+        let _ = env_logger::Builder::new()
+            .filter_level(options.log_level.as_filter())
+            .format_timestamp(None)
+            .try_init();
         Daemon {
             cache: RepoCache::new(&options),
             options,
