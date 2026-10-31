@@ -18,7 +18,9 @@ pub struct StateDir {
 
 impl StateDir {
     pub fn create(shell: Shell) -> io::Result<Self> {
-        let dir = std::env::temp_dir().join(format!("p11k-{}", std::process::id()));
+        // State, not temp: the run directory holds the rc files and the protocol files, and a
+        // crash leaves it behind for a bug report. `Drop` removes it on a clean exit.
+        let dir = crate::paths::state_home().join(format!("run-{}", std::process::id()));
         fs::create_dir_all(&dir)?;
 
         // One protocol rc per shell. The temp rc read path is kept for debugging.
@@ -60,6 +62,12 @@ impl StateDir {
             dir,
             rc,
         })
+    }
+}
+
+impl Drop for StateDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.dir);
     }
 }
 

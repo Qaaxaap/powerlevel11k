@@ -40,6 +40,7 @@ mod geometry;
 mod git;
 mod i18n;
 mod log;
+mod paths;
 mod presets;
 mod protocol;
 mod render;
@@ -69,6 +70,12 @@ fn main() -> anyhow::Result<()> {
     if std::env::args().any(|a| a == "--help" || a == "-h") {
         print_help();
         return Ok(());
+    }
+    // Rotate an oversized diagnostics log before the engine starts appending to it, then apply
+    // `--log-level` (the default is info).
+    log::init();
+    if let Some(level) = cli::log_level_from_args() {
+        log::set_level(level);
     }
     // `p11k configure`: enter the interactive theme wizard without spawning a shell.
     if std::env::args().any(|a| a == "configure") {

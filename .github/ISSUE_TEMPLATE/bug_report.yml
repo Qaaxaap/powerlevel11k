@@ -97,7 +97,7 @@ body:
     id: log
     attributes:
       label: Engine log
-      description: The last lines of `/tmp/p11k-engine.log`.
+      description: The last lines of `$XDG_STATE_HOME/p11k/p11k-engine.log` (`~/.local/state/p11k/p11k-engine.log` by default).
       render: text
     validations:
       required: false
