@@ -8,7 +8,7 @@ The project is in early development. These rules are deliberately small and will
 
 ## Development environment
 
-Everything the build and the tests need is pinned in `flake.nix`. Enter the devShell and use the recipes in `justfile`; `just` on its own lists them.
+Everything the build and the tests need is pinned in `flake.nix`. Enter the devShell and use the recipes in `justfile`. `just` on its own lists all of them.
 
 ```bash
 nix develop
@@ -17,9 +17,15 @@ just nix-check     # the same tests inside the nix sandbox
 just build         # the binaries: p11k and p11k-d
 ```
 
-`just check` is what CI runs, so there is no second command line to keep in sync. The other recipes cover the rest of the infrastructure: `just deny` (dependency licences, bans and advisories), `just spell` (typos), `just i18n` (regenerate the gettext template), `just changelog` (regenerate `CHANGELOG.md` from the commit history) and `just demo` (re-record `docs/images/`).
+`just check` is what CI runs, so there is no second command line to keep in sync. The other recipes cover the rest of the infrastructure:
 
-The devShell exports `LOCALE_ARCHIVE`; without it `setlocale("zh_CN.UTF-8")` fails and the i18n test has to skip.
+- `just deny`: dependency licences, bans and advisories
+- `just spell`: typos
+- `just i18n`: regenerate the gettext template
+- `just changelog`: regenerate `CHANGELOG.md` from the commit history
+- `just demo`: re-record `docs/images/`
+
+The devShell exports `LOCALE_ARCHIVE`. Without it, `setlocale("zh_CN.UTF-8")` fails and the i18n test has to skip.
 
 To run the engine straight from a build:
 
@@ -39,9 +45,9 @@ just bench-iai   # instruction counts, Callgrind
 
 `just bench` prints milliseconds. Quote the machine with any number you take from it: load, frequency and cache pressure all show up in wall-clock time.
 
-`just bench-iai` prints instruction counts. These repeat between runs of the same binary: the two 50-file cases exactly, and the 5000-file case within 0.03%, because `readdir` order depends on the file system. Judge a change by these counts, and treat differences below 0.1% as noise.
+`just bench-iai` prints instruction counts. The counts repeat between runs of the same binary. The two 50-file cases repeat exactly, and the 5000-file case stays within 0.03%, because `readdir` order depends on the file system. Judge a change by these counts, and treat differences below 0.1% as noise.
 
-Both harnesses build their fixture in the temporary directory, so they need no environment variable and no repository outside this one. CI compiles them through `cargo check --all-targets` but does not run them: benchmark timing belongs on a quiet machine.
+Both harnesses build their fixture in the temporary directory, so they need no environment variable. They also need no repository outside this one. CI compiles them through `cargo check --all-targets` but does not run them: benchmark timing belongs on a quiet machine.
 
 The devShell provides Valgrind and `iai-callgrind-runner`. Outside Nix, install them yourself:
 
@@ -54,14 +60,14 @@ cargo install iai-callgrind-runner --version 0.16.1   # must match iai-callgrind
 
 - [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, ...). A `!` marks breaking changes.
 - Commit messages in English.
-- One commit carries one logical change; unrelated work must not be bundled. A commit mixing a refactor with a feature will be asked to be split.
-- The subject is at most 72 characters and completes the sentence "if applied, this commit will ...". The body states *why*, and does not restate the diff.
+- One commit carries one logical change. Unrelated work must not be bundled. A commit that mixes a refactor with a feature will be asked to be split.
+- The subject is at most 72 characters and completes the sentence "if applied, this commit will ...". The body states *why* and does not restate the diff.
 
 ## Code style
 
-- Run `just fmt` before every commit; `just check` verifies the formatting along with the lint and the tests.
-- `unsafe` is not permitted unless a comment justifies it and a test or benchmark backs it up. The git status core may need it for direct `fstatat`/`MetadataExt` access; that is a sanctioned exception, not a precedent for the rest of the crate.
-- Public API requires doc comments. The gitstatus protocol code must document the wire format next to the parsing code: byte-level compatibility with the original daemon is a hard requirement.
+- Run `just fmt` before every commit. `just check` verifies the formatting along with the lint and the tests.
+- `unsafe` is not permitted unless a comment justifies it and a test or benchmark backs it up. The git status core may need it for direct `fstatat`/`MetadataExt` access. That is a sanctioned exception, not a precedent for the rest of the crate.
+- Public API requires doc comments. The gitstatus protocol code must document the wire format next to the parsing code. Byte-level compatibility with the original daemon is a hard requirement.
 
 ## Config language
 
@@ -69,7 +75,11 @@ The theme config language has its own spec, maintained in step with the engine: 
 
 ## Demo images
 
-`docs/images/` is generated. `tools/demo/capture.sh` builds a small git repository with a staged, an unstaged, an untracked and a stashed change, runs the engine in a pty of a fixed size, and keeps what the terminal would have shown; the still images come from tmux pane dumps, because fish asks the terminal questions at startup that a bare pty does not answer. The keystrokes are in `tools/demo/scenes/demo.json`, the theme in `tools/demo/demo.kdl`, and `tools/demo/presets/` holds the files behind the presets image.
+`docs/images/` is generated. `tools/demo/capture.sh` builds a small git repository with a staged, an unstaged, an untracked and a stashed change. It then runs the engine in a pty of a fixed size and keeps what the terminal would have shown.
+
+The still images come from tmux pane dumps, because fish asks the terminal questions at startup that a bare pty does not answer.
+
+The keystrokes are in `tools/demo/scenes/demo.json`, the theme in `tools/demo/demo.kdl`, and `tools/demo/presets/` holds the files behind the presets image.
 
 Re-recording needs a built `p11k` (`cargo build --release -p p11k-engine`), zsh, bash, fish, python3, tmux, agg (asciinema/agg), ImageMagick and the Maple Mono Nerd Font.
 
@@ -82,26 +92,26 @@ tools/i18n.sh extract   # xgettext -> po/p11k.pot
 tools/i18n.sh update    # msgmerge the new entries into every po/*.po
 ```
 
-then fill in the new `msgstr`s. Three rules are enforced by the test suite:
+Then fill in the new `msgstr`s. Three rules are enforced by the test suite:
 
-- Text translated where it is written uses `t("…")`; text collected and translated later (wizard question titles and options) must be wrapped in `msgid("…")` so the extractor sees it. Both must be plain string literals.
-- `cargo test -p p11k-engine` fails if the sources, `po/p11k.pot` and the catalogs disagree in either direction. A missing extract/update or a stale entry cannot pass.
+- Text translated where it is written uses `t("…")`. Text collected and translated later (wizard question titles and options) must be wrapped in `msgid("…")` so the extractor sees it. Both must be plain string literals.
+- `cargo test -p p11k-engine` fails if the sources, `po/p11k.pot` and the catalogs disagree in either direction. A missing extract or update, or a stale entry, cannot pass.
 - Adding a language: copy `po/zh_CN.po` to `po/<lang>.po`, translate the `msgstr`s and rebuild. The nix package compiles everything under `po/`, so `flake.nix` needs no change.
 
 ## AI policy
 
-This repository embraces AI, on the following terms. Ignoring them may result in restrictions on, or a ban from, contributing to this repository.
+This repository accepts AI-assisted development, on the following terms. Ignoring them may result in restrictions on, or a ban from, contributing to this repository.
 
 - Contributors must understand, and take responsibility for, every line they submit. Pointless or harmful submissions are not allowed.
-- Understanding the code is not enough: developing with generative AI without supervision is discouraged. Submissions with obvious defects, or that do not match what they claim to do, will be rejected.
+- Understanding the code is not enough. Developing with generative AI without supervision is discouraged. Submissions with obvious defects, or that do not match what they claim to do, will be rejected.
 
 ## Releases
 
-A `v*` tag publishes: the workflow builds `p11k` and `p11k-d` and attaches a tarball and a `.deb` to that tag's GitHub release.
+A `v*` tag publishes. The workflow builds `p11k` and `p11k-d`, and attaches a tarball and a `.deb` to that tag's GitHub release.
 
-Before tagging, run `just changelog` and commit the result. `CHANGELOG.md` is generated from the Conventional Commit history; the tag closes the current `Unreleased` section.
+Before tagging, run `just changelog` and commit the result. `CHANGELOG.md` is generated from the Conventional Commit history, and the tag closes the current `Unreleased` section.
 
-The tag must match `[workspace.package] version` in `Cargo.toml`; the workflow checks this and fails otherwise.
+The tag must match `[workspace.package] version` in `Cargo.toml`. The workflow checks this and fails otherwise.
 
 ## Reporting issues
 
@@ -111,7 +121,7 @@ Reports must be specific. A good report contains: OS and shell versions (`zsh --
 
 1. Fork, branch, and commit per the rules above.
 2. One PR carries one change. State the motivation in the description.
-3. Test the patch locally at least once before submitting. A patch that does not compile or cannot run wastes review time; repeated low-quality submissions may lead to contribution restrictions.
+3. Test the patch locally at least once before submitting. A patch that does not compile or cannot run wastes review time. Repeated low-quality submissions may lead to contribution restrictions.
 4. Follow the [AI policy](#ai-policy) above.
 5. Submitting a PR licenses the contribution under LGPL-3.0-or-later.
 
