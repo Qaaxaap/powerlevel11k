@@ -231,6 +231,10 @@ pub fn run() -> anyhow::Result<()> {
     let mut last_enter: Option<std::time::Instant> = None;
     // Workdir of the previous precmd, for the `same-dir` transient prompt.
     let mut last_prompt_cwd: Option<String> = None;
+    // Lines the last header paint wrote. An async git result that changes nothing would paint
+    // the same bytes over the same rows, so `redraw_header_cfg` compares against this and skips.
+    // Paths that repaint over cleared rows set it to None first.
+    let mut last_header: Option<Vec<String>> = None;
     // Defer the prompt repaint after a resize: wait for zle's repainted prompt and buffer to
     // pass through (~60ms) before painting the header, so it is not painted before zle has
     // moved the input line into place.
@@ -306,12 +310,15 @@ pub fn run() -> anyhow::Result<()> {
                     // now would move the cursor by the old amount.
                     if at_prompt && !header_rows_changed {
                         let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                        // The theme changed: paint over whatever the old theme left.
+                        last_header = None;
                         theme::redraw_header_cfg(
                             &mut stdout,
                             last_size.1 as usize,
                             &config,
                             current_info.as_ref().unwrap_or(&instant_info),
                             vcs,
+                            &mut last_header,
                         )?;
                         stdout.flush()?;
                     }
@@ -479,12 +486,16 @@ pub fn run() -> anyhow::Result<()> {
                         if shell == Shell::Zsh {
                             log("r: redraw header, defer prompt");
                             let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                            // A resize can reflow the rows under the header, so paint
+                            // unconditionally; the signal that follows repaints again on its own.
+                            last_header = None;
                             theme::redraw_header_cfg(
                                 &mut stdout,
                                 last_size.1 as usize,
                                 &config,
                                 current_info.as_ref().unwrap_or(&instant_info),
                                 vcs,
+                                &mut last_header,
                             )?;
                             stdout.flush()?;
                             resize_prompt_at = Some(
@@ -508,6 +519,7 @@ pub fn run() -> anyhow::Result<()> {
                             &config,
                             current_info.as_ref().unwrap_or(&instant_info),
                             vcs,
+                            &mut last_header,
                         )?;
                         stdout.flush()?;
                     }
@@ -587,6 +599,9 @@ pub fn run() -> anyhow::Result<()> {
                         if instant_drawn && shell.prompt_starts_on_a_new_row() {
                             write!(stdout, "\x1b[1A")?;
                         }
+                        // The shell just reprinted the prompt, so the header rows are blank
+                        // again: clear the cache and let this paint fill them.
+                        last_header = None;
                         paint_prompt(
                             &mut stdout,
                             &config,
@@ -594,6 +609,7 @@ pub fn run() -> anyhow::Result<()> {
                             current_info.as_ref(),
                             &instant_info,
                             last_vcs.as_ref(),
+                            &mut last_header,
                         )?;
                         instant_drawn = false;
                         at_prompt = true;
@@ -623,7 +639,16 @@ pub fn run() -> anyhow::Result<()> {
             last_vcs = Some((cwd.clone(), res.status.clone()));
             if at_prompt && let Some(info) = &current_info {
                 let vcs = res.status.as_ref();
-                theme::redraw_header_cfg(&mut stdout, last_size.1 as usize, &config, info, vcs)?;
+                // The rows still hold the paint from the prompt signal. When this result
+                // renders the same lines, painting again would write the same bytes.
+                theme::redraw_header_cfg(
+                    &mut stdout,
+                    last_size.1 as usize,
+                    &config,
+                    info,
+                    vcs,
+                    &mut last_header,
+                )?;
                 stdout.flush()?;
             }
             // Input line not ready: last_vcs is already updated and the `p`/marker backfill
