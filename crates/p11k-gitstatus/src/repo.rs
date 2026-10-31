@@ -19,18 +19,20 @@
 //!   `fstatat` per tracked file (stat refresh) plus one per directory
 //!   (untracked-cache mtime check); readdir only on an untracked-cache miss.
 //!   Candidates are classified without a git diff ([`Repo::compute_dirty`]).
-//!   Numeric baseline: `cargo bench -p p11k-gitstatus` reports ~1.6 ms for a
-//!   warm `build_fields` on a 5000-file repository, and ~0.4 ms on 50 files.
+//!   Baseline: the `iai` benchmark counts 3.1 M instructions for a warm
+//!   `build_fields` on a 5000-file repository and 0.47 M on 50. Callgrind
+//!   counts do not move with the machine, so they judge a change; the
+//!   criterion harness reports wall-clock milliseconds for the figure you
+//!   quote.
 //!
 //! # Known simplifications vs the original
 //!
 //! - The original runs staged scan, dirty scan, and tag query in parallel
-//!   (RunAsync + Wait); p11k runs them sequentially. The benchmark puts the
-//!   whole sequential call at ~1.6 ms for 5000 files, so a parallel split
-//!   would save under a millisecond at that size.
+//!   (RunAsync + Wait); p11k runs them sequentially. At 5000 files the whole
+//!   call is one prompt's cheapest work, and a parallel split would save a
+//!   fraction of it.
 //! - The original shards `git_diff_tree_to_index` by path ranges; p11k does
-//!   one full diff. The benchmark covers that diff as part of the same
-//!   ~1.6 ms.
+//!   one full diff. The measured call covers that diff.
 //!
 //! # TTL
 //!
