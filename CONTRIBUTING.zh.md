@@ -28,6 +28,28 @@ P11K_USER_ZSHRC=/path/to/your/rc target/debug/p11k --shell <bash/fish/pwsh/zsh>
 target/debug/p11k --shell zsh --config path/to/theme.kdl
 ```
 
+## 基准测试
+
+两个 harness 都测 `p11k-gitstatus::RepoCache::build_fields`，每次 precmd 都会调它。
+
+```bash
+just bench       # 墙钟毫秒，criterion
+just bench-iai   # 指令数，Callgrind
+```
+
+`just bench` 输出毫秒。引用这个数字时要连同机器一起写，因为负载、频率与缓存压力都会体现在墙钟时间里。
+
+`just bench-iai` 输出指令数。同一份二进制重复跑，数字基本相同：两个 50 文件的 case 逐位一致，5000 文件的 case 差 0.03%（`readdir` 顺序取决于文件系统）。判断改动快慢以指令数为准，差异小于 0.1% 视为噪声。
+
+两个 harness 都在临时目录里自建 fixture，不依赖环境变量，也不需要仓库之外的目录。CI 通过 `cargo check --all-targets` 编译它们，但不运行，因为计时需要在安静机器上做。
+
+devShell 提供 Valgrind 与 `iai-callgrind-runner`。不在 Nix 环境里时，自己安装：
+
+```bash
+cargo install iai-callgrind-runner --version 0.16.1   # 必须与 Cargo.toml 里的 iai-callgrind 一致
+# 以及发行版提供的 valgrind 包
+```
+
 ## 提交约定
 
 - 采用[约定式提交](https://www.conventionalcommits.org/zh-hans/v1.0.0/)（`feat:`、`fix:`、`chore:`、`docs:`、`refactor:`、`test:`、`perf:` 等），破坏性变更以 `!` 标记。

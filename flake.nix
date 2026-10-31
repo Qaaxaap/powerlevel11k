@@ -22,6 +22,21 @@
             "zh_CN.UTF-8/UTF-8"
           ];
         };
+      # iai-callgrind's harness shells out to this runner, and its version has to match the
+      # `iai-callgrind` dependency in `crates/p11k-gitstatus/Cargo.toml`. nixpkgs does not
+      # package it, so the flake builds it from the crate. Bump both together.
+      iaiCallgrindRunner =
+        pkgs:
+        pkgs.rustPlatform.buildRustPackage rec {
+          pname = "iai-callgrind-runner";
+          version = "0.16.1";
+          src = pkgs.fetchCrate {
+            inherit pname version;
+            hash = "sha256-wJTwaqAz8GWCJ/l9GRXYBVBkpPYrWxN4VQ7GdRFXmzM=";
+          };
+          cargoHash = "sha256-4N7P23bCeeJee/Cm3sSORByh+HzflOENqYqpu629mpA=";
+          doCheck = false;
+        };
     in
     {
       devShells = eachSystem (pkgs: {
@@ -58,6 +73,10 @@
             pkg-config
             openssl
             cmake
+            # `just bench-iai` counts instructions with Callgrind: the harness needs the runner,
+            # and the runner needs valgrind. Both come from here so no setup step is involved.
+            valgrind
+            (iaiCallgrindRunner pkgs)
           ];
           LOCALE_ARCHIVE = "${localesOf pkgs}/lib/locale/locale-archive";
           RUST_BACKTRACE = "1";
@@ -103,6 +122,9 @@
       });
 
       packages = eachSystem (pkgs: {
+        # Exposed so the devShell can pull it in and so `nix build .#iai-callgrind-runner`
+        # works for a manual check.
+        iai-callgrind-runner = iaiCallgrindRunner pkgs;
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "p11k";
           inherit version;

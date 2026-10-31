@@ -9,12 +9,11 @@
 //! moves by about 0.03% between runs, because `readdir` order depends on the file system. Treat
 //! differences below 0.1% as noise.
 //!
-//! The runner and Valgrind must be on `PATH`:
+//! The devShell provides both Valgrind and the runner (`just bench-iai`). Outside Nix:
 //!
 //! ```text
-//! cargo install iai-callgrind-runner --version 0.16.1 --root .cache/bench-tools
-//! nix shell nixpkgs#valgrind -c bash -lc \
-//!   'PATH=$PWD/.cache/bench-tools/bin:$PATH cargo bench -p p11k-gitstatus --bench build_fields_iai'
+//! cargo install iai-callgrind-runner --version 0.16.1   # must match iai-callgrind in Cargo.toml
+//! # plus your distribution's valgrind package
 //! ```
 
 mod common;
