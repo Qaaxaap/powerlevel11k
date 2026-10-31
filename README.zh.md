@@ -188,7 +188,7 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 
 ## 参与开发
 
-构建与测试环境、提交规范、翻译流程与发布流程见 [CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)。
+构建与测试环境、提交规范、翻译流程与发布流程见 [CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)。项目遵循[行为准则](CODE_OF_CONDUCT.md)，安全问题按[安全策略](SECURITY.md)上报，历史记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 贡献者
 

@@ -8,7 +8,7 @@ The project is in early development. These rules are deliberately small and will
 
 ## Development environment
 
-Everything the build and the tests need is pinned in `flake.nix`. Enter the devShell and use the recipes in `justfile`. `just` on its own lists all of them.
+Everything the build and the tests need is pinned in `flake.nix`. The demo recorder needs extra tools, listed under [Demo images](#demo-images). Enter the devShell and use the recipes in `justfile`. `just` on its own lists all of them.
 
 ```bash
 nix develop
@@ -47,7 +47,7 @@ just bench-iai   # instruction counts, Callgrind
 
 `just bench-iai` prints instruction counts. The counts repeat between runs of the same binary. The two 50-file cases repeat exactly, and the 5000-file case stays within 0.03%, because `readdir` order depends on the file system. Judge a change by these counts, and treat differences below 0.1% as noise.
 
-Both harnesses build their fixture in the temporary directory, so they need no environment variable. They also need no repository outside this one. CI compiles them through `cargo check --all-targets` but does not run them: benchmark timing belongs on a quiet machine.
+Both harnesses build their fixture in the temporary directory, so they need no environment variable. They also need no repository outside this one. CI compiles them through `cargo clippy --all-targets` but does not run them: benchmark timing belongs on a quiet machine.
 
 The devShell provides Valgrind and `iai-callgrind-runner`. Outside Nix, install them yourself:
 

@@ -2,11 +2,22 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+# One run per branch: a push to a pull request branch and the pull_request event would otherwise
+# start the same work twice.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
@@ -22,14 +33,26 @@ jobs:
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 2G
 
+      # The nix cache covers the store, not the cargo registry or the build directory, so the
+      # devShell would recompile the workspace on every run without this.
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
       - name: Check
-        run: nix develop --command just check
+        run: nix develop --command just verify
 
-      - name: Dependency licences and advisories
-        run: nix develop --command just deny
-
-      - name: Spelling
-        run: nix develop --command just spell
+      # The diff against the original daemon is the compatibility promise; it needs the real
+      # binary, which the devShell provides through GITSTATUSD_PATH.
+      - name: Differential tests
+        run: nix develop --command bash -c 'cargo test -p p11k-d --test compat -- --ignored'
 
       - name: Flake check
         run: nix flake check
@@ -49,6 +72,7 @@ jobs:
   msrv:
     name: MSRV 1.95.0
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.95.0
