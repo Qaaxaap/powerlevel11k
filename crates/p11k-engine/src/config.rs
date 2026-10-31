@@ -379,6 +379,36 @@ pub struct Config {
     /// `shell "zsh"`: the shell to proxy. `--shell` overrides it, and `$SHELL` is used when
     /// neither is given.
     pub shell: Option<String>,
+    /// `icon-padding "moderate"`: how much space separates an icon from the content next to it.
+    /// p10k's `POWERLEVEL9K_ICON_PADDING`, which defaults to `none` (one space).
+    pub icon_padding: IconPadding,
+}
+
+/// Space between an icon and the content beside it (p10k `POWERLEVEL9K_ICON_PADDING`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IconPadding {
+    /// One space. p10k `none`, and its default.
+    #[default]
+    None,
+    /// Two spaces. p10k `moderate`.
+    Moderate,
+}
+
+impl IconPadding {
+    fn from_str(s: &str) -> Self {
+        match s {
+            "moderate" => Self::Moderate,
+            _ => Self::None,
+        }
+    }
+    /// The whitespace that goes between the icon and the content in the left column; the right
+    /// column mirrors it.
+    pub fn spaces(self) -> &'static str {
+        match self {
+            Self::None => " ",
+            Self::Moderate => "  ",
+        }
+    }
 }
 
 /// One directory classification rule (the triple of p10k `DIR_CLASSES`).
@@ -417,6 +447,7 @@ impl Default for Config {
             icon_overrides: BTreeMap::new(),
             dir_classes: Vec::new(),
             shell: None,
+            icon_padding: IconPadding::default(),
         }
     }
 }
@@ -444,8 +475,7 @@ impl Config {
         doc.to_string()
     }
 
-    /// Build the equivalent KDL document. Node order is mode/layout/defaults/separators/frame/
-    /// segments/vcs-remote-icons/icon; fields equal to the `parse` default are omitted.
+    /// Build the equivalent KDL document. Fields equal to the `parse` default are omitted.
     pub fn to_document(&self) -> KdlDocument {
         let mut doc = KdlDocument::new();
         // mode must be emitted explicitly: the parse default follows the locale, so omitting it breaks round-trip.
@@ -502,6 +532,9 @@ impl Config {
             let mut n = KdlNode::new("shell");
             n.entries_mut().push(KdlEntry::new(shell.clone()));
             doc.nodes_mut().push(n);
+        }
+        if self.icon_padding == IconPadding::Moderate {
+            doc.nodes_mut().push(leaf("icon-padding", "moderate"));
         }
         doc
     }
@@ -664,6 +697,7 @@ impl Config {
         let mut icon_overrides: BTreeMap<String, IconOverride> = BTreeMap::new();
         let mut dir_classes: Vec<DirClass> = Vec::new();
         let mut shell: Option<String> = None;
+        let mut icon_padding = IconPadding::default();
 
         for node in doc.nodes() {
             match node.name().value() {
@@ -697,6 +731,11 @@ impl Config {
                 "icon" => icon_overrides = parse_icon_table(node),
                 "dir-classes" => dir_classes = parse_dir_classes(node),
                 "shell" => shell = first_value(node).and_then(str_val),
+                "icon-padding" => {
+                    if let Some(s) = first_value(node).and_then(str_val) {
+                        icon_padding = IconPadding::from_str(&s);
+                    }
+                }
                 _ => warn_unknown_key(node.name().value()),
             }
         }
@@ -711,6 +750,7 @@ impl Config {
             icon_overrides,
             dir_classes,
             shell,
+            icon_padding,
         })
     }
 }
@@ -1488,6 +1528,16 @@ icon {
         assert!(!locale_str_is_utf8("POSIX"));
         assert!(!locale_str_is_utf8("ja_JP.EUC-JP"));
         assert!(!locale_str_is_utf8("en_US"));
+    }
+
+    /// `icon-padding` must survive a round trip: the wizard writes the theme back through
+    /// `to_kdl`, and a dropped node would silently reset the option.
+    #[test]
+    fn icon_padding_round_trips() {
+        let mut c = Config::parse("layout {\n    left { line { dir } }\n}\n").unwrap();
+        c.icon_padding = IconPadding::Moderate;
+        let back = Config::parse(&c.to_kdl()).unwrap();
+        assert_eq!(back.icon_padding, IconPadding::Moderate);
     }
 
     #[test]

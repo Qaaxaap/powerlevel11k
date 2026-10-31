@@ -13,9 +13,12 @@ Themes are written in KDL v2 and passed via `--config <file>`. The rules below g
 
 ## Structure
 
-Top-level nodes today: `layout` (required), `segments`, `defaults`, `separators`, `frame`, `vcs-remote-icons`, `mode`, `icon`, `dir-classes`, `shell`. Unrecognized top-level nodes are ignored and skipped.
+Top-level nodes today: `layout` (required), `segments`, `defaults`, `separators`, `frame`, `vcs-remote-icons`, `mode`, `icon`, `dir-classes`, `shell`, `icon-padding`. Unrecognized top-level nodes are ignored and skipped.
 
 `shell "zsh"` names the shell the engine proxies, so the rc bootstrap line does not have to spell out `--shell`; `--shell` on the command line still wins, and `$SHELL` is the fallback when neither is given.
+
+`icon-padding "moderate"` puts two spaces between an icon and the content beside it. The default
+(`none`) uses one. This is p10k's `POWERLEVEL9K_ICON_PADDING`, and the two values match p10k's.
 
 ## Icon mode
 
