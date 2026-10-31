@@ -19,5 +19,10 @@ env_logger = "0.11.11"
 # matching the original StartDirtyScan range optimization.
 
 [dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 # Temporary directories for tests.
 tempfile = "3"
+
+[[bench]]
+name = "build_fields"
+harness = false
