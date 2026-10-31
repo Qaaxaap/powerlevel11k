@@ -39,3 +39,7 @@ Thumbs.db
 # ── Nix ──
 /result
 /result-*
+
+# Local run output from background commands; `typos` walks the tree and would report the
+# timestamps and log tags in it.
+/nohup.out
