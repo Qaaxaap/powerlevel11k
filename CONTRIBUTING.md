@@ -28,6 +28,28 @@ P11K_USER_ZSHRC=/path/to/your/rc target/debug/p11k --shell <bash/fish/pwsh/zsh>
 target/debug/p11k --shell zsh --config path/to/theme.kdl
 ```
 
+## Benchmarks
+
+Two harnesses measure `p11k-gitstatus::RepoCache::build_fields`, the call a prompt makes on every precmd:
+
+```bash
+just bench       # wall-clock milliseconds, criterion
+just bench-iai   # instruction counts, Callgrind
+```
+
+`just bench` prints milliseconds. Quote the machine with any number you take from it: load, frequency and cache pressure all show up in wall-clock time.
+
+`just bench-iai` prints instruction counts. These repeat between runs of the same binary: the two 50-file cases exactly, and the 5000-file case within 0.03%, because `readdir` order depends on the file system. Judge a change by these counts, and treat differences below 0.1% as noise.
+
+Both harnesses build their fixture in the temporary directory, so they need no environment variable and no repository outside this one. CI compiles them through `cargo check --all-targets` but does not run them: benchmark timing belongs on a quiet machine.
+
+The devShell provides Valgrind and `iai-callgrind-runner`. Outside Nix, install them yourself:
+
+```bash
+cargo install iai-callgrind-runner --version 0.16.1   # must match iai-callgrind in Cargo.toml
+# plus your distribution's valgrind package
+```
+
 ## Commit conventions
 
 - [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, ...). A `!` marks breaking changes.

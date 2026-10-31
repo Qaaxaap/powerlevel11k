@@ -35,9 +35,7 @@ bench:
     cargo bench -p p11k-gitstatus --bench build_fields_criterion
 
 # Run the instruction-count benchmark. Callgrind counts do not move with the machine, so this is
-# what judges a change. Needs valgrind and the iai-callgrind runner on PATH:
-#   cargo install iai-callgrind-runner --version 0.16.1 --root .cache/bench-tools
-#   nix shell nixpkgs#valgrind -c bash -lc 'PATH=$PWD/.cache/bench-tools/bin:$PATH just bench-iai'
+# what judges a change. The devShell provides valgrind and the iai-callgrind runner.
 bench-iai:
     cargo bench -p p11k-gitstatus --bench build_fields_iai
 
