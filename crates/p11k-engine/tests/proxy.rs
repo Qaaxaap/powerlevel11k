@@ -835,10 +835,13 @@ fn prompt_add_newline_leaves_one_blank_row() {
         .unwrap();
     eng.writer.flush().unwrap();
 
-    // Wait for the next prompt, not just for the output: the blank row and the prompt below it
-    // are painted after the command finishes. The first `❯` belongs to the prompt the command
-    // was typed at.
-    let screen = eng.master.screen_until("❯", 2, Duration::from_secs(30));
+    // Wait for the next prompt's header, not for its input line: the header, which carries the
+    // ✔ of the status segment, is painted after the signal, so its second appearance means the
+    // prompt below is fully drawn. `❯` is not a safe marker here: the echoed command line
+    // carries one too, and waiting on it can return a half-painted prompt.
+    let screen = eng
+        .master
+        .screen_until("\u{f00c}", 2, Duration::from_secs(30));
     assert!(
         screen.contains("P11K-PROBE-ROW"),
         "command output should be on screen, pane:\n{screen}"
