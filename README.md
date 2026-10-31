@@ -199,7 +199,7 @@ Build and test environment, commit conventions, the translation workflow and the
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/Qaaxaap"><img src="https://avatars.githubusercontent.com/u/175310223?v=4?s=100" width="100px;" alt="Qaaxaap"/><br /><sub><b>Qaaxaap</b></sub></a><br /><a href="#code-Qaaxaap" title="Code">💻</a> <a href="#doc-Qaaxaap" title="Documentation">📖</a> <a href="#test-Qaaxaap" title="Tests">⚠️</a> <a href="#infra-Qaaxaap" title="Infrastructure (Hosting, Build-Tools, etc)">🚇</a> <a href="#translation-Qaaxaap" title="Translation">🌍</a> <a href="#review-Qaaxaap" title="Reviewed Pull Requests">👀</a></td>
       <td align="center" valign="top" width="14.28%"><a href="http://revitalize.top"><img src="https://avatars.githubusercontent.com/u/247487531?v=4?s=100" width="100px;" alt="Cwhirly"/><br /><sub><b>Cwhirly</b></sub></a><br /><a href="#code-Cwhirly" title="Code">💻</a> <a href="#doc-Cwhirly" title="Documentation">📖</a></td>
-      <td align="center" valign="top" width="14.28%"><a href="https://github.com/RafaelJust"><img src="https://avatars.githubusercontent.com/u/74719647?v=4?s=100" width="100px;" alt="RafaelJust"/><br /><sub><b>RafaelJust</b></sub></a><br /><a href="#doc-RafaelJust" title="Documentation">📖</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/RafaelJust"><img src="https://avatars.githubusercontent.com/u/74719647?v=4?s=100" width="100px;" alt="RafaelJust"/><br /><sub><b>RafaelJust</b></sub></a><br /><a href="#doc-RafaelJust" title="Documentation">📖</a> <a href="#bug-RafaelJust" title="Bug reports">🐛</a> <a href="#platform-RafaelJust" title="Packaging/porting to new platform">📦</a></td>
     </tr>
   </tbody>
 </table>
