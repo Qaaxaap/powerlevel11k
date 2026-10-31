@@ -22,6 +22,16 @@ impl StateDir {
         // crash leaves it behind for a bug report. `Drop` removes it on a clean exit.
         let dir = crate::paths::state_home().join(format!("run-{}", std::process::id()));
         fs::create_dir_all(&dir)?;
+        // A FIFO, not a plain file: the engine waits on it with poll instead of re-reading a
+        // file every few milliseconds. The shell writes with `>>`, which opens the write end
+        // and blocks only until the engine's read end is available.
+        let announce = dir.join("announce");
+        let c_path = std::ffi::CString::new(announce.as_os_str().as_encoded_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "announce path"))?;
+        // SAFETY: NUL-terminated path, mode 0600 inside the state directory.
+        if unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
 
         // One protocol rc per shell. The temp rc read path is kept for debugging.
         let rc = match shell {
@@ -57,7 +67,7 @@ impl StateDir {
             }
         };
         Ok(Self {
-            announce: dir.join("announce"),
+            announce,
             ack: dir.join("ack"),
             dir,
             rc,

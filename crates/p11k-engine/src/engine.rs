@@ -6,7 +6,21 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::process;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+
+/// Write end of the signal pipe: handlers wake the poll instead of the loop re-checking a
+/// timeout. `-1` before the pipe exists (signals are installed after it is created).
+static SIGNAL_PIPE_W: AtomicI32 = AtomicI32::new(-1);
+
+/// Wake the main poll from a signal handler. Only async-signal-safe calls.
+fn wake_poll() {
+    let fd = SIGNAL_PIPE_W.load(Ordering::Relaxed);
+    if fd >= 0 {
+        let byte = 1u8;
+        // SAFETY: writes one byte to a pipe created before the handlers are installed.
+        unsafe { libc::write(fd, (&byte as *const u8).cast(), 1) };
+    }
+}
 use std::sync::mpsc;
 
 /// Real terminal SIGWINCH (resize) flag: the handler only sets it (signal-safe); the main
@@ -16,6 +30,7 @@ static RESIZE_FLAG: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_sigwinch(_sig: libc::c_int) {
     RESIZE_FLAG.store(true, Ordering::Relaxed);
+    wake_poll();
 }
 
 /// `p11k reload` flag: the command signals this engine and the main loop re-reads the theme
@@ -24,6 +39,7 @@ static RELOAD_FLAG: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_sigusr1(_sig: libc::c_int) {
     RELOAD_FLAG.store(true, Ordering::Relaxed);
+    wake_poll();
 }
 
 use crate::cli::{Shell, detect_shell, load_config, load_config_file, theme_file};
@@ -32,6 +48,25 @@ use crate::git::{GitRequest, GitResult, spawn_git_worker};
 use crate::i18n::t;
 use crate::log::{debug, info};
 use crate::protocol::{AnnMsg, SignalScanner, drain_announce, is_terminal_reply};
+
+/// Where the cursor is relative to the prompt, and whether the user has typed since it
+/// appeared. The engine must not repaint the header while a command runs (the step-up would
+/// land on command output) and must leave a half-written input line alone.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PromptState {
+    /// A command is running; the cursor is not on the input line.
+    Running,
+    /// The prompt is on screen and the input line is empty.
+    Prompt,
+    /// The prompt is on screen and the user has typed.
+    Typing,
+}
+
+impl PromptState {
+    fn at_prompt(self) -> bool {
+        matches!(self, PromptState::Prompt | PromptState::Typing)
+    }
+}
 use crate::state::{RawTerminal, StateDir, tty_size};
 use crate::theme;
 use crate::theme::{GitStatus, HeaderInfo};
@@ -189,9 +224,6 @@ pub fn run() -> anyhow::Result<()> {
         .expect("pty master fd is available on unix");
     let mut writer = pair.master.take_writer()?;
 
-    // Pre-create the announce file so the shell's >> appends never fail.
-    File::create(&state.announce)?;
-
     // Catch SIGWINCH on the real terminal so the engine also notices a resize while the
     // prompt is displayed (sync the inner pty → TRAPWINCH announces r → clear and repaint)
     // instead of waiting for the next prompt.
@@ -207,7 +239,6 @@ pub fn run() -> anyhow::Result<()> {
         );
     }
 
-    let mut ann_processed: u64 = 0; // bytes already consumed from the announce file
     let mut last_size = (rows, cols, xpix, ypix);
     let mut stdin = io::stdin();
     let mut stdout = io::stdout();
@@ -226,7 +257,7 @@ pub fn run() -> anyhow::Result<()> {
     // Whether the cursor is on the input line (after the prompt-ready signal fired, before the
     // user presses enter). Async results repaint only then, otherwise redraw's \e[1A lands on
     // command output.
-    let mut at_prompt = false;
+    let mut prompt = PromptState::Running;
     // Time of the last enter, used by the next precmd to compute command duration.
     let mut last_enter: Option<std::time::Instant> = None;
     // Workdir of the previous precmd, for the `same-dir` transient prompt.
@@ -239,10 +270,6 @@ pub fn run() -> anyhow::Result<()> {
     // pass through (~60ms) before painting the header, so it is not painted before zle has
     // moved the input line into place.
     let mut resize_prompt_at: Option<std::time::Instant> = None;
-    // Whether the user has typed since the current prompt became ready: the empty enter
-    // sent to pwsh on shrink runs only while the input line is still empty, otherwise it
-    // would submit a half-written command.
-    let mut typed_since_prompt = false;
     // Last raw bytes judged to be user input; diagnostics logging only (escaped).
     let mut last_input: Vec<u8> = Vec::new();
     // Time of the last empty enter sent on pwsh's behalf (dragging a window fires SIGWINCH
@@ -278,6 +305,18 @@ pub fn run() -> anyhow::Result<()> {
     // really printed something; after that the rows we drew have been pushed down.
     let mut instant_newlines = 0usize;
 
+    // Announce FIFO: a non-blocking read end, plus a write end we keep, so the read end does
+    // not see EOF when the shell closes its write end between prompts.
+    let announce_fd = open_fifo(&state.announce, libc::O_RDONLY)?;
+    let _announce_keepalive = open_fifo(&state.announce, libc::O_WRONLY)?;
+    // Signal pipe: the handlers write a byte so poll wakes immediately instead of on a timeout.
+    let mut signal_pipe = [0i32; 2];
+    // SAFETY: pipe() writes two fds into the array.
+    if unsafe { libc::pipe(signal_pipe.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    SIGNAL_PIPE_W.store(signal_pipe[1], Ordering::Relaxed);
+
     let mut scanner = SignalScanner::new();
 
     loop {
@@ -308,7 +347,7 @@ pub fn run() -> anyhow::Result<()> {
                     info("reload: theme reloaded");
                     // A changed row count only takes effect on the next prompt, so repainting
                     // now would move the cursor by the old amount.
-                    if at_prompt && !header_rows_changed {
+                    if prompt.at_prompt() && !header_rows_changed {
                         let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
                         // The theme changed: paint over whatever the old theme left.
                         last_header = None;
@@ -375,8 +414,7 @@ pub fn run() -> anyhow::Result<()> {
                 // so pwsh calls prompt again → announces r → the engine relayouts at the new
                 // width.
                 if shell == Shell::Pwsh
-                    && at_prompt
-                    && !typed_since_prompt
+                    && prompt == PromptState::Prompt
                     && last_pwsh_nudge
                         .is_none_or(|t| t.elapsed() > std::time::Duration::from_millis(150))
                 {
@@ -384,9 +422,10 @@ pub fn run() -> anyhow::Result<()> {
                     let _ = writer.write_all(b"\r");
                     let _ = writer.flush();
                     last_pwsh_nudge = Some(std::time::Instant::now());
-                } else if shell == Shell::Pwsh && at_prompt {
+                } else if shell == Shell::Pwsh && prompt.at_prompt() {
                     debug(&format!(
-                        "resize: no pwsh nudge (typed={typed_since_prompt}, last_input_len={})",
+                        "resize: no pwsh nudge (typed={}, last_input_len={})",
+                        prompt == PromptState::Typing,
                         last_input.len()
                     ));
                 }
@@ -408,7 +447,7 @@ pub fn run() -> anyhow::Result<()> {
             (unsafe { libc::poll(&mut probe, 1, 0) }) > 0 && probe.revents & libc::POLLIN != 0
         };
         if !pty_ready {
-            for msg in drain_announce(&state.announce, &mut ann_processed) {
+            for msg in drain_announce(announce_fd) {
                 // Sync a size change to the pty and let right alignment use the new width.
                 let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
                 if (r, c, xp, yp) != last_size {
@@ -432,7 +471,7 @@ pub fn run() -> anyhow::Result<()> {
                             .take()
                             .map(|t| t.elapsed().as_secs_f64())
                             .unwrap_or(0.0);
-                        at_prompt = false; // new prompt cycle: the next signal paints the input line
+                        prompt = PromptState::Running; // the next signal paints the input line
                         // The instant header stays flagged until the first signal arrives: that is
                         // where the real header replaces it in place.
                         if !instant_drawn && config.layout.prompt_add_newline > 0 {
@@ -493,7 +532,7 @@ pub fn run() -> anyhow::Result<()> {
                         // scratch (with new leading newlines) and the signal path above backfills
                         // it — the new prompt is not out yet, so drawing now would land on the
                         // previous screen and leave it uncovered.
-                        if at_prompt {
+                        if prompt.at_prompt() {
                             if shell == Shell::Zsh {
                                 debug("r: redraw header, defer prompt");
                                 let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
@@ -522,7 +561,7 @@ pub fn run() -> anyhow::Result<()> {
                     }
                     AnnMsg::VimMode(mode) => {
                         *crate::render::CURRENT_VI_MODE.lock().unwrap() = mode;
-                        if at_prompt {
+                        if prompt.at_prompt() {
                             debug("v: update mode, redraw header");
                             let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
                             theme::redraw_header_cfg(
@@ -551,15 +590,33 @@ pub fn run() -> anyhow::Result<()> {
                 events: libc::POLLIN,
                 revents: 0,
             },
+            libc::pollfd {
+                fd: announce_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: signal_pipe[0],
+                events: libc::POLLIN,
+                revents: 0,
+            },
         ];
-        // 5ms timeout, which doubles as the announce file polling cadence.
-        let n = unsafe { libc::poll(fds.as_mut_ptr(), 2, 5) };
+        // No timeout: the terminal, the pty, the announce FIFO and the signal pipe cover every
+        // wakeup source, so there is nothing to re-check on a clock.
+        let n = unsafe { libc::poll(fds.as_mut_ptr(), 4, -1) };
         if n < 0 {
             let err = io::Error::last_os_error();
             if err.kind() == io::ErrorKind::Interrupted {
                 continue;
             }
             return Err(err.into());
+        }
+
+        // Wake byte from a signal handler; the flags were read at the top of the loop.
+        if fds[3].revents & libc::POLLIN != 0 {
+            let mut b = [0u8; 64];
+            // SAFETY: reads into a stack array; the result is intentionally ignored.
+            let _ = unsafe { libc::read(signal_pipe[0], b.as_mut_ptr().cast(), b.len()) };
         }
 
         // Real terminal input → pty.
@@ -573,12 +630,14 @@ pub fn run() -> anyhow::Result<()> {
                     // results no longer repaint the header (otherwise \e[1A lands in the wrong
                     // place).
                     if buf[..n].iter().any(|&b| b == b'\r' || b == b'\n') {
-                        at_prompt = false;
-                        typed_since_prompt = false;
+                        prompt = PromptState::Running;
                         last_enter = Some(std::time::Instant::now()); // command timing starts
                     } else if !is_terminal_reply(&buf[..n]) {
                         // Terminal replies (DSR cursor position and the like) are not user input.
-                        typed_since_prompt = true;
+                        // Input while a command runs does not touch the prompt state.
+                        if prompt.at_prompt() {
+                            prompt = PromptState::Typing;
+                        }
                         last_input.clear();
                         last_input.extend_from_slice(&buf[..n.min(32)]);
                     }
@@ -625,8 +684,7 @@ pub fn run() -> anyhow::Result<()> {
                             &mut last_header,
                         )?;
                         instant_drawn = false;
-                        at_prompt = true;
-                        typed_since_prompt = false;
+                        prompt = PromptState::Prompt;
                     }
                     stdout.write_all(&scan.after)?;
                     // Instant-phase bookkeeping: a newline means the shell printed something
@@ -650,7 +708,9 @@ pub fn run() -> anyhow::Result<()> {
                 .map(|i| i.cwd.clone())
                 .unwrap_or_default();
             last_vcs = Some((cwd.clone(), res.status.clone()));
-            if at_prompt && let Some(info) = &current_info {
+            if prompt.at_prompt()
+                && let Some(info) = &current_info
+            {
                 let vcs = res.status.as_ref();
                 // The rows still hold the paint from the prompt signal. When this result
                 // renders the same lines, painting again would write the same bytes.
@@ -685,6 +745,19 @@ pub fn run() -> anyhow::Result<()> {
     // SIGHUP and exits. Being orphaned, even a SIGKILLed engine has its master fd closed by
     // the kernel, so the inner shell still gets SIGHUP.
     Ok(())
+}
+
+/// Open a FIFO non-blocking so the engine never waits on the shell's open.
+fn open_fifo(path: &std::path::Path, flags: libc::c_int) -> io::Result<i32> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "fifo path"))?;
+    // SAFETY: NUL-terminated path.
+    let fd = unsafe { libc::open(c.as_ptr(), flags | libc::O_NONBLOCK | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(fd)
 }
 
 #[cfg(test)]
