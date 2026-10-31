@@ -99,7 +99,7 @@ cargo install --path crates/p11k-engine
 
 需要 Rust 工具链。`msgfmt`（gettext）用于生成翻译。缺失时构建仍然成功，界面只是没有翻译。
 
-以上构建均为 x86_64 Linux。
+CI 在 x86_64 与 aarch64 Linux 上构建并测试。
 
 ## 接入 shell
 

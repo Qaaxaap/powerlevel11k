@@ -106,7 +106,7 @@ cargo install --path crates/p11k-engine
 
 This needs a Rust toolchain. `msgfmt` (gettext) generates the translations. A missing `msgfmt` still builds, and the interface simply has no translations.
 
-All builds are x86_64 Linux.
+CI builds and tests the workspace on x86_64 and aarch64 Linux.
 
 ## Wiring it into a shell
 
