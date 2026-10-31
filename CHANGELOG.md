@@ -11,20 +11,85 @@ Notable changes, newest first. Generated from
 - **engine:** Repaint the prompt whenever the shell reprints it
 - **engine:** Use the 7-bit form of cursor save and restore
 - **engine:** Cover the prompt zsh reprints while the input line is idle
+- **gitstatus:** Keep up with the git2 0.21 API
+- **i18n:** Keep up with the gettext-rs 0.8 setlocale signature
+- **prompt:** Put the signal and prefix in the prompt string without counting ANSI
+- **prompt:** Replace the instant header in place
+- **prompt:** Keep the cursor after the instant prefix
+- **prompt:** Make the instant prompt work in every shell
+- **prompt:** Let the engine pick the prefix state again
+- **prompt:** Build the header blank rows without command substitution
+- **zsh:** Chain the line-finish widget through an alias, with a re-entry guard
+- **gitstatus:** Keep the config-driven caps per request, not per process
+
+### Build
+- **deps:** Bump libc from 0.2.189 to 0.2.190
+- **deps:** Bump git2 from 0.20.4 to 0.21.0
+- **deps:** Bump gettext-rs from 0.7.7 to 0.8.0
+- **deps:** Bump libc from 0.2.190 to 0.2.191
+- **deps:** Update libz-sys to 1.1.31 for RUSTSEC-2026-0418
 
 ### CI
 - Build the flake checks in CI, with tmux and terminfo
 
+### Chores
+- Add the project infrastructure the repository was missing
+- **deps:** Drop the setlocale advisory ignore
+- Ignore the local nohup.out
+
 ### Documentation
 - Add recorded demo images and a demo-first README (#6)
 - Add an empty all-contributors slot
+- Update README.md
+- Update .all-contributorsrc
+- Update README.md
+- Update .all-contributorsrc
+- Describe the prompt-ready signal instead of the placeholder
+- Update README.md
+- Update .all-contributorsrc
+- Add RafaelJust as a contributor for bug (#36)
+- Sync the Chinese guide and the p10k knob list
+
+### Features
+- **protocol:** Strip prompt signals out of the shell stream
+- **protocol:** Split scanned output around the last signal
+- **prompt:** Colour the input-line prefix in zsh prompt syntax
+- **reload:** Derive the prompt geometry once and check reloads against it
+- **prompt:** Let a reload change the header height
+- **prompt:** Let a reload change the input-line prefix too
+- **render:** Honor the _joined suffix on a segment
+- **render:** Add icon-before-content per segment
+- **config:** Add icon-padding
+- **gitstatus:** Wire -e/--recurse-untracked-dirs
+- **gitstatus:** Wire -v/--log-level
+- **config:** Support transient-prompt "same-dir"
 
 ### Refactoring
 - **engine:** Hand the placeholder to the shell instead of substituting it
+- **engine:** Split the engine into modules
+- **protocol:** Emit a zero-width prompt-ready signal from every shell
+- **engine:** Drive the prompt from the signal instead of the placeholder
+- **engine:** Drop the instant bookkeeping the signal protocol made dead
+- **prompt:** Drop the announce and width check the signal made obsolete
 
 ### Tests
 - Run the bash tests on an interactive bash
 - Run the proxy tests inside tmux instead of a bare pty
+- Stop the dir shortening case from depending on the temp path
+- Give the marker-shell command cases the startup budget
+- Pin the terminal type of the tmux panes
+- Serialise the pwsh cases and report the scene on timeout
+- **proxy:** Assert the new prompt protocol instead of the placeholder
+- **proxy:** Stop the header assertions from depending on CI timing
+- **proxy:** Do not wait again for output the previous read returned
+- **proxy:** Locate the blank-row probe by its last occurrence
+- **proxy:** Treat a timed-out read as a failure
+- **proxy:** Read the marker that follows the command, not the one before it
+- **proxy:** Stop reading past the needle so chained reads cannot race
+- **proxy:** Assert the blank row on the rendered pane
+
+### Translations
+- Translate the remaining config and script comments
 
 ## 1.0.0-alpha.1 — 2026-09-12
 
