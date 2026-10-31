@@ -29,6 +29,10 @@ check: fmt-check lint test
 build:
     cargo build --release
 
+# Run the benchmarks.
+bench:
+    cargo bench --all --benches
+
 # Build through nix, the way a release does.
 nix-build:
     nix build
