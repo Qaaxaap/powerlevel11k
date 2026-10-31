@@ -155,6 +155,22 @@ impl Tmux {
         self.consumed.set(cur.saturating_sub(n));
     }
 
+    /// Poll the rendered pane until `needle` shows up `count` times.
+    ///
+    /// Screen state is what the cases about layout actually assert, and unlike the byte stream
+    /// it has no chunk boundaries and no ordering to reason about: either the row is on screen
+    /// or it is not.
+    fn screen_until(&self, needle: &str, count: usize, timeout: Duration) -> String {
+        let start = Instant::now();
+        loop {
+            let screen = self.screen();
+            if screen.matches(needle).count() >= count || start.elapsed() >= timeout {
+                return screen;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
     /// The rendered pane: the screen the user would be looking at.
     fn screen(&self) -> String {
         let out = Self::tmux(&self.socket, &["capture-pane", "-p", "-t", Self::SESSION]);
@@ -792,6 +808,11 @@ fn command_output_passthrough_and_next_prompt() {
 /// `prompt-add-newline #true` is one blank row, not two (p10k
 /// `POWERLEVEL9K_PROMPT_ADD_NEWLINE`): the row the engine leaves between the command output
 /// and the next prompt is the blank line the user sees.
+///
+/// Asserted on the rendered pane. Counting CRLFs in the byte stream cannot tell the blank row
+/// apart from the ones the echo, the output and the shell's own prompt handling produce, and it
+/// has to guess how those bytes interleave. The pane has neither problem: the row is there or it
+/// is not.
 #[test]
 fn prompt_add_newline_leaves_one_blank_row() {
     let home = std::env::temp_dir().join(format!("p11k-newline-home-{}", std::process::id()));
@@ -808,43 +829,40 @@ fn prompt_add_newline_leaves_one_blank_row() {
 
     let mut eng = spawn_engine_with_config_home(home.to_str().unwrap());
     wait_ready(&eng.master);
-    // Drop what is still in flight from the first prompt. It carries a prompt-start marker of
-    // its own, and a read that starts before it lands returns that one instead of the marker
-    // after the command this case is about.
-    std::thread::sleep(Duration::from_millis(200));
-    let _ = eng.master.fresh();
 
     eng.writer
-        .write_all(b"printf 'P11K-ROW-PROBE\\n'\n")
+        .write_all(b"printf 'P11K-%s-ROW\\n' PROBE\n")
         .unwrap();
     eng.writer.flush().unwrap();
-    // Read the command output first, so the marker read below can only be the one that follows
-    // it.
-    let mut out = read_until(&eng.master, "P11K-ROW-PROBE", Duration::from_secs(30));
-    out.push_str(&read_until(
-        &eng.master,
-        "\x1b]133;A\x07",
-        Duration::from_secs(30),
-    ));
+
+    // Wait for the next prompt, not just for the output: the blank row and the prompt below it
+    // are painted after the command finishes. The first `❯` belongs to the prompt the command
+    // was typed at.
+    let screen = eng.master.screen_until("❯", 2, Duration::from_secs(30));
+    assert!(
+        screen.contains("P11K-PROBE-ROW"),
+        "command output should be on screen, pane:\n{screen}"
+    );
     let _ = std::fs::remove_dir_all(&home);
 
-    // The command output ends with its own CRLF; everything between it and the prompt-start
-    // marker is the blank row the engine writes before the header. `rfind` because the echoed
-    // command line also contains the probe text: the last occurrence is the command's output.
-    let output = "P11K-ROW-PROBE\r\n";
-    let start = out
-        .rfind(output)
-        .unwrap_or_else(|| panic!("command output, got {out:?}"))
-        + output.len();
-    let rest = &out[start..];
-    let marker = rest
-        .find("\x1b]133;A\x07")
-        .unwrap_or_else(|| panic!("prompt start marker, got {out:?}"));
-    let blank = &rest[..marker];
+    let lines: Vec<&str> = screen.lines().collect();
+    let out_row = lines
+        .iter()
+        .rposition(|l| l.trim_end() == "P11K-PROBE-ROW")
+        .unwrap_or_else(|| panic!("command output row, pane:\n{screen}"));
     assert_eq!(
-        blank.matches("\r\n").count(),
-        1,
-        "prompt-add-newline #true should open one blank row, got {blank:?}"
+        lines.get(out_row + 1).map(|l| l.trim_end()),
+        Some(""),
+        "one blank row should follow the command output, pane:\n{screen}"
+    );
+    // Below the blank row the next prompt starts with its header and then the input line.
+    assert!(
+        lines.get(out_row + 2).is_some_and(|l| !l.trim().is_empty()),
+        "the next prompt's header should follow the blank row, pane:\n{screen}"
+    );
+    assert!(
+        lines[out_row + 2..].iter().any(|l| l.contains('❯')),
+        "the next prompt's input line should follow the header, pane:\n{screen}"
     );
 }
 
