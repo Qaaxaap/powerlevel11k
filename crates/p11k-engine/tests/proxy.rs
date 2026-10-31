@@ -56,6 +56,9 @@ struct Tmux {
     capture: PathBuf,
     /// How much of `capture` the byte assertions have already taken.
     consumed: Cell<usize>,
+    /// `$XDG_STATE_HOME` of the engine in this session: the tests must not write into the
+    /// developer's own state directory.
+    state_home: PathBuf,
 }
 
 impl Tmux {
@@ -69,6 +72,7 @@ impl Tmux {
 
         let capture = std::env::temp_dir().join(format!("p11k-proxy-{socket}.out"));
         let _ = std::fs::remove_file(&capture);
+        let state_home = std::env::temp_dir().join(format!("p11k-state-{socket}"));
 
         // `sleep` first: pipe-pane has to be attached before the engine writes its first byte, or
         // the opening prompt is missing from the capture. `exec` keeps the engine as the pane's
@@ -76,8 +80,9 @@ impl Tmux {
         // status scanning cannot jitter the prompt timing); the user rcs point at `/dev/null` (a
         // real `~/.zshrc` with oh-my-zsh/p10k is slow and disruptive to the assertions).
         let cmd = format!(
-            "sleep 0.3; cd /tmp && XDG_CONFIG_HOME={config_home} P11K_USER_ZSHRC={user_rc} \
-             P11K_USER_PROFILE=/dev/null exec '{}' --shell {shell}",
+            "sleep 0.3; cd /tmp && XDG_CONFIG_HOME={config_home} XDG_STATE_HOME={} \
+             P11K_USER_ZSHRC={user_rc} P11K_USER_PROFILE=/dev/null exec '{}' --shell {shell}",
+            state_home.display(),
             env!("CARGO_BIN_EXE_p11k")
         );
         let out = Self::tmux(
@@ -124,6 +129,7 @@ impl Tmux {
             socket: socket.to_string(),
             capture,
             consumed: Cell::new(0),
+            state_home,
         }
     }
 
@@ -345,7 +351,8 @@ fn try_read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
 /// repainted, or a capture that broke; this tells the three apart.
 fn diagnose(master: &Tmux) -> String {
     let pane = Tmux::tmux(&master.socket, &["capture-pane", "-p", "-t", Tmux::SESSION]);
-    let log = std::fs::read_to_string("/tmp/p11k-engine.log").unwrap_or_default();
+    let log =
+        std::fs::read_to_string(master.state_home.join("p11k/p11k-engine.log")).unwrap_or_default();
     let mut tail: Vec<&str> = log.lines().rev().take(20).collect();
     tail.reverse();
     format!(

@@ -30,7 +30,7 @@ use crate::cli::{Shell, detect_shell, load_config, load_config_file, theme_file}
 use crate::geometry::Geometry;
 use crate::git::{GitRequest, GitResult, spawn_git_worker};
 use crate::i18n::t;
-use crate::log::log;
+use crate::log::{debug, info};
 use crate::protocol::{AnnMsg, SignalScanner, drain_announce, is_terminal_reply};
 use crate::state::{RawTerminal, StateDir, tty_size};
 use crate::theme;
@@ -60,7 +60,7 @@ pub fn run() -> anyhow::Result<()> {
     // would make the line editor count it as visible width.
     let mut geometry = Geometry::new(&config, shell);
     let state = StateDir::create(shell)?;
-    log(&format!(
+    info(&format!(
         "engine start: dir={} announce={} ack={} header_rows={} shell={:?}",
         state.dir.display(),
         state.announce.display(),
@@ -296,7 +296,7 @@ pub fn run() -> anyhow::Result<()> {
                     if new_geometry.prefix_ok != geometry.prefix_ok
                         || new_geometry.prefix_err != geometry.prefix_err
                     {
-                        log(
+                        info(
                             "reload: the input-line prefix changed; it takes effect after a restart",
                         );
                     }
@@ -305,7 +305,7 @@ pub fn run() -> anyhow::Result<()> {
                     let (tx, rx) = mpsc::channel::<GitRequest>();
                     req_tx = tx;
                     spawn_git_worker(&config, rx, res_tx.clone());
-                    log("reload: theme reloaded");
+                    info("reload: theme reloaded");
                     // A changed row count only takes effect on the next prompt, so repainting
                     // now would move the cursor by the old amount.
                     if at_prompt && !header_rows_changed {
@@ -323,8 +323,8 @@ pub fn run() -> anyhow::Result<()> {
                         stdout.flush()?;
                     }
                 }
-                Some(Err(e)) => log(&format!("reload: keeping the current theme: {e}")),
-                None => log("reload: this session has no theme file"),
+                Some(Err(e)) => info(&format!("reload: keeping the current theme: {e}")),
+                None => info("reload: this session has no theme file"),
             }
         }
         // resize signal: sync the inner pty size (including pixels). zsh/bash/fish all
@@ -347,7 +347,7 @@ pub fn run() -> anyhow::Result<()> {
                     pixel_height: yp,
                 })?;
                 last_size = (r, c, xp, yp);
-                log(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
+                debug(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
                 // During the instant phase no shell `r` announce triggers a repaint yet, so
                 // the screen still holds the copy drawn at the old column count (possibly
                 // wrapped, no longer in place); repaint it here proactively. Clear and redraw
@@ -380,14 +380,14 @@ pub fn run() -> anyhow::Result<()> {
                     && last_pwsh_nudge
                         .is_none_or(|t| t.elapsed() > std::time::Duration::from_millis(150))
                 {
-                    log("resize: nudge pwsh with an empty line so it redraws");
+                    debug("resize: nudge pwsh with an empty line so it redraws");
                     let _ = writer.write_all(b"\r");
                     let _ = writer.flush();
                     last_pwsh_nudge = Some(std::time::Instant::now());
                 } else if shell == Shell::Pwsh && at_prompt {
-                    log(&format!(
-                        "resize: no pwsh nudge (typed={typed_since_prompt}, last_input={:?})",
-                        String::from_utf8_lossy(&last_input)
+                    debug(&format!(
+                        "resize: no pwsh nudge (typed={typed_since_prompt}, last_input_len={})",
+                        last_input.len()
                     ));
                 }
             }
@@ -422,7 +422,7 @@ pub fn run() -> anyhow::Result<()> {
                 }
                 match msg {
                     AnnMsg::Header(mut info) => {
-                        log(&format!(
+                        debug(&format!(
                             "h: exit={:?} cwd={:?} jobs={}",
                             info.exit_code, info.cwd, info.jobs
                         ));
@@ -482,7 +482,7 @@ pub fn run() -> anyhow::Result<()> {
                             cwd: info.cwd.clone(),
                         });
                         current_info = Some(info);
-                        log("drew header, acked");
+                        debug("drew header, acked");
                     }
                     AnnMsg::Resize => {
                         // The size check at the top of the loop already resized the pty.
@@ -495,7 +495,7 @@ pub fn run() -> anyhow::Result<()> {
                         // previous screen and leave it uncovered.
                         if at_prompt {
                             if shell == Shell::Zsh {
-                                log("r: redraw header, defer prompt");
+                                debug("r: redraw header, defer prompt");
                                 let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
                                 // A resize can reflow the rows under the header, so paint
                                 // unconditionally; the signal that follows repaints again on its own.
@@ -514,16 +514,16 @@ pub fn run() -> anyhow::Result<()> {
                                         + std::time::Duration::from_millis(60),
                                 );
                             } else {
-                                log("r: wait for the shell to reprint the prompt");
+                                debug("r: wait for the shell to reprint the prompt");
                             }
                         } else {
-                            log("r: skip redraw (not at prompt)");
+                            debug("r: skip redraw (not at prompt)");
                         }
                     }
                     AnnMsg::VimMode(mode) => {
                         *crate::render::CURRENT_VI_MODE.lock().unwrap() = mode;
                         if at_prompt {
-                            log("v: update mode, redraw header");
+                            debug("v: update mode, redraw header");
                             let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
                             theme::redraw_header_cfg(
                                 &mut stdout,
@@ -676,7 +676,7 @@ pub fn run() -> anyhow::Result<()> {
             let text = crate::render::input_prefix(&config, current_info.as_ref()).text;
             theme::render_prompt(&mut stdout, &text)?;
             stdout.flush()?;
-            log("deferred prompt drawn");
+            debug("deferred prompt drawn");
         }
     }
 

@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k\n"
 "Report-Msgid-Bugs-To: https://github.com/Qaaxaap/powerlevel11k/issues\n"
-"POT-Creation-Date: 2026-10-24 00:47+0800\n"
+"POT-Creation-Date: 2026-11-01 02:34+0800\n"
 "PO-Revision-Date: 2025-01-01 00:00+0000\n"
 "Last-Translator: p11k\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -19,53 +19,53 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: crates/p11k-engine/src/cli.rs:85 crates/p11k-engine/src/cli.rs:106
+#: crates/p11k-engine/src/cli.rs:93 crates/p11k-engine/src/cli.rs:114
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr "读取配置失败，回退内置 lean 主题: "
 
-#: crates/p11k-engine/src/cli.rs:96
+#: crates/p11k-engine/src/cli.rs:104
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr "未知预设，回退内置 lean 主题（可选 lean/classic/rainbow/pure）: "
 
-#: crates/p11k-engine/src/cli.rs:126
+#: crates/p11k-engine/src/cli.rs:134
 msgid "not inside a p11k session (P11K_ENGINE_PID is unset)"
 msgstr "当前不在 p11k 会话中（P11K_ENGINE_PID 未设置）"
 
-#: crates/p11k-engine/src/cli.rs:134
+#: crates/p11k-engine/src/cli.rs:142
 msgid ""
 "this session has no theme file: it was started with --preset or the built-in "
 "theme"
 msgstr "本会话没有主题文件：启动时用的是 --preset 或内置主题"
 
-#: crates/p11k-engine/src/cli.rs:147
+#: crates/p11k-engine/src/cli.rs:155
 msgid "cannot signal the engine (the session may have exited)"
 msgstr "无法向引擎发送信号（会话可能已退出）"
 
-#: crates/p11k-engine/src/cli.rs:170
+#: crates/p11k-engine/src/cli.rs:178
 msgid ""
 "unknown shell in the config, falling back to $SHELL (expected zsh/bash/fish/"
 "pwsh): "
 msgstr "配置里的 shell 无法识别，回退到 $SHELL（可选 zsh/bash/fish/pwsh）: "
 
-#: crates/p11k-engine/src/cli.rs:202
+#: crates/p11k-engine/src/cli.rs:210
 msgid "usage: p11k [options]"
 msgstr "用法: p11k [选项]"
 
-#: crates/p11k-engine/src/cli.rs:203
+#: crates/p11k-engine/src/cli.rs:211
 msgid "       p11k configure"
 msgstr "       p11k configure"
 
-#: crates/p11k-engine/src/cli.rs:204
+#: crates/p11k-engine/src/cli.rs:212
 msgid "       p11k reload"
 msgstr "       p11k reload"
 
-#: crates/p11k-engine/src/cli.rs:206
+#: crates/p11k-engine/src/cli.rs:214
 msgid "Options:"
 msgstr "选项:"
 
-#: crates/p11k-engine/src/cli.rs:208
+#: crates/p11k-engine/src/cli.rs:216
 msgid ""
 "  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: "
 "the `shell` config node, else $SHELL)"
@@ -73,7 +73,7 @@ msgstr ""
 "  --shell <名字>   被代理的内部 shell：zsh、bash、fish 或 pwsh（缺省取配置里"
 "的 `shell` 节点，无则用 $SHELL）"
 
-#: crates/p11k-engine/src/cli.rs:211
+#: crates/p11k-engine/src/cli.rs:219
 msgid ""
 "  --config <path>  KDL theme file (default: ~/.config/p11k/p11k.kdl, else "
 "the built-in lean theme)"
@@ -81,65 +81,71 @@ msgstr ""
 "  --config <路径>  KDL 主题文件（缺省 ~/.config/p11k/p11k.kdl，无则用内置 "
 "lean 主题）"
 
-#: crates/p11k-engine/src/cli.rs:213
+#: crates/p11k-engine/src/cli.rs:221
 msgid "  --preset <name>  built-in theme: lean, classic, rainbow or pure"
 msgstr "  --preset <名字>  内置主题：lean、classic、rainbow 或 pure"
 
-#: crates/p11k-engine/src/cli.rs:214
+#: crates/p11k-engine/src/cli.rs:223
+msgid ""
+"  --log-level <lvl>  diagnostics log level: off, error, info or debug "
+"(default: info)"
+msgstr "  --log-level <lvl>  诊断日志级别：off、error、info 或 debug（默认 info）"
+
+#: crates/p11k-engine/src/cli.rs:225
 msgid "  --version        print the version and exit"
 msgstr "  --version        打印版本后退出"
 
-#: crates/p11k-engine/src/cli.rs:215
+#: crates/p11k-engine/src/cli.rs:226
 msgid "  --help           print this help and exit"
 msgstr "  --help           打印本说明后退出"
 
-#: crates/p11k-engine/src/cli.rs:217
+#: crates/p11k-engine/src/cli.rs:228
 msgid "Commands:"
 msgstr "子命令:"
 
-#: crates/p11k-engine/src/cli.rs:218
+#: crates/p11k-engine/src/cli.rs:229
 msgid "  configure        interactive theme wizard"
 msgstr "  configure        交互式主题向导"
 
-#: crates/p11k-engine/src/cli.rs:219
+#: crates/p11k-engine/src/cli.rs:230
 msgid "  reload           re-read the theme file of the running session"
 msgstr "  reload           重新读取当前会话的主题文件"
 
-#: crates/p11k-engine/src/cli.rs:221
+#: crates/p11k-engine/src/cli.rs:232
 msgid "Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"
 msgstr "环境变量：P11K_ENGINE 用于防止递归加载；P11K_USER_ZSHRC 与"
 
-#: crates/p11k-engine/src/cli.rs:222
+#: crates/p11k-engine/src/cli.rs:233
 msgid "P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"
 msgstr "P11K_USER_PROFILE 用于覆盖所 source 的 rc；P11K_LOCALEDIR"
 
-#: crates/p11k-engine/src/cli.rs:223
+#: crates/p11k-engine/src/cli.rs:234
 msgid "overrides the translation directory. The engine exports P11K_CONFIG and"
 msgstr "用于覆盖翻译目录。引擎会把 P11K_CONFIG 与"
 
-#: crates/p11k-engine/src/cli.rs:224
+#: crates/p11k-engine/src/cli.rs:235
 msgid "P11K_ENGINE_PID into the shell for `p11k reload`."
 msgstr "P11K_ENGINE_PID 导出给 shell，供 `p11k reload` 使用。"
 
-#: crates/p11k-engine/src/cli.rs:226
+#: crates/p11k-engine/src/cli.rs:237
 msgid ""
 "To use p11k as your theme, add one line to your shell rc — see README.md."
 msgstr "若要将 p11k 用作主题，请在 shell rc 中加入一行，详见 README.zh.md"
 
 # ---- 配置解析 ----
-#: crates/p11k-engine/src/config.rs:427
+#: crates/p11k-engine/src/config.rs:486
 msgid "KDL parse error: "
 msgstr "KDL 解析失败: "
 
-#: crates/p11k-engine/src/config.rs:1183
+#: crates/p11k-engine/src/config.rs:1266
 msgid "`state` needs a name (a positional string)"
 msgstr "`state` 需要一个名字（位置字符串）"
 
-#: crates/p11k-engine/src/config.rs:1201
+#: crates/p11k-engine/src/config.rs:1284
 msgid " needs text (a positional string)"
 msgstr " 需要文本（位置字符串）"
 
-#: crates/p11k-engine/src/config.rs:1256
+#: crates/p11k-engine/src/config.rs:1339
 msgid "unknown config key: "
 msgstr "无法识别的配置键: "
 
@@ -148,15 +154,15 @@ msgid "the inner shell failed to start"
 msgstr "内部 shell 启动失败"
 
 # ---- 引擎本体 ----
-#: crates/p11k-engine/src/main.rs:90
+#: crates/p11k-engine/src/main.rs:97
 msgid "recursive launch detected (p11k started inside a p11k session)"
 msgstr "检测到递归启动（在 p11k 会话内再次启动 p11k）"
 
-#: crates/p11k-engine/src/main.rs:91
+#: crates/p11k-engine/src/main.rs:98
 msgid "make sure the bootstrap line in ~/.zshrc is guarded, e.g.:"
 msgstr "请确认 ~/.zshrc 中的引导行包含递归判断，例如："
 
-#: crates/p11k-engine/src/main.rs:95
+#: crates/p11k-engine/src/main.rs:102
 msgid "cannot exec zsh -f: "
 msgstr "exec zsh -f 失败: "
 
@@ -188,7 +194,7 @@ msgstr "是，写入配置。"
 #: crates/p11k-engine/src/wizard.rs:138 crates/p11k-engine/src/wizard.rs:258
 #: crates/p11k-engine/src/wizard.rs:269 crates/p11k-engine/src/wizard.rs:281
 #: crates/p11k-engine/src/wizard.rs:401 crates/p11k-engine/src/wizard.rs:679
-#: crates/p11k-engine/src/wizard.rs:849
+#: crates/p11k-engine/src/wizard.rs:853
 msgid "No."
 msgstr "否。"
 
@@ -207,7 +213,7 @@ msgstr "看起来像菱形（旋转的正方形）吗？"
 
 #: crates/p11k-engine/src/wizard.rs:257 crates/p11k-engine/src/wizard.rs:268
 #: crates/p11k-engine/src/wizard.rs:280 crates/p11k-engine/src/wizard.rs:678
-#: crates/p11k-engine/src/wizard.rs:848
+#: crates/p11k-engine/src/wizard.rs:852
 msgid "Yes."
 msgstr "是。"
 
@@ -426,32 +432,32 @@ msgstr "流畅。"
 msgid "Enable Transient Prompt?"
 msgstr "启用 Transient Prompt？"
 
-#: crates/p11k-engine/src/wizard.rs:714 crates/p11k-engine/src/wizard.rs:777
+#: crates/p11k-engine/src/wizard.rs:718 crates/p11k-engine/src/wizard.rs:781
 msgid "Restart from the beginning."
 msgstr "重新开始。"
 
-#: crates/p11k-engine/src/wizard.rs:715 crates/p11k-engine/src/wizard.rs:778
+#: crates/p11k-engine/src/wizard.rs:719 crates/p11k-engine/src/wizard.rs:782
 msgid "Quit"
 msgstr "退出"
 
 # ---- wizard：预览 / 落盘 ----
-#: crates/p11k-engine/src/wizard.rs:828
+#: crates/p11k-engine/src/wizard.rs:832
 msgid "Preview (current directory + exit code):"
 msgstr "预览（当前目录 + 退出码）:"
 
-#: crates/p11k-engine/src/wizard.rs:846
+#: crates/p11k-engine/src/wizard.rs:850
 msgid "p11k config file already exists. Overwrite"
 msgstr "p11k 配置文件已存在，覆盖"
 
-#: crates/p11k-engine/src/wizard.rs:865
+#: crates/p11k-engine/src/wizard.rs:869
 msgid "New config:"
 msgstr "新配置:"
 
-#: crates/p11k-engine/src/wizard.rs:867
+#: crates/p11k-engine/src/wizard.rs:871
 msgid "Add one of these to your shell rc:"
 msgstr "将对应的一行加入 shell rc:"
 
-#: crates/p11k-engine/src/wizard.rs:891
+#: crates/p11k-engine/src/wizard.rs:895
 msgid ""
 "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise "
 "they will stack."

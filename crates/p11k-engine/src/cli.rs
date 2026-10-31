@@ -57,6 +57,15 @@ fn preset_from_args() -> Option<String> {
     args.get(pos + 1).cloned()
 }
 
+/// Read `--log-level <off|error|info|debug>`. An unknown name is ignored, which keeps the
+/// default instead of refusing to start over a typo in a diagnostic flag.
+pub fn log_level_from_args() -> Option<crate::log::Level> {
+    let args: Vec<String> = std::env::args().collect();
+    let pos = args.iter().position(|a| a == "--log-level")?;
+    args.get(pos + 1)
+        .and_then(|name| crate::log::Level::parse(name))
+}
+
 /// Read and parse one KDL theme file.
 pub fn load_config_file(path: &Path) -> Result<Config, String> {
     std::fs::read_to_string(path)
@@ -211,6 +220,9 @@ pub fn print_help() {
             "  --config <path>  KDL theme file (default: ~/.config/p11k/p11k.kdl, else the built-in lean theme)",
         ),
         msgid("  --preset <name>  built-in theme: lean, classic, rainbow or pure"),
+        msgid(
+            "  --log-level <lvl>  diagnostics log level: off, error, info or debug (default: info)",
+        ),
         msgid("  --version        print the version and exit"),
         msgid("  --help           print this help and exit"),
         "",

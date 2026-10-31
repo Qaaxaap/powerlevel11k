@@ -1,6 +1,7 @@
 # powerlevel11k — Rust workspace
 
 [workspace]
+resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
