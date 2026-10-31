@@ -815,50 +815,13 @@ impl Repo {
                 // dirs are not reported).
                 if m_untracked != 0 {
                     let dir_rel = &c[..c.len() - 1];
-                    let mut dir_abs = self.workdir.clone();
-                    dir_abs.push(b'/');
-                    dir_abs.extend_from_slice(dir_rel);
-                    if let Ok(rd) = std::fs::read_dir(Path::new(OsStr::from_bytes(&dir_abs))) {
-                        for e in rd.flatten() {
-                            let mut rel = dir_rel.to_vec();
-                            rel.push(b'/');
-                            rel.extend_from_slice(e.file_name().as_bytes());
-                            // Untracked means unignored and not in the index
-                            // (tracked files are also unignored, so they
-                            // must be excluded).
-                            let ignored = self
-                                .git
-                                .status_should_ignore(Path::new(OsStr::from_bytes(&rel)))
-                                .unwrap_or(false);
-                            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                            let tracked = if is_dir {
-                                // Subdir: tracked iff an entry has the
-                                // "rel/" prefix.
-                                let mut probe = rel.clone();
-                                probe.push(b'/');
-                                match index.entries.binary_search_by(|en| {
-                                    en.path[..en.path.len() - 1].cmp(probe.as_slice())
-                                }) {
-                                    Ok(_) => true,
-                                    Err(pos) => {
-                                        pos < index.entries.len()
-                                            && index.entries[pos].path.starts_with(&probe[..])
-                                    }
-                                }
-                            } else {
-                                index
-                                    .entries
-                                    .binary_search_by(|en| {
-                                        en.path[..en.path.len() - 1].cmp(rel.as_slice())
-                                    })
-                                    .is_ok()
-                            };
-                            if !ignored && !tracked {
-                                stats.num_untracked += 1;
-                                break; // FAST semantics: dir counts as 1
-                            }
-                        }
-                    }
+                    self.count_untracked_below(
+                        dir_rel,
+                        index,
+                        stats,
+                        limits.recurse_untracked_dirs,
+                        m_untracked,
+                    );
                 }
             } else {
                 // Index membership: entries are sorted by path (with
@@ -899,6 +862,73 @@ impl Repo {
         stats.num_unstaged_deleted = cap(stats.num_unstaged_deleted, stats.num_unstaged as i64);
     }
 
+    /// Count the untracked entries below a directory candidate.
+    ///
+    /// Default (`-e` off): the directory counts as one, as long as it holds at least one
+    /// unignored entry that is not in the index (`ENABLE_FAST_UNTRACKED_DIRS` in the original).
+    /// With `-e/--recurse-untracked-dirs`: every unignored file below the directory counts,
+    /// which is the original's `GIT_DIFF_RECURSE_UNTRACKED_DIRS` (`gitstatus/repo.cc:276`).
+    ///
+    /// Stops as soon as the cap is reached, so a large untracked tree cannot make the prompt
+    /// scan it all when the count is capped anyway.
+    fn count_untracked_below(
+        &self,
+        dir_rel: &[u8],
+        index: &Index,
+        stats: &mut IndexStats,
+        recurse: bool,
+        cap: i64,
+    ) {
+        let reached = |stats: &IndexStats| cap >= 0 && stats.num_untracked >= cap as usize;
+        let mut dir_abs = self.workdir.clone();
+        dir_abs.push(b'/');
+        dir_abs.extend_from_slice(dir_rel);
+        let Ok(rd) = std::fs::read_dir(Path::new(OsStr::from_bytes(&dir_abs))) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let mut rel = dir_rel.to_vec();
+            rel.push(b'/');
+            rel.extend_from_slice(e.file_name().as_bytes());
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if !rel_in_index(index, &rel, is_dir) {
+                // Untracked means unignored and not in the index; tracked files are unignored
+                // too, so the index check above is what excludes them.
+                let ignored = self
+                    .git
+                    .status_should_ignore(Path::new(OsStr::from_bytes(&rel)))
+                    .unwrap_or(false);
+                if !ignored {
+                    if !recurse {
+                        // FAST semantics: one unignored entry makes the directory count as one.
+                        stats.num_untracked += 1;
+                        return;
+                    }
+                    if !is_dir {
+                        stats.num_untracked += 1;
+                        if reached(stats) {
+                            return;
+                        }
+                        continue;
+                    }
+                }
+                if ignored {
+                    // An ignored directory hides everything below it.
+                    continue;
+                }
+            }
+            // Directories are descended into whether or not the index knows them: a tracked
+            // directory can still hold untracked files. A directory never counts by itself,
+            // because git tracks files only.
+            if recurse && is_dir {
+                self.count_untracked_below(&rel, index, stats, true, cap);
+                if reached(stats) {
+                    return;
+                }
+            }
+        }
+    }
+
     /// Repo capability bits (RepoCaps; config missing → defaults).
     fn repo_caps(&self, _index: &GitIndex) -> RepoCaps {
         let get_bool = |name: &str, default: bool| {
@@ -922,6 +952,29 @@ impl Repo {
         // SAFETY: workdir is NUL-terminated.
         let fd = unsafe { libc::open(p.as_ptr().cast(), libc::O_RDONLY | libc::O_DIRECTORY) };
         (fd >= 0).then_some(fd)
+    }
+}
+
+/// Whether a workdir-relative path is in the index. Directories count as tracked when an entry
+/// below them exists, because git stores files only.
+fn rel_in_index(index: &Index, rel: &[u8], is_dir: bool) -> bool {
+    if is_dir {
+        let mut probe = rel.to_vec();
+        probe.push(b'/');
+        match index
+            .entries
+            .binary_search_by(|en| en.path[..en.path.len() - 1].cmp(probe.as_slice()))
+        {
+            Ok(_) => true,
+            Err(pos) => {
+                pos < index.entries.len() && index.entries[pos].path.starts_with(&probe[..])
+            }
+        }
+    } else {
+        index
+            .entries
+            .binary_search_by(|en| en.path[..en.path.len() - 1].cmp(rel))
+            .is_ok()
     }
 }
 
