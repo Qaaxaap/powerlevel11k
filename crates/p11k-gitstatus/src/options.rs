@@ -93,14 +93,19 @@ pub enum LogLevel {
     Fatal,
 }
 impl LogLevel {
-    /// Maps to libgit2's `git_trace_level_t`.
-    pub fn as_git_trace_level(self) -> i32 {
+    /// The `log` crate filter that matches this level.
+    ///
+    /// gitstatusd's `-v` sets its own minimum level (`gitstatus.cc:185` assigns
+    /// `g_min_log_level`), not libgit2's trace level, so this is what the daemon wires up.
+    pub fn as_filter(self) -> log::LevelFilter {
         match self {
-            Self::Debug => 5,
-            Self::Info => 4,
-            Self::Warn => 3,
-            Self::Error => 2,
-            Self::Fatal => 1,
+            Self::Debug => log::LevelFilter::Debug,
+            Self::Info => log::LevelFilter::Info,
+            Self::Warn => log::LevelFilter::Warn,
+            Self::Error => log::LevelFilter::Error,
+            // gitstatusd treats `fatal` as the most severe level it still prints. The `log`
+            // crate has no separate filter for it, so it maps to `Error`.
+            Self::Fatal => log::LevelFilter::Error,
         }
     }
 }
@@ -512,4 +517,40 @@ fn parse_class(pat: &[u8]) -> Option<(CharClass, usize)> {
         return None;
     }
     Some((CharClass { ranges, negate }, i))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `-v` picks the `log` filter the daemon installs. The ordering is what matters: a higher
+    /// level shows fewer messages, so the numeric rank must increase.
+    #[test]
+    fn log_levels_map_to_increasing_filters() {
+        let rank = |f: log::LevelFilter| match f {
+            log::LevelFilter::Off => 0,
+            log::LevelFilter::Error => 1,
+            log::LevelFilter::Warn => 2,
+            log::LevelFilter::Info => 3,
+            log::LevelFilter::Debug => 4,
+            log::LevelFilter::Trace => 5,
+        };
+        let levels = [
+            LogLevel::Fatal,
+            LogLevel::Error,
+            LogLevel::Warn,
+            LogLevel::Info,
+            LogLevel::Debug,
+        ];
+        for pair in levels.windows(2) {
+            assert!(
+                rank(pair[1].as_filter()) >= rank(pair[0].as_filter()),
+                "{} should filter at least as much as {}",
+                pair[0] as u8,
+                pair[1] as u8
+            );
+        }
+        assert_eq!(LogLevel::Debug.as_filter(), log::LevelFilter::Debug);
+        assert_eq!(LogLevel::Info.as_filter(), log::LevelFilter::Info);
+    }
 }

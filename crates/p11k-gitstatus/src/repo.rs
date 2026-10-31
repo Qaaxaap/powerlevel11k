@@ -255,6 +255,11 @@ impl Repo {
     /// With skip_index (wire diff='1'), index stats are skipped: stats stay
     /// all-zero, like the original's `if (req.diff) stats = ...`.
     pub fn build_fields(&mut self, skip_index: bool) -> [Vec<u8>; field::COUNT] {
+        log::debug!(
+            "build_fields: workdir={} skip_index={}",
+            String::from_utf8_lossy(&self.workdir),
+            skip_index
+        );
         // Re-read HEAD on every request (mirrors the original gitstatus.cc calling `Head(repo)` each
         // time): a commit/checkout takes effect immediately, refreshing COMMIT and the staged cache together.
         self.head_oid = self
@@ -639,6 +644,14 @@ impl Repo {
                 assume_unchanged: assume,
             };
         }
+        log::debug!(
+            "index stats: size={} staged={} unstaged={} conflicted={} untracked={}",
+            stats.index_size,
+            cap(self.staged_stats.staged, limits.max_num_staged),
+            stats.num_unstaged,
+            stats.num_conflicted,
+            stats.num_untracked
+        );
         stats.num_staged = cap(self.staged_stats.staged, limits.max_num_staged);
         stats.num_conflicted = cap(self.staged_stats.conflicted, limits.max_num_conflicted);
         stats.num_staged_new = cap(self.staged_stats.staged_new, stats.num_staged as i64);
