@@ -12,3 +12,8 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # dtolnay/rust-toolchain is pinned to the MSRV of the crate. Its ref selects the Rust
+    # toolchain, so a bump would move the MSRV job off 1.95. The action also publishes refs
+    # for Rust releases that rustup cannot install yet, and dependabot picks them up.
+    ignore:
+      - dependency-name: dtolnay/rust-toolchain
