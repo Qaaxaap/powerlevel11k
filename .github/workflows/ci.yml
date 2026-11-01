@@ -37,7 +37,7 @@ jobs:
       # The nix cache covers the store, not the cargo registry or the build directory, so the
       # devShell would recompile the workspace on every run without this.
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
