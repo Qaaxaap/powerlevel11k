@@ -21,6 +21,8 @@ Notable changes, newest first. Generated from
 - **prompt:** Build the header blank rows without command substitution
 - **zsh:** Chain the line-finish widget through an alias, with a re-entry guard
 - **gitstatus:** Keep the config-driven caps per request, not per process
+- **engine:** Forward pending pty output before handling an announce
+- **gitstatus:** Answer requests from one loop, in order
 
 ### Build
 - **deps:** Bump libc from 0.2.189 to 0.2.190
@@ -28,14 +30,28 @@ Notable changes, newest first. Generated from
 - **deps:** Bump gettext-rs from 0.7.7 to 0.8.0
 - **deps:** Bump libc from 0.2.190 to 0.2.191
 - **deps:** Update libz-sys to 1.1.31 for RUSTSEC-2026-0418
+- Bring the benchmark toolchain into the devShell
+- Verify the release pipeline and pin the MSRV
+- **deps:** Bump unicode-width from 0.2.2 to 0.2.3 (#63)
+- **deps:** Bump actions/upload-artifact from 4 to 7 (#59)
+- **deps:** Bump actions/cache from 4 to 6 (#60)
+- **deps:** Bump actions/download-artifact from 4 to 8 (#62)
 
 ### CI
 - Build the flake checks in CI, with tmux and terminfo
+- Group release notes by label
+- Attach the ldd dependency list to releases
+- Run one check per change and gate the MSRV tree
+- Pass the release flags through an array
+- Build and test on aarch64
+- Name the platform jobs consistently
 
 ### Chores
 - Add the project infrastructure the repository was missing
 - **deps:** Drop the setlocale advisory ignore
 - Ignore the local nohup.out
+- Clean up the repository leftovers
+- **deps:** Exclude the MSRV toolchain from dependabot updates
 
 ### Documentation
 - Add recorded demo images and a demo-first README (#6)
@@ -49,6 +65,11 @@ Notable changes, newest first. Generated from
 - Update .all-contributorsrc
 - Add RafaelJust as a contributor for bug (#36)
 - Sync the Chinese guide and the p10k knob list
+- Regenerate the changelog
+- **gitstatus:** Replace the perf TODOs with the measured numbers
+- Rewrite the Chinese docs for clarity
+- Keep the Chinese contributor table in sync
+- Improve the structure of the English docs
 
 ### Features
 - **protocol:** Strip prompt signals out of the shell stream
@@ -64,6 +85,11 @@ Notable changes, newest first. Generated from
 - **gitstatus:** Wire -v/--log-level
 - **config:** Support transient-prompt "same-dir"
 
+### Performance
+- **engine:** Skip a header repaint that would write the same bytes
+- **gitstatus:** Add a criterion benchmark for build_fields
+- **gitstatus:** Add an instruction-count harness next to the wall-clock one
+
 ### Refactoring
 - **engine:** Hand the placeholder to the shell instead of substituting it
 - **engine:** Split the engine into modules
@@ -71,6 +97,9 @@ Notable changes, newest first. Generated from
 - **engine:** Drive the prompt from the signal instead of the placeholder
 - **engine:** Drop the instant bookkeeping the signal protocol made dead
 - **prompt:** Drop the announce and width check the signal made obsolete
+- **engine:** Move state files under XDG_STATE_HOME and grade the log
+- **gitstatus:** Answer each request on its own thread
+- **engine:** Replace the announce file with a FIFO and wake the loop on signals
 
 ### Tests
 - Run the bash tests on an interactive bash
