@@ -21,3 +21,10 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# `bench` inherits `release`, so the strip setting above also strips the benchmark binary.
+# iai-callgrind's `--toggle-collect` matches the wrapper function by name, and valgrind cannot
+# resolve a stripped symbol: every metric then reads zero. Keep the symbols in the bench build;
+# the release binaries stay stripped.
+[profile.bench]
+strip = false
