@@ -10,7 +10,11 @@
   };
 
   outputs =
-    { self, nixpkgs, rust-overlay }:
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -20,7 +24,13 @@
       eachSystem =
         f:
         nixpkgs.lib.genAttrs systems (
-          system: f (import nixpkgs { inherit system; overlays = [ (import rust-overlay) ]; })
+          system:
+          f (
+            import nixpkgs {
+              inherit system;
+              overlays = [ (import rust-overlay) ];
+            }
+          )
         );
       localesOf =
         pkgs:
@@ -76,6 +86,12 @@
             git-cliff
             cargo-deny
             typos
+            # `just nix-fmt-check` checks the flake itself.
+            nixfmt
+            # `just demo` runs tools/demo/capture.sh; its other tools (agg, ImageMagick,
+            # fontconfig) are heavy and are pulled on demand by that recipe instead of sitting
+            # in every devShell. python3 is small and runs record.py.
+            python3
             git
             pkg-config
             cmake

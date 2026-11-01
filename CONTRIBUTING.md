@@ -81,7 +81,7 @@ The still images come from tmux pane dumps, because fish asks the terminal quest
 
 The keystrokes are in `tools/demo/scenes/demo.json`, the theme in `tools/demo/demo.kdl`, and `tools/demo/presets/` holds the files behind the presets image.
 
-Re-recording needs a built `p11k` (`cargo build --release -p p11k-engine`), zsh, bash, fish, python3, tmux, agg (asciinema/agg), ImageMagick and the Maple Mono Nerd Font.
+Re-recording needs a built `p11k` (`cargo build --release -p p11k-engine`) and the devShell for zsh, bash, fish, python3 and tmux. `just demo` pulls agg, ImageMagick and fontconfig through `nix shell`. The images use the Maple Mono Nerd Font; set `FONT_FILE` to another font file when `fc-match` does not find it.
 
 ## Translations
 
