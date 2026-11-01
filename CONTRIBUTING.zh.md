@@ -109,7 +109,7 @@ tools/i18n.sh update    # msgmerge 将新条目并入每个 po/*.po
 
 发布由 tag 触发：`v*` 形式的 tag 会构建 `p11k` 与 `p11k-d`，并将 tar 包与 `.deb` 附到该 tag 的 GitHub Release。
 
-打 tag 前先执行 `just changelog` 并提交结果。`CHANGELOG.md` 由约定式提交历史生成，tag 会把当前的 `Unreleased` 段定稿。
+打 tag 前先执行 `just changelog v<version>` 并提交结果。`CHANGELOG.md` 由约定式提交历史生成。不传 tag 参数时，条目保留在 `Unreleased` 段。
 
 tag 的版本号必须与 `Cargo.toml` 中 `[workspace.package] version` 一致。workflow 会校验，不一致时失败。
 
