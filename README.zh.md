@@ -82,6 +82,8 @@ Debian / Ubuntu：从 [release](https://github.com/Qaaxaap/powerlevel11k/release
 sudo apt install ./p11k_<version>_amd64.deb
 ```
 
+预发布版本的文件名把版本号里的连字符改写成波浪号。例如 `1.0.0-alpha.1` 的文件名是 `p11k_1.0.0~alpha.1_amd64.deb`。
+
 其它发行版解压 tar 包。`bin/` 与 `share/` 可重定位，词条既从系统目录查找，也从可执行文件旁查找。
 
 ```bash

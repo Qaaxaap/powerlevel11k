@@ -82,6 +82,8 @@ On Debian and Ubuntu, from the `.deb` attached to a [release](https://github.com
 sudo apt install ./p11k_<version>_amd64.deb
 ```
 
+Prerelease versions replace the hyphen in the version with a tilde. For example, `1.0.0-alpha.1` ships as `p11k_1.0.0~alpha.1_amd64.deb`.
+
 On Arch Linux, from the [AUR](https://aur.archlinux.org), with any AUR helper:
 
 ```bash
