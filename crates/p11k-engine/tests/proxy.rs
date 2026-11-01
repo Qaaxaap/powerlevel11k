@@ -907,6 +907,24 @@ fn bash_resize_repaints_the_header() {
     assert_resized_screen(&eng.master);
 }
 
+/// fish repaints through `--on-signal WINCH` and its own prompt function; the result must be the
+/// same single header with the buffer under it.
+#[test]
+fn fish_resize_repaints_the_header() {
+    let mut eng = spawn_engine_shell_with_theme("fish", RESIZE_THEME);
+    wait_ready(&eng.master);
+
+    eng.writer.write_all(b"echo typed-buffer").unwrap();
+    eng.writer.flush().unwrap();
+    // fish highlights the buffer, so its echo carries ANSI codes between the characters and a
+    // byte-level `read_until` would not match the literal text. Assert on the rendered pane.
+    eng.master.screen_until("echo typed-buffer", 1, SHELL_READY);
+
+    eng.master.resize(60, 20);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    assert_resized_screen(&eng.master);
+}
+
 /// After a resize: exactly one header, no leftover content above it, and the input line directly
 /// under it keeps the typed buffer.
 ///
