@@ -15,6 +15,38 @@ permissions:
   contents: read
 
 jobs:
+  # A non-conventional title disappears from CHANGELOG.md (git-cliff filters it), and with a
+  # single-commit pull request the squashed commit takes its title from the commit, so a bad
+  # commit title can reach main even when the pull request title is fine. Check both.
+  commit-lint:
+    name: commit-lint
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check the pull request title and its commit titles
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -eu
+          pattern='^(feat|fix|chore|docs|test|ci|refactor|perf|build|style|revert)(\([a-z0-9._-]+\))?!?: .+'
+          status=0
+          if ! printf '%s\n' "$PR_TITLE" | grep -Eq "$pattern"; then
+            echo "::error::pull request title does not follow Conventional Commits: $PR_TITLE"
+            status=1
+          fi
+          while IFS= read -r subject; do
+            if ! printf '%s\n' "$subject" | grep -Eq "$pattern"; then
+              echo "::error::commit title does not follow Conventional Commits: $subject"
+              status=1
+            fi
+          done < <(git log --no-merges --format=%s "$BASE_SHA..HEAD")
+          exit "$status"
+
   x86_64:
     name: x86_64
     runs-on: ubuntu-latest
@@ -35,7 +67,8 @@ jobs:
           gc-max-store-size-linux: 2G
 
       # The nix cache covers the store, not the cargo registry or the build directory, so the
-      # devShell would recompile the workspace on every run without this.
+      # devShell would recompile the workspace on every run without this. The architecture is in
+      # the key because build artifacts are not portable between x86_64 and aarch64.
       - name: Cache cargo
         uses: actions/cache@v6
         with:
@@ -43,9 +76,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-
+            cargo-${{ runner.arch }}-${{ runner.os }}-
 
       - name: Check
         run: nix develop --command just verify
@@ -100,6 +133,19 @@ jobs:
           primary-key: nix-aarch64-${{ hashFiles('**/*.nix', '**/flake.lock') }}
           restore-prefixes-first-match: nix-aarch64-
           gc-max-store-size-linux: 2G
+
+      # Same cargo cache as the x86_64 job; the key carries the architecture so the two runners
+      # never restore each other's build artifacts.
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.arch }}-${{ runner.os }}-
 
       - name: Check
         run: nix develop --command just verify
