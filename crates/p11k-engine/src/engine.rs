@@ -498,16 +498,11 @@ pub fn run() -> anyhow::Result<()> {
                         // the shell where it was (p10k's `always` / `same-dir` split). The engine
                         // decides because it already knows both directories; the shell only reads
                         // the answer.
-                        let transient_on = match config.layout.transient_prompt {
-                            crate::config::TransientPrompt::Off => false,
-                            crate::config::TransientPrompt::Always => true,
-                            // The first prompt has no previous directory to compare against, so it
-                            // folds the way `always` would.
-                            crate::config::TransientPrompt::SameDir => {
-                                last_prompt_cwd.as_deref() == Some(info.cwd.as_str())
-                                    || last_prompt_cwd.is_none()
-                            }
-                        };
+                        let transient_on = transient_folds(
+                            config.layout.transient_prompt,
+                            last_prompt_cwd.as_deref(),
+                            &info.cwd,
+                        );
                         last_prompt_cwd = Some(info.cwd.clone());
                         let mut ack = File::create(&state.ack)?;
                         writeln!(ack, "{}", geometry.header_rows)?;
@@ -760,6 +755,21 @@ fn open_fifo(path: &std::path::Path, flags: libc::c_int) -> io::Result<i32> {
     Ok(fd)
 }
 
+/// Whether this prompt folds. `same-dir` compares the directory with the one recorded on the
+/// previous prompt, so the first prompt (no record) keeps its header; p10k compares against an
+/// empty value and does not fold there either.
+fn transient_folds(
+    mode: crate::config::TransientPrompt,
+    last_cwd: Option<&str>,
+    cwd: &str,
+) -> bool {
+    match mode {
+        crate::config::TransientPrompt::Off => false,
+        crate::config::TransientPrompt::Always => true,
+        crate::config::TransientPrompt::SameDir => last_cwd == Some(cwd),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -797,6 +807,21 @@ mod tests {
             Some(Shell::Fish)
         );
         assert_eq!(pick_shell(None, None, "/usr/bin/tcsh"), None);
+    }
+
+    /// `same-dir` folds only after the first command: the first prompt has no directory to
+    /// compare against, and p10k compares against an empty value, so it keeps its header.
+    #[test]
+    fn transient_fold_decision() {
+        use crate::config::TransientPrompt::{Always, Off, SameDir};
+        assert!(!transient_folds(Off, None, "/a"));
+        assert!(transient_folds(Always, None, "/a"));
+        assert!(
+            !transient_folds(SameDir, None, "/a"),
+            "the first prompt must keep its header"
+        );
+        assert!(transient_folds(SameDir, Some("/a"), "/a"));
+        assert!(!transient_folds(SameDir, Some("/a"), "/b"));
     }
 
     /// DSR/DA/focus are terminal replies, not user typing — misjudging them disables pwsh's
