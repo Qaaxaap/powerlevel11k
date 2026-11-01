@@ -140,12 +140,18 @@ jobs:
         run: |
           set -eu
           version="${GITHUB_REF_NAME#v}"
-          # CHANGELOG.md is the single source for release notes. When the changelog has no
-          # section for this tag yet (the tag was cut before `just changelog <tag>`), fall back
-          # to the notes GitHub generates from the pull requests.
+          # CHANGELOG.md is the single source for release notes. git-cliff writes a version
+          # section as `## <version> — <date>`. An Unreleased section has no version field.
+          # When the changelog has no section for this tag yet (the tag was cut before
+          # `just changelog v<version>`), fall back to the notes GitHub generates from the
+          # pull requests.
           notes=$(mktemp)
           awk -v v="$version" '
-            /^## \[/ { keep = index($0, "[" v "]") > 0; if (keep) next }
+            /^## / {
+              if (keep) exit
+              keep = ($2 == v)
+              if (keep) next
+            }
             keep { print }
           ' CHANGELOG.md > "$notes"
           args=("--title" "p11k $version")
@@ -155,6 +161,7 @@ jobs:
           if [ -s "$notes" ]; then
             args+=(--notes-file "$notes")
           else
+            echo "::warning::CHANGELOG.md has no section for $version. The notes fall back to the generated ones."
             args+=(--generate-notes)
           fi
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
