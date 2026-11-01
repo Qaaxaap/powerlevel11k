@@ -186,6 +186,28 @@ impl Tmux {
         }
     }
 
+    /// Resize the terminal the engine runs in. The pane size is the pty size, so the engine
+    /// receives SIGWINCH and syncs the inner pty to it.
+    fn resize(&self, cols: u16, rows: u16) {
+        let out = Self::tmux(
+            &self.socket,
+            &[
+                "resize-window",
+                "-t",
+                Self::SESSION,
+                "-x",
+                &cols.to_string(),
+                "-y",
+                &rows.to_string(),
+            ],
+        );
+        assert!(
+            out.status.success(),
+            "tmux resize-window failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     /// The rendered pane: the screen the user would be looking at.
     fn screen(&self) -> String {
         let out = Self::tmux(&self.socket, &["capture-pane", "-p", "-t", Self::SESSION]);
@@ -319,16 +341,19 @@ fn spawn_engine_shell_with_rc(shell: &str, config_home: &str, user_rc: &str) -> 
     }
 }
 
-/// Start the engine with an explicit theme file. The transient cases need a theme that turns the
-/// feature on, and the engine reads a theme file with `--config`.
-fn spawn_engine_with_theme(theme: &str) -> Engine {
-    let socket = format!("p11k-theme-{}", SOCKET_SEQ.fetch_add(1, Ordering::Relaxed));
+/// Start the engine with an explicit theme for `shell`. The engine reads a theme file with
+/// `--config`.
+fn spawn_engine_shell_with_theme(shell: &str, theme: &str) -> Engine {
+    let socket = format!(
+        "p11k-theme-{shell}-{}",
+        SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
     let path = std::env::temp_dir().join(format!("p11k-theme-{socket}.kdl"));
     std::fs::write(&path, theme).unwrap();
     Engine {
         master: Box::new(Tmux::start(
             &socket,
-            "zsh",
+            shell,
             "/nonexistent-p11k-config",
             "/dev/null",
             Some(&path),
@@ -336,6 +361,10 @@ fn spawn_engine_with_theme(theme: &str) -> Engine {
         writer: Box::new(TmuxKeys { socket }),
         _pwsh_guard: None,
     }
+}
+
+fn spawn_engine_with_theme(theme: &str) -> Engine {
+    spawn_engine_shell_with_theme("zsh", theme)
 }
 
 /// Read until `needle` appears in the engine's output, returning what the engine wrote since the
@@ -831,6 +860,79 @@ fn same_dir_keeps_the_first_prompt_whole() {
     assert!(
         lines[at - 1].contains("HDRMARK|"),
         "the first prompt must keep its header, got {screen:?}"
+    );
+}
+
+/// The resize theme: one header row with a frame marker, plus a status segment so `wait_ready`
+/// has its checkmark.
+const RESIZE_THEME: &str = "layout {\n    left { line { dir } }\n    right { line { status } }\n}\n\
+                            segments {\n    status verbose=#true\n}\n\
+                            frame { first-prefix \"HDRMARK|\" }\n";
+
+/// A resize must repaint the header at the new width and leave the input line alone. The engine
+/// syncs the inner pty to the new size and redraws after the shell reprints its prompt.
+#[test]
+fn zsh_resize_repaints_the_header_and_keeps_the_buffer() {
+    let mut eng = spawn_engine_with_theme(RESIZE_THEME);
+    wait_ready(&eng.master);
+
+    eng.writer.write_all(b"echo typed-buffer").unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "echo typed-buffer", SHELL_READY);
+
+    // Narrow: the header is repainted at the new width, with the buffer untouched.
+    eng.master.resize(60, 20);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    assert_resized_screen(&eng.master);
+
+    // Wider: the other direction.
+    eng.master.resize(120, 24);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    assert_resized_screen(&eng.master);
+}
+
+/// bash repaints through its own WINCH trap and `PROMPT_COMMAND`; the result must still be one
+/// header with the input line under it.
+#[test]
+fn bash_resize_repaints_the_header() {
+    let mut eng = spawn_engine_shell_with_theme("bash", RESIZE_THEME);
+    wait_ready(&eng.master);
+
+    eng.writer.write_all(b"echo typed-buffer").unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "echo typed-buffer", SHELL_READY);
+
+    eng.master.resize(60, 20);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    assert_resized_screen(&eng.master);
+}
+
+/// After a resize: exactly one header, no leftover content above it, and the input line directly
+/// under it keeps the typed buffer.
+///
+/// The scrollback may hold an older copy: the terminal itself reflows and scrolls the pre-resize
+/// rows into history when the width changes, so the history is not the engine's to assert.
+fn assert_resized_screen(master: &Tmux) {
+    let screen = master.screen();
+    assert_eq!(
+        screen.matches("HDRMARK|").count(),
+        1,
+        "exactly one header after a resize, got {screen:?}"
+    );
+    let lines: Vec<&str> = screen.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.contains("HDRMARK|"))
+        .unwrap_or_else(|| panic!("no header after a resize, got {screen:?}"));
+    assert!(
+        lines[..at].iter().all(|line| line.trim().is_empty()),
+        "no leftover content above the header, got {screen:?}"
+    );
+    assert!(
+        lines
+            .get(at + 1)
+            .is_some_and(|line| line.contains('❯') && line.contains("echo typed-buffer")),
+        "the input line must stay under the header with the buffer, got {screen:?}"
     );
 }
 
