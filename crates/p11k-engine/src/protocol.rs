@@ -23,9 +23,10 @@ pub enum AnnMsg {
 /// `<history>`; bash/fish have no such column.
 ///
 /// The caller waits for the FIFO to become readable with poll, so one drain takes everything
-/// that is buffered and returns.
-pub fn drain_announce(fd: i32) -> Vec<AnnMsg> {
-    let mut buf = Vec::new();
+/// that is buffered and returns. A read can end in the middle of a line: the partial line stays
+/// in `pending` until the next read completes it.
+pub fn drain_announce(fd: i32, pending: &mut Vec<u8>) -> Vec<AnnMsg> {
+    let mut out = Vec::new();
     loop {
         let mut chunk = [0u8; 1024];
         // SAFETY: reads into a stack array; n bounds the slice.
@@ -44,10 +45,33 @@ pub fn drain_announce(fd: i32) -> Vec<AnnMsg> {
             // for the read end; it only means this drain saw no data.
             break;
         }
-        buf.extend_from_slice(&chunk[..n as usize]);
+        out.extend(push_announce(pending, &chunk[..n as usize]));
     }
-    parse_announce_lines(&buf)
+    out
 }
+
+/// Append one read's bytes and return the messages it completed.
+///
+/// A read can end in the middle of a line. Only complete lines are parsed; the tail stays in
+/// `pending` for the next read. Without this a line split across two reads would be parsed twice,
+/// the first time as a truncated message with a wrong `cwd`.
+pub fn push_announce(pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<AnnMsg> {
+    pending.extend_from_slice(chunk);
+    let Some(end) = pending.iter().rposition(|&b| b == b'\n').map(|i| i + 1) else {
+        // No complete line yet. A writer that never finishes one line is broken; do not let a
+        // broken writer grow the buffer without bound.
+        if pending.len() > MAX_ANNOUNCE_LINE {
+            pending.clear();
+        }
+        return Vec::new();
+    };
+    let msgs = parse_announce_lines(&pending[..end]);
+    pending.drain(..end);
+    msgs
+}
+
+/// Longest partial announce line kept across reads. Real lines are a few hundred bytes at most.
+const MAX_ANNOUNCE_LINE: usize = 64 * 1024;
 
 /// Parse announce lines (see [`drain_announce`]).
 fn parse_announce_lines(buf: &[u8]) -> Vec<AnnMsg> {
@@ -264,5 +288,51 @@ mod tests {
         assert_eq!(signal_prefix_tail(b"abc\x1b]13", PROMPT_SIGNAL), 4);
         // A complete signal is not a proper prefix; the caller has already consumed it.
         assert_eq!(signal_prefix_tail(PROMPT_SIGNAL, PROMPT_SIGNAL), 0);
+    }
+
+    /// A line split across two reads must wait for the rest. Parsing the first half would produce
+    /// a truncated `cwd`; parsing both halves would produce two messages for one announce.
+    #[test]
+    fn announce_waits_for_the_rest_of_a_split_line() {
+        let mut pending = Vec::new();
+        assert!(
+            push_announce(&mut pending, b"h\t0\t/tmp").is_empty(),
+            "a line without its newline is not complete yet"
+        );
+        assert_eq!(pending.as_slice(), b"h\t0\t/tmp");
+
+        let msgs = push_announce(&mut pending, b"\t0\t1\n");
+        assert_eq!(msgs.len(), 1);
+        assert!(pending.is_empty());
+        let AnnMsg::Header(info) = &msgs[0] else {
+            panic!("expected a header announce");
+        };
+        assert_eq!(info.cwd, "/tmp");
+    }
+
+    /// Complete lines are parsed now; a partial tail waits for the next read.
+    #[test]
+    fn announce_parses_complete_lines_and_keeps_the_partial_tail() {
+        let mut pending = Vec::new();
+        let msgs = push_announce(&mut pending, b"r\nh\t0\t/a");
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(msgs[0], AnnMsg::Resize));
+        assert_eq!(pending.as_slice(), b"h\t0\t/a");
+
+        let msgs = push_announce(&mut pending, b"\t0\t2\n");
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(msgs[0], AnnMsg::Header(_)));
+        assert!(pending.is_empty());
+    }
+
+    /// A writer that never finishes a line must not grow the buffer without bound.
+    #[test]
+    fn announce_drops_a_line_that_never_finishes() {
+        let mut pending = Vec::new();
+        push_announce(&mut pending, &vec![b'x'; MAX_ANNOUNCE_LINE + 1]);
+        assert!(
+            pending.is_empty(),
+            "a runaway line must not grow the buffer"
+        );
     }
 }
