@@ -109,7 +109,7 @@ This repository accepts AI-assisted development, on the following terms. Ignorin
 
 A `v*` tag publishes. The workflow builds `p11k` and `p11k-d`, and attaches a tarball and a `.deb` to that tag's GitHub release.
 
-Before tagging, run `just changelog` and commit the result. `CHANGELOG.md` is generated from the Conventional Commit history, and the tag closes the current `Unreleased` section.
+Before tagging, run `just changelog v<version>` and commit the result. `CHANGELOG.md` is generated from the Conventional Commit history. Without the tag argument the entries stay under `Unreleased`.
 
 The tag must match `[workspace.package] version` in `Cargo.toml`. The workflow checks this and fails otherwise.
 
