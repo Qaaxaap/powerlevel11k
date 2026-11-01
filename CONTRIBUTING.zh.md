@@ -81,7 +81,7 @@ cargo install iai-callgrind-runner --version 0.16.1   # 必须与 Cargo.toml 里
 
 按键在 `tools/demo/scenes/demo.json`，主题在 `tools/demo/demo.kdl`，presets 图用的四份文件在 `tools/demo/presets/`。
 
-重新录制需要已构建的 `p11k`（`cargo build --release -p p11k-engine`），以及 zsh、bash、fish、python3、tmux、agg（asciinema/agg）、ImageMagick 和 Maple Mono Nerd Font。
+重新录制需要已构建的 `p11k`（`cargo build --release -p p11k-engine`），以及 devShell 提供的 zsh、bash、fish、python3、tmux。`just demo` 通过 `nix shell` 拉取 agg、ImageMagick 和 fontconfig。图像使用 Maple Mono Nerd Font；`fc-match` 找不到字体时，用 `FONT_FILE` 指定另一个字体文件。
 
 ## 文案翻译
 

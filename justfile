@@ -14,6 +14,10 @@ fmt:
 fmt-check:
     cargo fmt --all -- --check
 
+# Verify the Nix files are formatted (the flake formatter is nixfmt).
+nix-fmt-check:
+    nixfmt --check flake.nix
+
 # Lint with the warning set CI uses.
 lint:
     cargo clippy --all-targets --locked -- -D warnings
@@ -23,10 +27,10 @@ test:
     cargo test --all --locked
 
 # Everything a pull request must pass.
-check: fmt-check lint test
+check: fmt-check nix-fmt-check lint test
 
 # The full local gate: what CI runs.
-verify: fmt-check lint test deny spell
+verify: fmt-check nix-fmt-check lint test deny spell
 
 # Build the binaries.
 build:
@@ -68,6 +72,8 @@ i18n:
 changelog tag="":
     git-cliff --output CHANGELOG.md {{ if tag != "" { "--tag " + tag } else { "" } }}
 
-# Re-record the demo captures (needs zsh, bash, fish, python3, tmux, agg, ImageMagick).
+# Re-record the demo captures. agg, ImageMagick and fontconfig are pulled on demand: they are
+# heavy, and CI never runs this recipe. Set FONT_FILE to a font file when fc-match does not
+# find the default Maple Mono family.
 demo:
-    tools/demo/capture.sh
+    nix shell nixpkgs#agg nixpkgs#imagemagick nixpkgs#fontconfig --command tools/demo/capture.sh
