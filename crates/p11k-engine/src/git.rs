@@ -98,6 +98,9 @@ pub fn spawn_git_worker(
             {
                 break; // the main loop exited, channel closed
             }
+            // The main loop blocks in poll, and a value on the channel alone does not wake it.
+            // Without this byte the header keeps the old status until the next keypress.
+            crate::wake::wake();
         }
     });
 }

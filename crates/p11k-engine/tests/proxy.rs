@@ -70,6 +70,7 @@ impl Tmux {
         config_home: &str,
         user_rc: &str,
         theme: Option<&std::path::Path>,
+        cwd: &str,
     ) -> Tmux {
         assert_on_path("tmux");
         assert_on_path(shell);
@@ -85,11 +86,12 @@ impl Tmux {
 
         // `sleep` first: pipe-pane has to be attached before the engine writes its first byte, or
         // the opening prompt is missing from the capture. `exec` keeps the engine as the pane's
-        // process, so the pane dies with the engine. cwd `/tmp` (not a git repository, so git
-        // status scanning cannot jitter the prompt timing); the user rcs point at `/dev/null` (a
-        // real `~/.zshrc` with oh-my-zsh/p10k is slow and disruptive to the assertions).
+        // process, so the pane dies with the engine. The default cwd is `/tmp`, which is not a git
+        // repository, so git status scanning cannot jitter the prompt timing. The user rcs point
+        // at `/dev/null`: a real `~/.zshrc` with oh-my-zsh/p10k is slow and disruptive to the
+        // assertions.
         let cmd = format!(
-            "sleep 0.3; cd /tmp && XDG_CONFIG_HOME={config_home} XDG_STATE_HOME={} \
+            "sleep 0.3; cd '{cwd}' && XDG_CONFIG_HOME={config_home} XDG_STATE_HOME={} \
              P11K_USER_ZSHRC={user_rc} P11K_USER_PROFILE=/dev/null exec '{}' --shell {shell}{config_arg}",
             state_home.display(),
             env!("CARGO_BIN_EXE_p11k")
@@ -321,7 +323,14 @@ fn spawn_engine_shell(shell: &str, config_home: &str) -> Engine {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     });
     Engine {
-        master: Box::new(Tmux::start(&socket, shell, config_home, "/dev/null", None)),
+        master: Box::new(Tmux::start(
+            &socket,
+            shell,
+            config_home,
+            "/dev/null",
+            None,
+            "/tmp",
+        )),
         writer: Box::new(TmuxKeys { socket }),
         _pwsh_guard: pwsh_guard,
     }
@@ -335,7 +344,14 @@ fn spawn_engine_shell_with_rc(shell: &str, config_home: &str, user_rc: &str) -> 
         SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
     );
     Engine {
-        master: Box::new(Tmux::start(&socket, shell, config_home, user_rc, None)),
+        master: Box::new(Tmux::start(
+            &socket,
+            shell,
+            config_home,
+            user_rc,
+            None,
+            "/tmp",
+        )),
         writer: Box::new(TmuxKeys { socket }),
         _pwsh_guard: None,
     }
@@ -357,6 +373,7 @@ fn spawn_engine_shell_with_theme(shell: &str, theme: &str) -> Engine {
             "/nonexistent-p11k-config",
             "/dev/null",
             Some(&path),
+            "/tmp",
         )),
         writer: Box::new(TmuxKeys { socket }),
         _pwsh_guard: None,
@@ -365,6 +382,86 @@ fn spawn_engine_shell_with_theme(shell: &str, theme: &str) -> Engine {
 
 fn spawn_engine_with_theme(theme: &str) -> Engine {
     spawn_engine_shell_with_theme("zsh", theme)
+}
+
+/// Start the engine with its cwd in `dir`. The case that needs a git scan slower than the prompt
+/// uses this: the prompt appears first and the worker finishes while the user is idle.
+fn spawn_engine_in_dir(dir: &str) -> Engine {
+    let socket = format!(
+        "p11k-gitwake-{}",
+        SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    Engine {
+        master: Box::new(Tmux::start(
+            &socket,
+            "zsh",
+            "/nonexistent-p11k-config",
+            "/dev/null",
+            None,
+            dir,
+        )),
+        writer: Box::new(TmuxKeys { socket }),
+        _pwsh_guard: None,
+    }
+}
+
+/// A temporary git repository that removes itself when the case ends, panic or not.
+struct TempRepo(PathBuf);
+
+impl Drop for TempRepo {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A repository whose first index scan takes about a second. The index lists 200 000 files that
+/// do not exist, so the scan pays one fstatat per entry and every entry becomes a dirty
+/// candidate. That keeps the worker busy after the prompt is already on screen.
+fn create_slow_git_repo() -> TempRepo {
+    assert_on_path("git");
+    let dir = std::env::temp_dir().join(format!("p11k-gitwake-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "p11k-wake"]);
+    git(&[
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    ]);
+    let mut child = std::process::Command::new("git")
+        .args(["update-index", "--index-info"])
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn git update-index");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut input = String::with_capacity(200_000 * 80);
+    for i in 0..200_000u32 {
+        input.push_str("100644 e69de29bb2d1d6434b8b29ae775ad8c2e48c5391 0\td");
+        input.push_str(&format!("{:04}/f{:03}.txt\n", i / 100, i % 100));
+    }
+    stdin.write_all(input.as_bytes()).unwrap();
+    drop(stdin);
+    assert!(child.wait().unwrap().success(), "git update-index failed");
+    TempRepo(dir)
 }
 
 /// Read until `needle` appears in the engine's output, returning what the engine wrote since the
@@ -1302,4 +1399,22 @@ fn pwsh_runs_a_command() {
 #[test]
 fn pwsh_echoes_typed_characters() {
     marker_shell_echoes_typed_characters("pwsh");
+}
+
+/// The git worker finishes after the prompt is already on screen. Its result has to wake the
+/// main loop and repaint the header: without the wake byte the vcs segment stays absent until
+/// the next keypress.
+#[test]
+fn a_slow_git_result_repaints_the_header_without_input() {
+    let repo = create_slow_git_repo();
+    let dir = repo.0.to_string_lossy().into_owned();
+    let engine = spawn_engine_in_dir(&dir);
+    let _ = wait_ready(&engine.master);
+    let screen = engine
+        .master
+        .screen_until("p11k-wake", 1, Duration::from_secs(15));
+    assert!(
+        screen.contains("p11k-wake"),
+        "the vcs segment should appear without a keypress; screen:\n{screen}"
+    );
 }

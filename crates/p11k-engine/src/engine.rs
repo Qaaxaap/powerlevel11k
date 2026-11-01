@@ -6,21 +6,7 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::process;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-
-/// Write end of the signal pipe: handlers wake the poll instead of the loop re-checking a
-/// timeout. `-1` before the pipe exists (signals are installed after it is created).
-static SIGNAL_PIPE_W: AtomicI32 = AtomicI32::new(-1);
-
-/// Wake the main poll from a signal handler. Only async-signal-safe calls.
-fn wake_poll() {
-    let fd = SIGNAL_PIPE_W.load(Ordering::Relaxed);
-    if fd >= 0 {
-        let byte = 1u8;
-        // SAFETY: writes one byte to a pipe created before the handlers are installed.
-        unsafe { libc::write(fd, (&byte as *const u8).cast(), 1) };
-    }
-}
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
 /// Real terminal SIGWINCH (resize) flag: the handler only sets it (signal-safe); the main
@@ -30,7 +16,7 @@ static RESIZE_FLAG: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_sigwinch(_sig: libc::c_int) {
     RESIZE_FLAG.store(true, Ordering::Relaxed);
-    wake_poll();
+    crate::wake::wake();
 }
 
 /// `p11k reload` flag: the command signals this engine and the main loop re-reads the theme
@@ -39,7 +25,7 @@ static RELOAD_FLAG: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn handle_sigusr1(_sig: libc::c_int) {
     RELOAD_FLAG.store(true, Ordering::Relaxed);
-    wake_poll();
+    crate::wake::wake();
 }
 
 use crate::cli::{Shell, detect_shell, load_config, load_config_file, theme_file};
@@ -312,13 +298,14 @@ pub fn run() -> anyhow::Result<()> {
     // A read can end in the middle of an announce line; the partial line waits here for the next
     // read instead of being parsed as a truncated message.
     let mut announce_pending: Vec<u8> = Vec::new();
-    // Signal pipe: the handlers write a byte so poll wakes immediately instead of on a timeout.
+    // Signal pipe: signal handlers and the git worker write a byte so poll wakes immediately
+    // instead of on a timeout.
     let mut signal_pipe = [0i32; 2];
     // SAFETY: pipe() writes two fds into the array.
     if unsafe { libc::pipe(signal_pipe.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error().into());
     }
-    SIGNAL_PIPE_W.store(signal_pipe[1], Ordering::Relaxed);
+    crate::wake::install(signal_pipe[1]);
 
     let mut scanner = SignalScanner::new();
 
