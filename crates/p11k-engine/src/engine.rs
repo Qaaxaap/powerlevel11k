@@ -309,6 +309,9 @@ pub fn run() -> anyhow::Result<()> {
     // not see EOF when the shell closes its write end between prompts.
     let announce_fd = open_fifo(&state.announce, libc::O_RDONLY)?;
     let _announce_keepalive = open_fifo(&state.announce, libc::O_WRONLY)?;
+    // A read can end in the middle of an announce line; the partial line waits here for the next
+    // read instead of being parsed as a truncated message.
+    let mut announce_pending: Vec<u8> = Vec::new();
     // Signal pipe: the handlers write a byte so poll wakes immediately instead of on a timeout.
     let mut signal_pipe = [0i32; 2];
     // SAFETY: pipe() writes two fds into the array.
@@ -447,7 +450,7 @@ pub fn run() -> anyhow::Result<()> {
             (unsafe { libc::poll(&mut probe, 1, 0) }) > 0 && probe.revents & libc::POLLIN != 0
         };
         if !pty_ready {
-            for msg in drain_announce(announce_fd) {
+            for msg in drain_announce(announce_fd, &mut announce_pending) {
                 // Sync a size change to the pty and let right alignment use the new width.
                 let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
                 if (r, c, xp, yp) != last_size {
