@@ -64,7 +64,13 @@ struct Tmux {
 impl Tmux {
     const SESSION: &'static str = "engine";
 
-    fn start(socket: &str, shell: &str, config_home: &str, user_rc: &str) -> Tmux {
+    fn start(
+        socket: &str,
+        shell: &str,
+        config_home: &str,
+        user_rc: &str,
+        theme: Option<&std::path::Path>,
+    ) -> Tmux {
         assert_on_path("tmux");
         assert_on_path(shell);
         // A case that panicked before Drop left its server behind.
@@ -73,6 +79,9 @@ impl Tmux {
         let capture = std::env::temp_dir().join(format!("p11k-proxy-{socket}.out"));
         let _ = std::fs::remove_file(&capture);
         let state_home = std::env::temp_dir().join(format!("p11k-state-{socket}"));
+        let config_arg = theme
+            .map(|path| format!(" --config '{}'", path.display()))
+            .unwrap_or_default();
 
         // `sleep` first: pipe-pane has to be attached before the engine writes its first byte, or
         // the opening prompt is missing from the capture. `exec` keeps the engine as the pane's
@@ -81,7 +90,7 @@ impl Tmux {
         // real `~/.zshrc` with oh-my-zsh/p10k is slow and disruptive to the assertions).
         let cmd = format!(
             "sleep 0.3; cd /tmp && XDG_CONFIG_HOME={config_home} XDG_STATE_HOME={} \
-             P11K_USER_ZSHRC={user_rc} P11K_USER_PROFILE=/dev/null exec '{}' --shell {shell}",
+             P11K_USER_ZSHRC={user_rc} P11K_USER_PROFILE=/dev/null exec '{}' --shell {shell}{config_arg}",
             state_home.display(),
             env!("CARGO_BIN_EXE_p11k")
         );
@@ -290,7 +299,7 @@ fn spawn_engine_shell(shell: &str, config_home: &str) -> Engine {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     });
     Engine {
-        master: Box::new(Tmux::start(&socket, shell, config_home, "/dev/null")),
+        master: Box::new(Tmux::start(&socket, shell, config_home, "/dev/null", None)),
         writer: Box::new(TmuxKeys { socket }),
         _pwsh_guard: pwsh_guard,
     }
@@ -304,7 +313,26 @@ fn spawn_engine_shell_with_rc(shell: &str, config_home: &str, user_rc: &str) -> 
         SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
     );
     Engine {
-        master: Box::new(Tmux::start(&socket, shell, config_home, user_rc)),
+        master: Box::new(Tmux::start(&socket, shell, config_home, user_rc, None)),
+        writer: Box::new(TmuxKeys { socket }),
+        _pwsh_guard: None,
+    }
+}
+
+/// Start the engine with an explicit theme file. The transient cases need a theme that turns the
+/// feature on, and the engine reads a theme file with `--config`.
+fn spawn_engine_with_theme(theme: &str) -> Engine {
+    let socket = format!("p11k-theme-{}", SOCKET_SEQ.fetch_add(1, Ordering::Relaxed));
+    let path = std::env::temp_dir().join(format!("p11k-theme-{socket}.kdl"));
+    std::fs::write(&path, theme).unwrap();
+    Engine {
+        master: Box::new(Tmux::start(
+            &socket,
+            "zsh",
+            "/nonexistent-p11k-config",
+            "/dev/null",
+            Some(&path),
+        )),
         writer: Box::new(TmuxKeys { socket }),
         _pwsh_guard: None,
     }
@@ -735,6 +763,74 @@ fn transient_hook_survives_reentrant_zle_plugins() {
     assert!(
         out.contains("P11K-REENTRY"),
         "the command must still run, got {out:?}"
+    );
+}
+
+#[test]
+fn transient_prompt_folds_the_instant_header() {
+    let theme = "layout {\n    left { line { dir } }\n    right { line { status } }\n    \
+                 transient-prompt #true\n}\nsegments {\n    status verbose=#true\n}\n    \
+                 frame { first-prefix \"HDRMARK|\" }\n";
+    let mut eng = spawn_engine_with_theme(theme);
+    wait_ready(&eng.master);
+    let screen = eng.master.screen();
+    assert!(
+        screen.contains("HDRMARK|"),
+        "the first prompt should show the header, got {screen:?}"
+    );
+
+    // `P11K-DONE` appears only in the output, never in the echoed command line, so the read
+    // below waits for the command to finish instead of matching the echo.
+    eng.writer
+        .write_all(b"sleep 1; printf 'P11K-%s\\n' DONE\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "P11K-DONE", SHELL_READY);
+    // The next prompt draws the header again. In the failure case the submit-time repaint
+    // already put it in the stream, so the screen below would carry two headers.
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    let screen = eng.master.screen();
+    assert_eq!(
+        screen.matches("HDRMARK|").count(),
+        1,
+        "the fold must clear the first prompt's header, got {screen:?}"
+    );
+    assert!(
+        screen.contains("❯ sleep 1; printf"),
+        "the folded prompt should still show the submitted command, got {screen:?}"
+    );
+}
+
+/// `transient-prompt "same-dir"` folds only when the submitted command ran in the directory of
+/// the previous prompt. The first prompt has no previous directory, so it keeps its header; the
+/// real p10k compares against an empty value and behaves the same. The fold decision itself is
+/// covered by the engine unit test; this case checks that the header stays on screen.
+#[test]
+fn same_dir_keeps_the_first_prompt_whole() {
+    let theme = "layout {\n    left { line { dir } }\n    right { line { status } }\n    \
+                 transient-prompt same-dir\n}\nsegments {\n    status verbose=#true\n}\n    \
+                 frame { first-prefix \"HDRMARK|\" }\n";
+    let mut eng = spawn_engine_with_theme(theme);
+    wait_ready(&eng.master);
+
+    // `P11K-DONE` appears only in the output, never in the echoed command line, so the read
+    // below waits for the command to finish instead of matching the echo.
+    eng.writer
+        .write_all(b"true; printf 'P11K-%s\\n' DONE\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "P11K-DONE", SHELL_READY);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    let screen = eng.master.screen();
+    let lines: Vec<&str> = screen.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.contains("❯ true; printf"))
+        .unwrap_or_else(|| panic!("no command line in {screen:?}"));
+    assert!(at > 0, "no row above the command line in {screen:?}");
+    assert!(
+        lines[at - 1].contains("HDRMARK|"),
+        "the first prompt must keep its header, got {screen:?}"
     );
 }
 

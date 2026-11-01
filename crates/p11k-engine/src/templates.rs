@@ -34,20 +34,22 @@ _p11k_precmd() {
   # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
   # painting it later would overwrite the first characters on a completion redraw.
   #
-  # The first prompt prints no blank rows: the engine already drew the instant header, and it
-  # overwrites it in place when the signal arrives. Printing rows here would push that header
-  # up and leave it on screen.
+  # The first prompt prints the same blank rows as every later one. The instant header
+  # already sits on those rows, so the cursor has to step back over them first: zle then
+  # starts its prompt area on the header rows, and the transient fold clears the header
+  # exactly like it does for every later prompt. Without the step the header stays above the
+  # prompt area and survives the fold.
   # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
   # newline, so the capture would always come back empty and the shell would print no blank rows
   # at all — the header would then be backfilled over the command output above it.
   local _lead=''
+  local _i
+  for (( _i = 0; _i < ${_ack[1]:-0}; _i++ )); do
+    _lead+=$'\n'
+  done
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
-  else
-    local _i
-    for (( _i = 0; _i < ${_ack[1]:-0}; _i++ )); do
-      _lead+=$'\n'
-    done
+    print -rn -- $'\e['${_ack[1]:-0}'A'
   fi
   PROMPT="$_lead$_p11k_signal${_ack[2]:-$P11K_PREFIX_OK}"
 }
@@ -515,5 +517,17 @@ mod tests {
                 "{name} must not carry a prompt skeleton of its own"
             );
         }
+    }
+
+    /// The first prompt has to own the rows the instant header was drawn on. The shell steps the
+    /// cursor back over them before zle prints the prompt, so zle's prompt area covers the header
+    /// and the transient fold clears it. Without the step the header sits above the prompt area
+    /// and survives the fold.
+    #[test]
+    fn zsh_first_prompt_steps_back_over_the_instant_header() {
+        assert!(
+            ZSHRC_TEMPLATE.contains(r#"print -rn -- $'\e['${_ack[1]:-0}'A'"#),
+            "the first prompt must move the cursor back over the instant header rows"
+        );
     }
 }
