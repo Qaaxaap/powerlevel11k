@@ -17,6 +17,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     # The binaries link the container's glibc, so building on 22.04 keeps the minimum at 2.35
     # and the packages install on older distributions. The runner is only the host.
     container:
@@ -75,6 +76,20 @@ jobs:
           cp "$stage/share/locale/zh_CN/LC_MESSAGES/p11k.mo" \
             "$root/usr/share/locale/zh_CN/LC_MESSAGES/"
           gzip -9 -c README.md > "$root/usr/share/doc/p11k/README.md.gz"
+          # Debian packages must carry the license under /usr/share/doc/<package>/copyright.
+          cp COPYING COPYING.LESSER "$root/usr/share/doc/p11k/"
+          {
+            echo "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/"
+            echo "Upstream-Name: p11k"
+            echo "Source: https://github.com/Qaaxaap/powerlevel11k"
+            echo
+            echo "Files: *"
+            echo "Copyright: 2026 Qaaxaap"
+            echo "License: LGPL-3.0-or-later"
+            echo " The full license text is in /usr/share/doc/p11k/COPYING.LESSER."
+            echo " The GNU General Public License version 3 it extends is in"
+            echo " /usr/share/doc/p11k/COPYING."
+          } > "$root/usr/share/doc/p11k/copyright"
           {
             echo "Package: p11k"
             echo "Version: $deb_version"
@@ -90,6 +105,8 @@ jobs:
             echo " ready. It also ships p11k-d, a byte-compatible gitstatusd replacement."
           } > "$root/DEBIAN/control"
           dpkg-deb --root-owner-group --build "$root" "p11k_${deb_version}_${arch}.deb"
+          # Checksums for both packages, published next to them.
+          sha256sum "$tarball.tar.gz" "p11k_${deb_version}_${arch}.deb" > SHA256SUMS
 
       - name: Collect runtime dependencies
         run: |
@@ -117,12 +134,14 @@ jobs:
           path: |
             p11k-*.tar.gz
             p11k_*.deb
+            SHA256SUMS
             runtime-dependencies.md
 
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -167,4 +186,4 @@ jobs:
           if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" "${args[@]}"
           fi
-          gh release upload "$GITHUB_REF_NAME" p11k-*.tar.gz p11k_*.deb runtime-dependencies.md --clobber
+          gh release upload "$GITHUB_REF_NAME" p11k-*.tar.gz p11k_*.deb SHA256SUMS runtime-dependencies.md --clobber
