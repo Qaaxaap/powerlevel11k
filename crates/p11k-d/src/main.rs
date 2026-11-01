@@ -13,7 +13,8 @@
 //!
 //! | Code | Meaning |
 //! |---|---|
-//! | 0 | Normal (EOF / liveness failed) |
+//! | 0 | Normal (EOF / liveness failed), or the shell closed the response pipe |
+//! | 1 | A request panicked, or a response could not be written |
 //! | 10 | Bad arguments |
 //! | 11 | `-G` version mismatch |
 
@@ -73,8 +74,6 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_daemon(options: Options) -> ExitCode {
-    let mut daemon = Daemon::new(options);
-    daemon.run(); // exits with 0 inside; reaching here is dead code
-    ExitCode::SUCCESS
+fn run_daemon(options: Options) -> ! {
+    Daemon::new(options).run()
 }

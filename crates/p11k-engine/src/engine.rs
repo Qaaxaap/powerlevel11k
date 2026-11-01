@@ -362,11 +362,6 @@ pub fn run() -> anyhow::Result<()> {
         // and only compares the window size inside its prompt function, so the block below
         // sends it one empty enter on shrink.
         if RESIZE_FLAG.swap(false, Ordering::Relaxed) {
-            // Re-enter raw mode: multiplexers like tmux reset the pane pty termios when
-            // creating or resizing a pane. Once ECHO is on, what the engine writes to the
-            // terminal is echoed back to stdin and forwarded into the pty as input — and a
-            // second copy of the header shows up on screen.
-            let _ = RawTerminal::enter(libc::STDIN_FILENO);
             let (r, c, xp, yp) = tty_size().unwrap_or(last_size);
             if (r, c, xp, yp) != last_size {
                 pair.master.resize(PtySize {

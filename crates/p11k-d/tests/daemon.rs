@@ -148,3 +148,25 @@ fn real_repo_request_returns_status() {
     drop(stdin);
     child.wait().unwrap();
 }
+
+/// A response that cannot be written because the shell closed the pipe stops the daemon
+/// quietly: the stream went away with the shell, and the next shell starts a fresh daemon.
+#[test]
+fn a_closed_stdout_exits_quietly() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_p11k-d"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn p11k-d");
+    let mut stdin = child.stdin.take().expect("stdin");
+    drop(child.stdout.take()); // the read end is gone: the daemon's writes now fail
+    stdin.write_all(b"}hello\x1f\x1e").expect("write request");
+    stdin.flush().unwrap();
+    let status = child.wait().expect("wait for p11k-d");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "a closed response pipe means the shell exited"
+    );
+}

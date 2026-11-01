@@ -45,8 +45,10 @@ impl Daemon {
     /// - With no complete message buffered, poll stdin with a 1s timeout and
     ///   run the `-l`/`-p` liveness check plus TTL eviction.
     /// - read returning 0 = EOF (zsh exited, closing the FIFO write end).
-    /// - A failing request must not kill the daemon.
-    pub fn run(&mut self) {
+    /// - A response that cannot be written stops the daemon: the stream is at an arbitrary
+    ///   offset and the shell restarts it. A closed pipe means the shell is gone, so that case
+    ///   exits quietly.
+    pub fn run(&mut self) -> ! {
         let mut buf: Vec<u8> = Vec::new();
         loop {
             // Complete message buffered?
@@ -145,16 +147,13 @@ impl Daemon {
         }
     }
 
-    /// Write a serialized response to stdout in a loop (short writes, EINTR).
+    /// Write a serialized response to stdout (short writes, EINTR).
     ///
-    /// The guard makes the write all-or-nothing: a response that stops midway
-    /// would desynchronize every later reply on the stream.
+    /// A failed write leaves the stream at an arbitrary offset, so the caller stops the daemon
+    /// instead of trying to continue.
     fn write_response(&self, resp: &Response) -> std::io::Result<()> {
         let bytes = protocol::serialize_response(resp);
-        let mut guard = ResponseGuard::new(self.stdout_fd);
-        guard.write_all(&bytes)?;
-        guard.complete();
-        Ok(())
+        write_all(self.stdout_fd, &bytes)
     }
 
     fn evict_expired(&mut self) {
@@ -197,49 +196,51 @@ enum RequestError {
     Panic,
 }
 
-/// Writes one protocol response and kills the daemon if it cannot finish.
-///
-/// A partial response leaves the stream at an arbitrary offset, so the only
-/// correct outcome is to stop: the owning shell restarts the daemon.
-struct ResponseGuard {
-    fd: i32,
-    complete: bool,
-}
-
-impl ResponseGuard {
-    fn new(fd: i32) -> Self {
-        Self {
-            fd,
-            complete: false,
-        }
-    }
-
-    fn write_all(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {
-        while !bytes.is_empty() {
-            // SAFETY: writes a bounded slice; the return value bounds the advance.
-            let n = unsafe { libc::write(self.fd, bytes.as_ptr().cast(), bytes.len()) };
-            if n < 0 {
-                let err = std::io::Error::last_os_error();
-                if err.kind() == std::io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(err);
+/// Write every byte to `fd` (short writes, EINTR).
+fn write_all(fd: i32, mut bytes: &[u8]) -> std::io::Result<()> {
+    while !bytes.is_empty() {
+        // SAFETY: writes a bounded slice; the return value bounds the advance.
+        let n = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
+        if n < 0 {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::Interrupted {
+                continue;
             }
-            bytes = &bytes[n as usize..];
+            return Err(err);
         }
-        Ok(())
+        if n == 0 {
+            return Err(std::io::Error::from(std::io::ErrorKind::WriteZero));
+        }
+        bytes = &bytes[n as usize..];
     }
-
-    fn complete(&mut self) {
-        self.complete = true;
-    }
+    Ok(())
 }
 
-impl Drop for ResponseGuard {
-    fn drop(&mut self) {
-        if !self.complete {
-            eprintln!("gitstatusd: response aborted mid-write");
-            exit(1);
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A failed write must come back as an error; the main loop alone decides how to stop.
+    /// `ResponseGuard` called `exit(1)` from `Drop`, so the caller never saw this error.
+    #[test]
+    fn a_failed_write_is_returned() {
+        let mut fds = [0i32; 2];
+        // SAFETY: pipe() writes two fds into the array.
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        // SAFETY: close the read end so the write fails with EPIPE.
+        unsafe { libc::close(fds[0]) };
+        let mut daemon = Daemon::new(Options::default());
+        daemon.stdout_fd = fds[1];
+        let resp = Response {
+            id: b"1".to_vec(),
+            is_repo: false,
+            fields: None,
+        };
+        let err = daemon
+            .write_response(&resp)
+            .expect_err("a closed pipe must fail");
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+        // SAFETY: close the write end.
+        unsafe { libc::close(fds[1]) };
     }
 }
