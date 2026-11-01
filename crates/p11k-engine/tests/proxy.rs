@@ -215,6 +215,23 @@ impl Tmux {
         let out = Self::tmux(&self.socket, &["capture-pane", "-p", "-t", Self::SESSION]);
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
+
+    /// The pid of the process in the pane, which is the engine after `exec`.
+    fn pane_pid(&self) -> u32 {
+        let out = Self::tmux(
+            &self.socket,
+            &["list-panes", "-t", Self::SESSION, "-F", "#{pane_pid}"],
+        );
+        assert!(
+            out.status.success(),
+            "tmux list-panes failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .expect("pane pid")
+    }
 }
 
 impl Drop for Tmux {
@@ -1417,4 +1434,46 @@ fn a_slow_git_result_repaints_the_header_without_input() {
         screen.contains("p11k-wake"),
         "the vcs segment should appear without a keypress; screen:\n{screen}"
     );
+}
+
+/// The real terminal termios of the engine process: its stdin is the tmux pane's pty.
+fn engine_termios(pid: u32) -> libc::termios {
+    let path = std::fs::read_link(format!("/proc/{pid}/fd/0")).expect("read the engine's stdin");
+    let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).expect("terminal path");
+    // SAFETY: the path is NUL-terminated and the fd is closed below.
+    let fd = unsafe {
+        libc::open(
+            c.as_ptr(),
+            libc::O_RDONLY | libc::O_NOCTTY | libc::O_NONBLOCK,
+        )
+    };
+    assert!(fd >= 0, "open {}", path.display());
+    let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+    // SAFETY: fd is an open terminal and termios is a valid buffer.
+    let rc = unsafe { libc::tcgetattr(fd, &mut termios) };
+    // SAFETY: closes the fd opened above.
+    unsafe { libc::close(fd) };
+    assert_eq!(rc, 0, "tcgetattr on {}", path.display());
+    termios
+}
+
+/// The engine puts the real terminal in raw mode so every byte passes through. ECHO or ICANON
+/// coming back would double the input and swallow line editing.
+fn assert_raw_terminal(termios: &libc::termios, when: &str) {
+    let flags = termios.c_lflag & (libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN);
+    assert_eq!(flags, 0, "the terminal is not in raw mode {when}");
+}
+
+/// A resize must leave the real terminal in raw mode. This guards the code that used to
+/// re-enter raw mode on every resize: it could not help when a terminal reset the termios, and
+/// the engine never checked the result.
+#[test]
+fn zsh_resize_keeps_the_terminal_in_raw_mode() {
+    let engine = spawn_engine();
+    let _ = wait_ready(&engine.master);
+    let pid = engine.master.pane_pid();
+    assert_raw_terminal(&engine_termios(pid), "before the resize");
+    engine.master.resize(80, 20);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_raw_terminal(&engine_termios(pid), "after the resize");
 }
