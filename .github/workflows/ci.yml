@@ -104,6 +104,11 @@ jobs:
       - name: Check
         run: nix develop --command just verify
 
+      # The diff against the original daemon is the compatibility promise; it needs the real
+      # binary, which the devShell provides through GITSTATUSD_PATH.
+      - name: Differential tests
+        run: nix develop --command bash -c 'cargo test -p p11k-d --test compat -- --ignored'
+
       - name: Flake check
         run: nix flake check
 
@@ -114,4 +119,5 @@ jobs:
             test -x "$out/bin/$bin"
           done
           test -f "$out/share/locale/zh_CN/LC_MESSAGES/p11k.mo"
+          grep -aq "$out/share/locale" "$out/bin/p11k"
           "$out/bin/p11k" --version
