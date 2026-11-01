@@ -47,6 +47,7 @@ mod render;
 mod state;
 mod templates;
 mod theme;
+mod wake;
 mod window;
 mod wizard;
 
