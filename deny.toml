@@ -1,8 +1,8 @@
 # cargo-deny configuration, used by `just deny` and the CI `deny` job.
 #
-# The repository itself is GPL-3.0-or-later; the allow list covers that plus the licences the
-# current dependency graph carries, so a new dependency with an unexpected licence fails the
-# check instead of passing unnoticed.
+# The repository is LGPL-3.0-or-later. The allow list accepts that licence plus the permissive
+# licences a dependency may carry. GPL is not on the list: linking GPL code would force the
+# whole binary to be distributed under GPL.
 
 [graph]
 targets = [
@@ -30,7 +30,6 @@ ignore = ["RUSTSEC-2025-0141", "RUSTSEC-2026-0173"]
 version = 2
 confidence-threshold = 0.93
 allow = [
-  "GPL-3.0-or-later",
   "LGPL-3.0-or-later",
   "MIT",
   "Apache-2.0",
