@@ -504,10 +504,7 @@ pub fn run() -> anyhow::Result<()> {
                             &info.cwd,
                         );
                         last_prompt_cwd = Some(info.cwd.clone());
-                        let mut ack = File::create(&state.ack)?;
-                        writeln!(ack, "{}", geometry.header_rows)?;
-                        writeln!(ack, "{prefix}")?;
-                        writeln!(ack, "{}", u8::from(transient_on))?;
+                        write_ack(&state.ack, geometry.header_rows, &prefix, transient_on)?;
                         // Compute git in the background and repaint the header asynchronously when
                         // it finishes.
                         git_gen += 1;
@@ -770,6 +767,21 @@ fn transient_folds(
     }
 }
 
+/// Write the ack atomically. The shell polls for the file and reads it the moment it exists, so
+/// a half-written file would give it the wrong prompt shape. Write a sibling temp file and rename
+/// it into place; the rename is atomic within the directory.
+fn write_ack(path: &std::path::Path, rows: usize, prefix: &str, fold: bool) -> io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    {
+        let mut file = File::create(&tmp)?;
+        writeln!(file, "{rows}")?;
+        writeln!(file, "{prefix}")?;
+        writeln!(file, "{}", u8::from(fold))?;
+        file.flush()?;
+    }
+    std::fs::rename(&tmp, path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -847,5 +859,25 @@ mod tests {
         assert!(!is_terminal_reply(b"a"));
         assert!(!is_terminal_reply(b"\r"));
         assert!(!is_terminal_reply(b""));
+    }
+
+    /// The shell polls for the ack and reads it the moment the file exists. A half-written file
+    /// would give it the wrong prompt shape, so the writer goes through a sibling temp file and a
+    /// rename.
+    #[test]
+    fn ack_is_written_atomically() {
+        let dir = std::env::temp_dir().join(format!("p11k-ack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ack");
+
+        write_ack(&path, 2, "%F{red}❯ ", true).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "2\n%F{red}❯ \n1\n");
+        assert!(!dir.join("ack.tmp").exists(), "the temp file must be gone");
+
+        write_ack(&path, 1, "❯ ", false).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "1\n❯ \n0\n");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
