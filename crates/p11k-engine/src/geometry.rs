@@ -11,7 +11,9 @@ use crate::render::{prefix_text, prefix_text_bash, prefix_text_zsh};
 
 /// What determines the shape of the prompt area.
 pub struct Geometry {
-    /// Blank rows the shell prints before the signal; the header occupies the same rows.
+    /// Blank rows the shell prints before the signal; the header occupies the same rows. The
+    /// ruler row counts here: it sits above the columns and belongs to the prompt area, or the
+    /// engine would paint it over the last line of the previous output.
     pub header_rows: usize,
     /// `P11K_PREFIX_OK`, in the syntax the shell's prompt string needs.
     pub prefix_ok: String,
@@ -23,7 +25,8 @@ impl Geometry {
     /// Derive the geometry a theme implies for a shell.
     pub fn new(config: &Config, shell: Shell) -> Self {
         Geometry {
-            header_rows: config.layout.left.len().max(config.layout.right.len()),
+            header_rows: config.layout.left.len().max(config.layout.right.len())
+                + usize::from(config.layout.show_ruler),
             prefix_ok: Self::prefix_for(config, shell, None),
             prefix_err: Self::prefix_for(config, shell, Some("ERROR")),
         }
@@ -58,6 +61,17 @@ mod tests {
             Shell::Zsh,
         );
         assert_eq!(two.header_rows, 2);
+    }
+
+    /// The ruler row sits above the columns. The shell has to print it, or the engine paints it
+    /// over the previous line of output.
+    #[test]
+    fn header_rows_include_the_ruler() {
+        let with_ruler = Geometry::new(
+            &config("layout {\n  left { line { dir } }\n  show-ruler #true\n}"),
+            Shell::Zsh,
+        );
+        assert_eq!(with_ruler.header_rows, 2);
     }
 
     #[test]

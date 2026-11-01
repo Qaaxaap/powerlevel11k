@@ -925,6 +925,36 @@ fn fish_resize_repaints_the_header() {
     assert_resized_screen(&eng.master);
 }
 
+/// `show-ruler` adds a row above the header. That row belongs to the prompt area, so the shell
+/// must print it too; otherwise the next prompt's ruler covers the last line of the output.
+#[test]
+fn show_ruler_does_not_cover_the_previous_output() {
+    let theme = "layout {\n    left { line { dir } }\n    right { line { status } }\n    \
+                 show-ruler #true\n}\nsegments {\n    status verbose=#true\n}\n    \
+                 frame { first-prefix \"HDRMARK|\" }\n";
+    let mut eng = spawn_engine_with_theme(theme);
+    wait_ready(&eng.master);
+
+    // The output text differs from the echoed command, so only the output can match it.
+    eng.writer
+        .write_all(b"printf 'P11K-%s-OUTPUT\\n' line\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "P11K-line-OUTPUT", SHELL_READY);
+    // The next prompt paints the ruler and the header; the output line has to survive both.
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    let screen = eng.master.screen();
+    assert!(
+        screen.contains("P11K-line-OUTPUT"),
+        "the next prompt must not cover the previous output, got {screen:?}"
+    );
+    assert_eq!(
+        screen.matches("HDRMARK|").count(),
+        2,
+        "the previous prompt and the new one, got {screen:?}"
+    );
+}
+
 /// After a resize: exactly one header, no leftover content above it, and the input line directly
 /// under it keeps the typed buffer.
 ///
