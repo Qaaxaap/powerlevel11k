@@ -28,6 +28,23 @@ fn read_exact(stdout: &mut ChildStdout, n: usize) -> Vec<u8> {
     out
 }
 
+/// Wait for the child, killing it after `limit`. A regression must fail the test instead of
+/// hanging the job: cargo test has no per-test timeout.
+fn wait_or_kill(child: &mut Child, limit: Duration) -> std::process::ExitStatus {
+    let start = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().expect("try_wait p11k-d") {
+            return status;
+        }
+        if start.elapsed() > limit {
+            let _ = child.kill();
+            let status = child.wait().expect("wait after kill");
+            panic!("p11k-d did not exit within {limit:?} (status: {status:?})");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 /// Handshake: id=}hello, empty dir → non-repo response }hello\x1f0\x1e.
 #[test]
 fn handshake_returns_not_a_repo() {
@@ -153,17 +170,23 @@ fn real_repo_request_returns_status() {
 /// quietly: the stream went away with the shell, and the next shell starts a fresh daemon.
 #[test]
 fn a_closed_stdout_exits_quietly() {
+    // The read end must be closed before the daemon starts. `Stdio::piped()` keeps the read
+    // end open in this process, and another test spawning a child at the same moment forks a
+    // short-lived copy of it: a write that lands in that window succeeds, the daemon then
+    // waits for a request that never comes, and the test hangs. A pipe with no reader from the
+    // start makes every write fail with EPIPE, whatever else the test process does.
+    let (read_end, write_end) = std::io::pipe().expect("create the response pipe");
+    drop(read_end);
     let mut child = Command::new(env!("CARGO_BIN_EXE_p11k-d"))
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
+        .stdout(Stdio::from(write_end))
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn p11k-d");
     let mut stdin = child.stdin.take().expect("stdin");
-    drop(child.stdout.take()); // the read end is gone: the daemon's writes now fail
     stdin.write_all(b"}hello\x1f\x1e").expect("write request");
     stdin.flush().unwrap();
-    let status = child.wait().expect("wait for p11k-d");
+    let status = wait_or_kill(&mut child, Duration::from_secs(5));
     assert_eq!(
         status.code(),
         Some(0),
