@@ -32,17 +32,17 @@ not true yet, keep the pull request as a draft.
 
 <!-- Example: Closes #123 -->
 
-## Testing
+## Verification
 
 <!--
-List the commands you ran and what you saw. Where they apply:
+List the commands you ran and a summary of their output. Where they apply:
 
   nix develop
-  cargo fmt --all
-  cargo clippy --all-targets --locked -- -D warnings
-  cargo test --all --locked
+  just verify
 
-Say why a command was not run rather than leaving this empty.
+Say why a check was not run rather than leaving this empty. Write unverified
+parts as: what, why, and how to check them locally. Do not cite helper scripts
+that are not in the repository.
 -->
 
 ## Manual Coverage
@@ -61,8 +61,9 @@ Say why a command was not run rather than leaving this empty.
 
 <!--
 Check every item; each one already covers the case where it does not apply.
-English is the source language of both the interface and the documentation: a
-contributor updates the English text, and the maintainer syncs the Chinese.
+English is the working language of the interface and the documentation: a
+contributor updates the English text, and the maintainer keeps the Chinese
+version in sync. Terminology follows docs/glossary.md.
 -->
 
 - [ ] This PR is ready for review, or it is marked as a draft.
@@ -71,6 +72,10 @@ contributor updates the English text, and the maintainer syncs the Chinese.
 - [ ] I ran `cargo fmt --all`, or this PR changes no Rust code.
 - [ ] I ran `cargo clippy --all-targets --locked -- -D warnings` and
       `cargo test --all --locked`, or this PR changes no Rust code.
+- [ ] I wrote the commands I ran and a summary of their output, or I said why a
+      check did not run.
+- [ ] For a change to `docs/images/`, I did the human check in `CONTRIBUTING.md`
+      and recorded the result; or this PR changes no generated file.
 - [ ] I ran `tools/i18n.sh extract` and `tools/i18n.sh update` if this PR
       changed user-facing English text; the Chinese wording is the maintainer's
       to fill in.

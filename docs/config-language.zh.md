@@ -90,7 +90,7 @@
 - 行内可以放 `text "…"` 静态文本，按 `text` 段样式渲染。其中的 `$VAR` / `${VAR}` 会展开成环境变量。
 - 需要空行就声明 `line {}`。
 - `layout { prompt-add-newline <N> … }` 在连续提示符之间插入 N 个空行（p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` + `_COUNT`）。写 `#true` 等于 1，写 `0` 关闭。
-- `layout { transient-prompt … }` 在命令提交瞬间把多行头部折叠成单行 `❯`（p10k `TRANSIENT_PROMPT`）。仅 zsh 支持，因为它依赖 `zle reset-prompt`，bash 与 fish 会忽略。取值三种：
+- `layout { transient-prompt … }` 在命令提交后把多行头部折叠成单行 `❯`，即瞬态提示符（p10k `TRANSIENT_PROMPT`）。仅 zsh 支持，因为它依赖 `zle reset-prompt`，bash 与 fish 会忽略。取值三种：
   - `#true` / `"always"`：每条命令后都折叠。旧主题写的是 `#true`，含义不变。
   - `"same-dir"`：只在命令结束时 shell 仍位于起始目录才折叠。`cd` 之后那一轮保留头部，目录变化能看见。
   - `#false` / 不写：关闭。

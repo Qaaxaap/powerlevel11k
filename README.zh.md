@@ -39,8 +39,8 @@ nix run github:Qaaxaap/powerlevel11k -- --shell zsh   # 不安装、不配置
 ## 主要功能
 
 - **多行头部**：p10k 风格，由 KDL v2 配置生成。
-- **instant header**：终端打开即显示提示符，不等待 shell 加载配置。
-- **transient prompt**：命令提交后，头部折叠为单行 `❯`。目前仅支持 zsh。
+- **即时提示符（instant prompt）**：终端打开即显示提示符，不等待 shell 加载配置。
+- **瞬态提示符（transient prompt）**：命令提交后，头部折叠为单行 `❯`。目前仅支持 zsh。
 - **vi_mode / history / 宽松布局**：vi 模式指示、历史命令号与 `prompt-add-newline` 空行，随配置启用。
 - **80+ 内置段**，与 p10k 的段一一对应：
   - `dir`、`vcs`、`status`、`time`、`command_execution_time`、`background_jobs`
@@ -174,7 +174,7 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 
 - gitstatusd 兼容内核（v1.5.5 协议）与性能核心：index 解析、`fstatat` 扫描、并行分片、untracked cache
 - 占位协议：多行头部几何自洽，覆盖 zsh / bash / fish / pwsh
-- instant / transient prompt、vi_mode、history、宽松布局
+- 即时提示符 / 瞬态提示符、vi_mode、history、宽松布局
 - 80+ 段、KDL 主题语言、三档图标与 `icon{}` 覆盖
 - `p11k configure` 向导、gettext 词条（zh_CN）、CI
 - `p11k reload`；p10k 功能已对齐至扩展状态（`OK_PIPE` / `ERROR_PIPE` / `ERROR_SIGNAL`）与 `VCS_DISABLED_WORKDIR_PATTERN`

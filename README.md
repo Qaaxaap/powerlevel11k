@@ -39,7 +39,7 @@ The four palettes are shown in one layout so that they can be compared. A preset
 ## Features
 
 - **Multi-line header**: p10k style, generated from a KDL v2 config.
-- **Instant header**: the prompt is on screen as soon as the terminal opens, without waiting for the shell to finish loading its config.
+- **Instant prompt**: the prompt is on screen as soon as the terminal opens, without waiting for the shell to finish loading its config.
 - **Transient prompt**: the header folds into a single `❯` line once a command is submitted. Currently zsh only.
 - **vi_mode / history / loose layout**: vi mode indicator, history command number, `prompt-add-newline` blank lines and the like, enabled per config.
 - **80+ built-in segments**, matching p10k's set one for one:

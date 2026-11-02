@@ -12,12 +12,12 @@
 
 ```bash
 nix develop
-just check         # fmt-check + clippy + test：PR 必须通过的部分
+just check         # fmt-check + clippy + test：快速门
 just nix-check     # 同样的测试，跑在 nix 沙箱里
 just build         # 生成两个二进制：p11k 与 p11k-d
 ```
 
-CI 执行的就是 `just check`，不存在第二套需要同步的命令行。其余配方覆盖基础设施的其它部分：
+CI 在 x86_64 与 aarch64 上执行 `just verify`，不存在第二套需要同步的命令行。`just check` 是更快的前置门，不含 `deny` 与 `spell`。MSRV job 执行 `cargo check --all-targets --locked`。其余配方覆盖基础设施的其它部分：
 
 - `just deny`：依赖许可、禁用与安全通告
 - `just spell`：拼写检查
@@ -83,7 +83,13 @@ cargo install iai-callgrind-runner --version 0.16.1   # 必须与 Cargo.toml 里
 
 重新录制需要已构建的 `p11k`（`cargo build --release -p p11k-engine`），以及 devShell 提供的 zsh、bash、fish、python3、tmux。`just demo` 通过 `nix shell` 拉取 agg、ImageMagick 和 fontconfig。图像使用 Maple Mono Nerd Font；`fc-match` 找不到字体时，用 `FONT_FILE` 指定另一个字体文件。
 
+重新录制后，逐项检查四件事。字体是目标字体。图标没有缺字。zsh、bash、fish 三个 pane 都正常。布局在至少两种宽度下正常。
+
 ## 文案翻译
+
+英文是仓库的工作语言，代码、注释、提交信息和文档用英文。中文版本由维护者维护，与英文同步。术语见 [docs/glossary.md](docs/glossary.md)。
+
+作者不是英语母语者，英文翻译可能不准确。英文与代码行为不一致时以代码为准，并在 PR 或 issue 中指出。
 
 用户可见文案使用 gettext：代码中写英文 msgid，词条位于 `crates/p11k-engine/po/`。新增、删除或改写用户可见文案时：
 
@@ -104,6 +110,7 @@ tools/i18n.sh update    # msgmerge 将新条目并入每个 po/*.po
 
 - 开发者需理解并为所提交的每一行代码负责。无意义或有害的提交不被接受。
 - 即使理解代码，也不建议在无人监督的情况下用生成式 AI 开发。有明显漏洞或与声明不符的提交将被拒绝。
+- 使用 AI 辅助的提交，由提交者负责验证。未经运行、或无法说明验证方式的内容不要提交。
 
 ## 发布
 
@@ -122,8 +129,12 @@ tag 的版本号必须与 `Cargo.toml` 中 `[workspace.package] version` 一致�
 1. Fork、创建分支，并按上述约定提交。
 2. 一个 PR 只承载一项变更，描述中说明动机。
 3. 提交前须在本地至少测试一次。无法编译或无法运行的补丁会浪费审查时间。反复提交低质量补丁可能导致贡献受限。
-4. 遵守上述 [AI 政策](#ai-政策)。
-5. 提交 PR 即表示同意贡献以 LGPL-3.0-or-later 授权。
+4. 在描述里写验证证据：实际运行的命令与输出摘要。无法运行的检查要说明原因，并写出维护者本地验证的步骤。
+5. 描述和提交信息只引用仓库里的内容：项目命令、仓库文件和公开链接。不要提到 `.cache/` 草稿、本地脚本或仓库外的计划。
+6. 改动 `docs/images/` 或它的生成器时，先跑生成器的前置检查，再做一次人眼验收。在描述里记录验收结论。
+7. 维护者可以直接关闭不满足上述要求的 PR，或与声明不符的 PR，不进入 review。
+8. 遵守上述 [AI 政策](#ai-政策)。
+9. 提交 PR 即表示同意贡献以 LGPL-3.0-or-later 授权。
 
 ## 许可证
 

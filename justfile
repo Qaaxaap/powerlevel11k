@@ -1,5 +1,5 @@
-# p11k task runner. `just` with no recipe lists these; `just check` is what a pull request
-# must pass. Nothing here is CI-only: every recipe runs locally the same way.
+# p11k task runner. `just` with no recipe lists these; `just verify` is what CI runs.
+# Nothing here is CI-only: every recipe runs locally the same way.
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 # List the recipes.
