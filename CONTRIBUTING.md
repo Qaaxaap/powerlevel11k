@@ -12,12 +12,12 @@ Everything the build and the tests need is pinned in `flake.nix`. The demo recor
 
 ```bash
 nix develop
-just check         # fmt-check + clippy + test: what a pull request must pass
+just check         # fmt-check + clippy + test: the fast gate
 just nix-check     # the same tests inside the nix sandbox
 just build         # the binaries: p11k and p11k-d
 ```
 
-`just check` is what CI runs, so there is no second command line to keep in sync. The other recipes cover the rest of the infrastructure:
+`just verify` is what CI runs on x86_64 and aarch64, so there is no second command line to keep in sync. `just check` is the faster gate without `deny` and `spell`. The MSRV job runs `cargo check --all-targets --locked`. The other recipes cover the rest of the infrastructure:
 
 - `just deny`: dependency licences, bans and advisories
 - `just spell`: typos
@@ -81,9 +81,15 @@ The still images come from tmux pane dumps, because fish asks the terminal quest
 
 The keystrokes are in `tools/demo/scenes/demo.json`, the theme in `tools/demo/demo.kdl`, and `tools/demo/presets/` holds the files behind the presets image.
 
-Re-recording needs a built `p11k` (`cargo build --release -p p11k-engine`) and the devShell for zsh, bash, fish, python3 and tmux. `just demo` pulls agg, ImageMagick and fontconfig through `nix shell`. The images use the Maple Mono Nerd Font; set `FONT_FILE` to another font file when `fc-match` does not find it.
+Re-recording needs a built `p11k` (`cargo build --release -p p11k-engine`) and the devShell for zsh, bash, fish, python3 and tmux. `just demo` pulls agg, ImageMagick and fontconfig through `nix shell`. The images use the Maple Mono Nerd Font. Set `FONT_FILE` to another font file when `fc-match` does not find it.
+
+After re-recording, check four things. The font is the intended one. No glyph is missing. The zsh, bash and fish panes all look right. The layout holds at more than one width.
 
 ## Translations
+
+English is the working language of this repository: code, comments, commit messages and documentation are written in English. The maintainer keeps the Chinese version in sync. Terminology follows [docs/glossary.md](docs/glossary.md).
+
+The author is not a native English speaker, so the English text may contain translation errors. When the English text disagrees with the code's behaviour, the code wins. Point out the mismatch in a pull request or issue.
 
 User-facing text uses gettext: English msgids in the code, catalogs in `crates/p11k-engine/po/`. When adding, removing or rewording user-facing text:
 
@@ -104,6 +110,7 @@ This repository accepts AI-assisted development, on the following terms. Ignorin
 
 - Contributors must understand, and take responsibility for, every line they submit. Pointless or harmful submissions are not allowed.
 - Understanding the code is not enough. Developing with generative AI without supervision is discouraged. Submissions with obvious defects, or that do not match what they claim to do, will be rejected.
+- A submitter using AI assistance is responsible for verifying the result. Do not submit code you have not run, or cannot explain how to verify.
 
 ## Releases
 
@@ -122,8 +129,12 @@ Reports must be specific. A good report contains: OS and shell versions (`zsh --
 1. Fork, branch, and commit per the rules above.
 2. One PR carries one change. State the motivation in the description.
 3. Test the patch locally at least once before submitting. A patch that does not compile or cannot run wastes review time. Repeated low-quality submissions may lead to contribution restrictions.
-4. Follow the [AI policy](#ai-policy) above.
-5. Submitting a PR licenses the contribution under LGPL-3.0-or-later.
+4. Put the evidence in the description: the commands you ran and a summary of their output. If a check could not run, say why and write down how the maintainer can run it locally.
+5. Describe the change and its commits in terms of the repository: project commands, repository files and public links. Do not mention drafts in `.cache/`, local scripts or plans outside the repository.
+6. A change to `docs/images/` or to its generator must pass the generator's prechecks, and a human review of the result. Record the review in the description.
+7. The maintainer may close a pull request without review. This applies when the change does not meet these requirements, or does not match what it claims to do.
+8. Follow the [AI policy](#ai-policy) above.
+9. Submitting a PR licenses the contribution under LGPL-3.0-or-later.
 
 ## License
 
