@@ -15,6 +15,40 @@ permissions:
   contents: read
 
 jobs:
+  # Documentation-only changes should not wait for the full build. This job classifies the
+  # change list with tools/ci/classify-changes.sh, and the heavy jobs below skip their steps
+  # when the answer is `code=false`.
+  #
+  # The heavy jobs still start instead of using a job-level `if`. A skipped job leaves its
+  # required check pending, and the pull request could not merge; a job whose steps are all
+  # skipped still reports success and keeps the check name.
+  #
+  # Any error here means `code=true`: a misclassified change must run the full CI, not skip it.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          if [ -z "$BASE_SHA" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! paths=$(git diff --name-only "$BASE_SHA...HEAD"); then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s\n' "$paths" | tools/ci/classify-changes.sh >> "$GITHUB_OUTPUT"
+
   # A non-conventional title disappears from CHANGELOG.md (git-cliff filters it), and with a
   # single-commit pull request the squashed commit takes its title from the commit, so a bad
   # commit title can reach main even when the pull request title is fine. Check both.
@@ -49,18 +83,22 @@ jobs:
 
   x86_64:
     name: x86_64
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
 
       - uses: cachix/install-nix-action@v31
+        if: needs.changes.outputs.code == 'true'
         with:
           extra_nix_config: |
             keep-env-derivations = true
             keep-outputs = true
 
       - uses: nix-community/cache-nix-action@v7
+        if: needs.changes.outputs.code == 'true'
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
@@ -70,6 +108,7 @@ jobs:
       # devShell would recompile the workspace on every run without this. The architecture is in
       # the key because build artifacts are not portable between x86_64 and aarch64.
       - name: Cache cargo
+        if: needs.changes.outputs.code == 'true'
         uses: actions/cache@v6
         with:
           path: |
@@ -81,17 +120,21 @@ jobs:
             cargo-${{ runner.arch }}-${{ runner.os }}-
 
       - name: Check
+        if: needs.changes.outputs.code == 'true'
         run: nix develop --command just verify
 
       # The diff against the original daemon is the compatibility promise; it needs the real
       # binary, which the devShell provides through GITSTATUSD_PATH.
       - name: Differential tests
+        if: needs.changes.outputs.code == 'true'
         run: nix develop --command bash -c 'cargo test -p p11k-d --test compat -- --ignored'
 
       - name: Flake check
+        if: needs.changes.outputs.code == 'true'
         run: nix flake check
 
       - name: Package
+        if: needs.changes.outputs.code == 'true'
         run: |
           out=$(nix build --no-link --print-out-paths)
           for bin in p11k p11k-d; do
@@ -105,30 +148,38 @@ jobs:
   # rustup, so it fails on the real toolchain and not on a nix expression.
   msrv:
     name: MSRV 1.95.0
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
       - uses: dtolnay/rust-toolchain@1.95.0
+        if: needs.changes.outputs.code == 'true'
       - name: Check
+        if: needs.changes.outputs.code == 'true'
         run: cargo check --all-targets --locked
 
   # The flake declares aarch64-linux; this job is what makes that true. The runner is native
   # arm64, so nothing here needs qemu or a cross toolchain.
   arm:
     name: aarch64
+    needs: changes
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
 
       - uses: cachix/install-nix-action@v31
+        if: needs.changes.outputs.code == 'true'
         with:
           extra_nix_config: |
             keep-env-derivations = true
             keep-outputs = true
 
       - uses: nix-community/cache-nix-action@v7
+        if: needs.changes.outputs.code == 'true'
         with:
           primary-key: nix-aarch64-${{ hashFiles('**/*.nix', '**/flake.lock') }}
           restore-prefixes-first-match: nix-aarch64-
@@ -137,6 +188,7 @@ jobs:
       # Same cargo cache as the x86_64 job; the key carries the architecture so the two runners
       # never restore each other's build artifacts.
       - name: Cache cargo
+        if: needs.changes.outputs.code == 'true'
         uses: actions/cache@v6
         with:
           path: |
@@ -148,17 +200,21 @@ jobs:
             cargo-${{ runner.arch }}-${{ runner.os }}-
 
       - name: Check
+        if: needs.changes.outputs.code == 'true'
         run: nix develop --command just verify
 
       # The diff against the original daemon is the compatibility promise; it needs the real
       # binary, which the devShell provides through GITSTATUSD_PATH.
       - name: Differential tests
+        if: needs.changes.outputs.code == 'true'
         run: nix develop --command bash -c 'cargo test -p p11k-d --test compat -- --ignored'
 
       - name: Flake check
+        if: needs.changes.outputs.code == 'true'
         run: nix flake check
 
       - name: Package
+        if: needs.changes.outputs.code == 'true'
         run: |
           out=$(nix build --no-link --print-out-paths)
           for bin in p11k p11k-d; do
