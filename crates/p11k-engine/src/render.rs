@@ -2711,9 +2711,10 @@ fn assemble_row(
         // has none → a space. Segments carry their trailing padding (see render_segment), so no
         // extra space is added, avoiding doubles (p10k uses one space between them).
         // A `_joined` first segment has no left neighbor: the suffix does nothing, so it keeps
-        // the normal leading space of a line-start segment (docs/config-language.md).
+        // the normal leading space of a line-start segment (docs/config-language.md). The
+        // space carries the segment background, like every other segment padding.
         if !has_left && s.joined_left && s.style.bg != Color::Default {
-            out.push(' ');
+            out.push_str(&paint(" ", &s.style));
         }
         if has_left && !s.joined_left {
             let prev_has = prev_bg != Color::Default;
@@ -2764,9 +2765,10 @@ fn assemble_row(
             ));
         }
         for (i, s) in parts.iter().enumerate() {
-            // A joined first segment has no left neighbor: keep the normal leading space.
+            // A joined first segment has no left neighbor: keep the normal leading space,
+            // painted with the segment background.
             if i == 0 && s.joined_left {
-                right_str.push(' ');
+                right_str.push_str(&paint(" ", &s.style));
             }
             if i > 0 && !s.joined_left {
                 // Inter-segment separation on the right: same color → right_sub (the segment
@@ -3088,10 +3090,15 @@ mod tests {
             joined_left,
         };
         let out = assemble_row(&[seg("A", 1, true), seg("B", 2, false)], &[], 0, &seps, 0);
-        let leading = out.chars().take_while(|&c| c == ' ').count();
+        let visible = strip_sgr(&out);
+        let leading = visible.chars().take_while(|&c| c == ' ').count();
         assert_eq!(
             leading, 1,
-            "the first joined segment should keep one leading space, got {out:?}"
+            "the first joined segment should keep one leading space, got {visible:?}"
+        );
+        assert!(
+            out.contains("\x1b[48;5;1m "),
+            "the leading space should carry the segment background, got {out:?}"
         );
     }
 
