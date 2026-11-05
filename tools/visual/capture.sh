@@ -101,12 +101,17 @@ EOF
     -- "$run" > "$OUT/$shell/capture.log" 2>&1 &
   pids+=($!)
   shells+=("$shell")
+  starts+=("$(date +%s%N)")
 done
 
 status=0
 for i in "${!pids[@]}"; do
-  if ! wait "${pids[$i]}"; then
-    echo "capture: ${shells[$i]} failed" >&2
+  if wait "${pids[$i]}"; then
+    elapsed_ms=$((($(date +%s%N) - starts[i]) / 1000000))
+    echo "capture: ${shells[$i]} ok (${elapsed_ms}ms)" >&2
+  else
+    elapsed_ms=$((($(date +%s%N) - starts[i]) / 1000000))
+    echo "capture: ${shells[$i]} failed (${elapsed_ms}ms)" >&2
     tail -20 "$OUT/${shells[$i]}/capture.log" >&2
     status=1
   fi

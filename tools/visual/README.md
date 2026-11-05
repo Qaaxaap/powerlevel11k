@@ -19,7 +19,9 @@ nix develop --command just render-update
 ```
 
 The four shells are captured in parallel, each with its own compositor, terminal and output
-directory. The capture takes about eight seconds; the comparison is a few hundred milliseconds.
+directory. Every shell prints one result line (`capture: zsh ok (7200ms)`); the full log of a run
+stays in `OUT/<shell>/capture.log`. The capture takes about eight seconds; the comparison is a
+few hundred milliseconds.
 
 The captures and the diff images land in `.cache/render-check/`:
 
