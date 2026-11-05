@@ -901,6 +901,17 @@ impl Repo {
         let mut dir_abs = self.workdir.clone();
         dir_abs.push(b'/');
         dir_abs.extend_from_slice(dir_rel);
+        // A nested repository is one untracked entry for git. Do not descend into it.
+        if has_git_dir(Path::new(OsStr::from_bytes(&dir_abs))) {
+            let ignored = self
+                .git
+                .status_should_ignore(Path::new(OsStr::from_bytes(dir_rel)))
+                .unwrap_or(false);
+            if !ignored {
+                stats.num_untracked += 1;
+            }
+            return;
+        }
         let Ok(rd) = std::fs::read_dir(Path::new(OsStr::from_bytes(&dir_abs))) else {
             return;
         };
@@ -939,6 +950,18 @@ impl Repo {
             // directory can still hold untracked files. A directory never counts by itself,
             // because git tracks files only.
             if recurse && is_dir {
+                // git reports a nested repository as one untracked entry (`?? nested/`) and never
+                // descends into it. A submodule is an index entry (gitlink), not an untracked
+                // entry.
+                if has_git_dir(&e.path()) {
+                    if !in_index_exact(index, &rel) {
+                        stats.num_untracked += 1;
+                        if reached(stats) {
+                            return;
+                        }
+                    }
+                    continue;
+                }
                 self.count_untracked_below(&rel, index, stats, true, cap);
                 if reached(stats) {
                     return;
@@ -971,6 +994,21 @@ impl Repo {
         let fd = unsafe { libc::open(p.as_ptr().cast(), libc::O_RDONLY | libc::O_DIRECTORY) };
         (fd >= 0).then_some(fd)
     }
+}
+
+/// Whether `dir` is a repository of its own: it holds a `.git` directory or file. git counts a
+/// nested repository as one untracked entry and never descends into it.
+fn has_git_dir(dir: &std::path::Path) -> bool {
+    std::fs::symlink_metadata(dir.join(".git")).is_ok()
+}
+
+/// Whether a directory path is an index entry itself (a gitlink or submodule). Directory entries
+/// are stored without a trailing slash.
+fn in_index_exact(index: &Index, rel: &[u8]) -> bool {
+    index
+        .entries
+        .binary_search_by(|entry| entry.path[..entry.path.len() - 1].cmp(rel))
+        .is_ok()
 }
 
 /// Whether a workdir-relative path is in the index. Directories count as tracked when an entry

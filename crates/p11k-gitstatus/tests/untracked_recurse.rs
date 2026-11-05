@@ -162,3 +162,57 @@ fn recurse_mode_skips_ignored_files_below_the_directory() {
         "the nested `.gitignore` and the kept file count, the ignored file does not"
     );
 }
+
+/// Number of untracked entries git itself reports (`git status --porcelain -uall`), used as the
+/// reference for the nested-repository case.
+fn git_untracked_count(dir: &std::path::Path) -> usize {
+    let out = std::process::Command::new("git")
+        .args(["status", "--porcelain", "-uall"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git status: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| line.starts_with("?? "))
+        .count()
+}
+
+/// A nested repository is one untracked entry for git (`?? nested/`); git never descends into
+/// it, so its internal files must not be counted either.
+#[test]
+fn recurse_mode_counts_a_nested_repository_as_one() {
+    let dir = tempfile::tempdir().unwrap();
+    init_repo(dir.path());
+
+    let nested = dir.path().join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    run_git(&nested, &["init", "-q"]);
+    run_git(&nested, &["config", "user.email", "t@t"]);
+    run_git(&nested, &["config", "user.name", "t"]);
+    std::fs::write(nested.join("tracked.txt"), "inner").unwrap();
+    run_git(&nested, &["add", "tracked.txt"]);
+    run_git(&nested, &["commit", "-qm", "inner"]);
+    std::fs::write(nested.join("untracked.txt"), "u").unwrap();
+
+    std::fs::write(dir.path().join("outer.txt"), "u").unwrap();
+
+    let expected = git_untracked_count(dir.path());
+    assert_eq!(expected, 2, "fixture: `nested/` and `outer.txt`");
+
+    let opts = Options {
+        recurse_untracked_dirs: true,
+        max_num_untracked: -1,
+        ..Default::default()
+    };
+    let mut cache = RepoCache::new(&opts);
+    assert_eq!(
+        untracked(&mut cache, dir.path().as_os_str().as_bytes()),
+        expected,
+        "with `-e` a nested repository counts as one entry, like git"
+    );
+}
