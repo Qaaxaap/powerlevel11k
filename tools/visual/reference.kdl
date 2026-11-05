@@ -1,0 +1,31 @@
+// The fixed theme used by the visual render check. The segments are deterministic: the
+// directory comes from a fixed repository, vcs shows a clean main branch, and status comes from
+// a successful command. Segments that change on their own (time, command execution time,
+// background jobs) or depend on the machine (os icon) are deliberately absent.
+mode "nerdfont-complete"
+shell "zsh"
+layout {
+    left { line { dir; vcs; status } }
+    right { line { command_execution_time; status } }
+}
+separators gap-foreground=240 sub-foreground=244 right-sub-foreground=244 {
+    segment "\u{e0b0}"
+    sub "\u{e0b1}"
+    end "\u{e0b0}"
+    right-start "\u{e0b2}"
+    right-segment "\u{e0b2}"
+    right-sub "\u{e0b3}"
+    gap "·"
+}
+frame fg=240 {
+    first-prefix "╭─"
+    newline-prefix "├─"
+    last-prefix "╰─"
+}
+segments {
+    dir fg=31 bg=236
+    vcs bg=236 clean-foreground=76 meta-foreground=246
+    status bg=236 error-foreground=160 ok-foreground=70 verbose=#true
+    command_execution_time fg=250 bg=236 threshold-seconds=0 precision=0
+    text fg=250 bg=236
+}

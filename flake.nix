@@ -57,6 +57,37 @@
           cargoHash = "sha256-4N7P23bCeeJee/Cm3sSORByh+HzflOENqYqpu629mpA=";
           doCheck = false;
         };
+
+      # The visual render check runs p11k inside a real kitty terminal in a headless sway
+      # compositor. It has its own devShell: sway, kitty and grim are heavy, and only the render
+      # check needs them. The check enters that devShell with `--ignore-environment` so the run
+      # cannot pick anything up from the caller.
+      #
+      # kitty is a GL client and the compositor has no GPU on a runner without /dev/dri, so the
+      # renderer driver paths have to be injected on non-NixOS systems.
+      glWrap =
+        pkgs: pkg:
+        pkgs.writeShellScriptBin (pkgs.lib.getName pkg) ''
+          export LD_LIBRARY_PATH=${pkgs.mesa}/lib:${pkgs.libglvnd}/lib
+          export __EGL_VENDOR_LIBRARY_FILENAMES=${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json
+          export LIBGL_DRIVERS_PATH=${pkgs.mesa}/lib/dri
+          export GBM_BACKENDS_PATH=${pkgs.mesa}/lib/gbm
+          export __GLX_VENDOR_LIBRARY_NAME=mesa
+          exec ${pkg}/bin/${pkgs.lib.getName pkg} "$@"
+        '';
+
+      # The captured frames contain the font raster, so the family is part of the fixed
+      # environment. Maple Mono NF is the family the reference frames are made with; DejaVu
+      # covers characters outside the family.
+      visualFontsConf =
+        pkgs:
+        pkgs.makeFontsConf {
+          fontDirectories = [
+            pkgs.dejavu_fonts
+            pkgs.maple-mono."NF"
+          ];
+        };
+
     in
     {
       devShells = eachSystem (pkgs: {
@@ -113,6 +144,46 @@
           '';
           LOCALE_ARCHIVE = "${localesOf pkgs}/lib/locale/locale-archive";
           RUST_BACKTRACE = "1";
+        };
+
+        # The render check's toolchain. `just render-check` enters this shell with
+        # `--ignore-environment` for the test half, so everything the run needs is set here and
+        # nothing comes from the caller. The build half stays in the default devShell so cargo
+        # uses the same source/target caches.
+        visual = pkgs.mkShell {
+          packages = [
+            (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+            (glWrap pkgs pkgs.sway)
+            pkgs.sway
+            # sway starts through dbus-run-session; without dbus in PATH the wrapper cannot find
+            # the session bus daemon once the caller's environment is cleared.
+            pkgs.dbus
+            (glWrap pkgs pkgs.kitty)
+            pkgs.kitty
+            pkgs.grim
+            pkgs.imagemagick
+            pkgs.zsh
+            pkgs.bashInteractive
+            pkgs.fish
+            pkgs.powershell
+            pkgs.git
+            pkgs.jq
+            pkgs.coreutils
+            pkgs.gnused
+            pkgs.gnugrep
+            pkgs.gawk
+          ];
+          shellHook = ''
+            export LANG=C.UTF-8
+            export LC_ALL=C.UTF-8
+            export FONTCONFIG_FILE=${visualFontsConf pkgs}
+            export P11K_VISUAL_REFERENCE=${./tools/visual/reference.kdl}
+            export P11K_VISUAL_KITTY_CONF=${./tools/visual/kitty.conf}
+            export P11K_VISUAL_ARCH=${pkgs.stdenv.hostPlatform.system}
+            export P11K_VISUAL_RECORD_TUI=${./tools/visual/record-tui.sh}
+            export P11K_VISUAL_DBUS_DAEMON=${pkgs.dbus}/bin/dbus-daemon
+            export P11K_VISUAL_DBUS_CONF=${pkgs.dbus}/share/dbus-1/session.conf
+          '';
         };
       });
 
