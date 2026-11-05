@@ -18,10 +18,10 @@ nix develop --command just render-check
 nix develop --command just render-update
 ```
 
-The four shells are captured in parallel, each with its own compositor, terminal and output
-directory. Every shell prints one result line (`capture: zsh ok (7200ms)`); the full log of a run
-stays in `OUT/<shell>/capture.log`. The capture takes about eight seconds; the comparison is a
-few hundred milliseconds.
+The four shells are four bats test files under `tools/visual/tests`; `bats --jobs 4` captures them
+in parallel and prints one TAP result per shell (`ok 1 bash reference frame`). A failed test shows
+the capture log, and the full log of every run stays in `OUT/<shell>/capture.log`. The capture
+takes about eight seconds; the comparison is a few hundred milliseconds.
 
 The captures and the diff images land in `.cache/render-check/`:
 
@@ -63,17 +63,19 @@ Every input that can move a pixel is pinned:
   time, background jobs) and no machine-dependent segment (the OS icon);
 - the cursor is painted with the background colour (`kitty.conf`), so whether the terminal draws
   it, and in which blink phase, cannot enter the frame;
-- the frame is captured after two identical grim captures, never after a fixed sleep.
+- the frame is captured after two identical grim captures, never after a fixed sleep;
+- `record-tui.sh` pins `WLR_RENDERER=pixman`: the software renderer is deterministic and works
+  without a GPU, so a local run and CI produce the same pixels. A GPU (gles2) frame can differ by
+  a pixel, so gles2 is only for manual experiments and its frames are not references.
 
-Without `/dev/dri` the compositor falls back to pixman. A GPU run (gles2) can produce slightly
-different pixels, so the reference frame belongs to the environment that produced it. Updating
-kitty, the font or the renderer means regenerating the reference in the same commit.
+Updating kitty, the font or the renderer means regenerating the reference in the same commit.
 
 ## Adding a shell or a scene
 
-`capture.sh` starts one independent run per shell in `--shells` (default: `zsh bash fish pwsh`)
-and waits for all of them; the recorded frame name is `<out>/<shell>/p11k-<shell>-000.png`. A new
-scene is a new theme file plus a new capture step; keep the reference set small and reviewable.
+Each shell is one bats file in `tools/visual/tests`; `helper.bash` captures with `record-tui.sh`
+and compares with `compare.sh`. `prepare.sh` creates the shared repository, HOME and launcher
+scripts once, before the tests run in parallel. A new scene is a new theme file plus a new `.bats`
+test; keep the reference set small and reviewable.
 
 ## CI
 

@@ -109,11 +109,10 @@ export XKB_DEFAULT_LAYOUT=us
 export XKB_DEFAULT_MODEL=pc105
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
-if ls /dev/dri/renderD* >/dev/null 2>&1 || ls /dev/dri/card* >/dev/null 2>&1; then
-  export WLR_RENDERER="${WLR_RENDERER:-gles2}"
-else
-  export WLR_RENDERER="${WLR_RENDERER:-pixman}"
-fi
+# The reference frames are generated with the software renderer: pixman is deterministic and works
+# without a GPU, so a local run and a CI run produce the same pixels. gles2 remains available by
+# setting WLR_RENDERER explicitly.
+export WLR_RENDERER="${WLR_RENDERER:-pixman}"
 
 # The terminal has to render the font the reference frames were made with: the wrapper exports
 # FONTCONFIG_FILE, and kitty.conf names the family from that configuration.

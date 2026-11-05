@@ -161,6 +161,9 @@
             (glWrap pkgs pkgs.kitty)
             pkgs.kitty
             pkgs.grim
+            pkgs.bats
+            # `bats --jobs` shells out to GNU parallel.
+            pkgs.parallel
             pkgs.imagemagick
             pkgs.zsh
             pkgs.bashInteractive

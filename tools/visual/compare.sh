@@ -3,8 +3,8 @@
 #
 # Each shell has its own reference frame. The header is the same, but the input line, the echo of
 # a typed command and the shell's redraw behaviour differ, so one shared reference would fail for
-# every shell that produced it from a different shell. The comparison decodes the PNGs; a file
-# hash would also cover the encoder and the metadata, which do not affect the screen.
+# every shell that produced it from a different shell. The comparison decodes the PNG images; a
+# file hash would also cover the encoder and the metadata, which do not affect the screen.
 #
 # Usage:
 #   compare.sh --out DIR [--expected DIR] [--shells "zsh bash fish pwsh"] [--update]
