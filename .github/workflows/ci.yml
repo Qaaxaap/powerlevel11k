@@ -129,14 +129,40 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: nix develop --command bash -c 'cargo test -p p11k-d --test compat -- --ignored'
 
+  # The flake is the supported Nix install path. This job checks the flake's checks and the
+  # package in one place, instead of repeating the same build on every architecture.
+  nix:
+    name: nix
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
+
+      - uses: cachix/install-nix-action@v31
+        if: needs.changes.outputs.code == 'true'
+        with:
+          extra_nix_config: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - uses: nix-community/cache-nix-action@v7
+        if: needs.changes.outputs.code == 'true'
+        with:
+          primary-key: nix-job-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 2G
+
       - name: Flake check
         if: needs.changes.outputs.code == 'true'
-        run: nix flake check
+        run: nix develop --command just nix-check
 
       - name: Package
         if: needs.changes.outputs.code == 'true'
         run: |
-          out=$(nix build --no-link --print-out-paths)
+          nix develop --command just nix-build
+          out=$(nix path-info ./result)
           for bin in p11k p11k-d; do
             test -x "$out/bin/$bin"
           done
@@ -208,18 +234,3 @@ jobs:
       - name: Differential tests
         if: needs.changes.outputs.code == 'true'
         run: nix develop --command bash -c 'cargo test -p p11k-d --test compat -- --ignored'
-
-      - name: Flake check
-        if: needs.changes.outputs.code == 'true'
-        run: nix flake check
-
-      - name: Package
-        if: needs.changes.outputs.code == 'true'
-        run: |
-          out=$(nix build --no-link --print-out-paths)
-          for bin in p11k p11k-d; do
-            test -x "$out/bin/$bin"
-          done
-          test -f "$out/share/locale/zh_CN/LC_MESSAGES/p11k.mo"
-          grep -aq "$out/share/locale" "$out/bin/p11k"
-          "$out/bin/p11k" --version
