@@ -1,0 +1,38 @@
+name: Audit
+
+on:
+  schedule:
+    # The advisory database changes without a repository change. Scan once a week so a new
+    # advisory is reported instead of waiting for the next pull request.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit
+  cancel-in-progress: true
+
+jobs:
+  deny:
+    name: deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-audit-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml', 'deny.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 2G
+
+      - name: Check dependencies
+        run: nix develop --command just deny

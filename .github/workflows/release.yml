@@ -9,7 +9,12 @@ on:
       - ".github/workflows/release.yml"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "rust-toolchain.toml"
       - "crates/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -128,6 +133,7 @@ jobs:
           } > runtime-dependencies.md
 
       - name: Upload artifacts
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v7
         with:
           name: release-artifacts
@@ -144,8 +150,27 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      checks: read
     steps:
       - uses: actions/checkout@v7
+
+      # A tag can point at a commit whose CI did not finish or pass. Check the required
+      # results before the release becomes visible.
+      - name: Check the commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          sha=$(git rev-parse HEAD)
+          for name in x86_64 aarch64 nix msrv; do
+            state=$(gh api "repos/$GH_REPO/commits/$sha/check-runs" \
+              --jq ".check_runs[] | select(.name == \"$name\") | .conclusion" | tail -n 1)
+            if [ "$state" != "success" ]; then
+              echo "required check $name is '${state:-missing}' for $sha" >&2
+              exit 1
+            fi
+          done
 
       - name: Download artifacts
         uses: actions/download-artifact@v8

@@ -19,9 +19,12 @@ jobs:
   # change list with tools/ci/classify-changes.sh, and the heavy jobs below skip their steps
   # when the answer is `code=false`.
   #
-  # The heavy jobs still start instead of using a job-level `if`. A skipped job leaves its
-  # required check pending, and the pull request could not merge; a job whose steps are all
-  # skipped still reports success and keeps the check name.
+  # The heavy jobs still start instead of using a job-level `if`. GitHub treats a skipped
+  # required check as passing, so a skipped job would hide the check instead of reporting it;
+  # a job whose steps are all skipped still reports success and keeps the check name.
+  #
+  # A failure in this job skips the heavy jobs through `needs`, and their skipped required
+  # checks pass as well. Keep that in mind before a change to this job.
   #
   # Any error here means `code=true`: a misclassified change must run the full CI, not skip it.
   changes:
@@ -55,7 +58,7 @@ jobs:
   commit-lint:
     name: commit-lint
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -67,24 +70,45 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -eu
-          pattern='^(feat|fix|chore|docs|test|ci|refactor|perf|build|style|revert)(\([a-z0-9._-]+\))?!?: .+'
+          pattern='^(feat|fix|chore|docs|test|ci|refactor|perf|build|style|revert|i18n|license|bench)(\([a-z0-9._-]+\))?!?: .+'
           status=0
-          if ! printf '%s\n' "$PR_TITLE" | grep -Eq "$pattern"; then
-            echo "::error::pull request title does not follow Conventional Commits: $PR_TITLE"
-            status=1
-          fi
-          while IFS= read -r subject; do
-            if ! printf '%s\n' "$subject" | grep -Eq "$pattern"; then
-              echo "::error::commit title does not follow Conventional Commits: $subject"
+          check() {
+            local title=$1
+            if ! printf '%s\n' "$title" | grep -Eq "$pattern"; then
+              echo "::error::title does not follow Conventional Commits: $title"
               status=1
             fi
+            if [ "${#title}" -gt 72 ]; then
+              echo "::error::title is longer than 72 characters: $title"
+              status=1
+            fi
+          }
+          check "$PR_TITLE"
+          while IFS= read -r subject; do
+            check "$subject"
           done < <(git log --no-merges --format=%s "$BASE_SHA..HEAD")
           exit "$status"
+
+  # Workflow files are code: a broken expression or an invalid step breaks every job. Lint them
+  # once per code change instead of waiting for a workflow run to fail.
+  workflows:
+    name: workflows
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
+      - uses: cachix/install-nix-action@v31
+        if: needs.changes.outputs.code == 'true'
+      - name: Lint the workflows
+        if: needs.changes.outputs.code == 'true'
+        run: nix shell --inputs-from . nixpkgs#actionlint --command actionlint .github/workflows/*.yml
 
   x86_64:
     name: x86_64
     needs: changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
@@ -134,7 +158,7 @@ jobs:
   nix:
     name: nix
     needs: changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
@@ -157,8 +181,9 @@ jobs:
       - name: Package
         if: needs.changes.outputs.code == 'true'
         run: |
-          nix develop --command just nix-build
-          out=$(nix path-info ./result)
+          # Build in the nix sandbox directly. `nix develop` rebuilds the devShell when the
+          # store cache evicts it, and the sandbox build does not depend on the devShell.
+          out=$(nix build --no-link --print-out-paths)
           for bin in p11k p11k-d; do
             test -x "$out/bin/$bin"
           done
@@ -169,7 +194,7 @@ jobs:
   # The devShell pins this version, but a flake mistake could hide that. This job uses plain
   # rustup, so it fails on the real toolchain and not on a nix expression.
   msrv:
-    name: MSRV 1.95.0
+    name: msrv
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
