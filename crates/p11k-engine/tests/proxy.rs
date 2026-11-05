@@ -1069,6 +1069,135 @@ fn show_ruler_does_not_cover_the_previous_output() {
     );
 }
 
+/// `transient-prompt "same-dir"` folds the previous prompt only when the command left the shell
+/// in the same directory. A command that changes the directory keeps the previous header.
+#[test]
+fn same_dir_mode_folds_in_the_same_directory_and_keeps_a_changed_one() {
+    let theme = "layout {\n    left { line { dir } }\n    right { line { status } }\n    \
+                 transient-prompt same-dir\n}\nsegments {\n    status verbose=#true\n}\n    \
+                 frame { first-prefix \"HDRMARK|\" }\n";
+    let mut eng = spawn_engine_with_theme(theme);
+    wait_ready(&eng.master);
+
+    // The first prompt has no previous directory, so its header stays whole. The fold decision
+    // is used when a command is submitted, so the second prompt folds only on the next submit.
+    eng.writer
+        .write_all(b"true; printf 'P11K-%s\\n' ONE\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "P11K-ONE", SHELL_READY);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    assert_eq!(
+        eng.master.screen().matches("HDRMARK|").count(),
+        2,
+        "both prompts keep their headers before a fold happens"
+    );
+
+    // Same directory: submitting the second command folds the second prompt's header.
+    eng.writer
+        .write_all(b"true; printf 'P11K-%s\\n' TWO\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "P11K-TWO", SHELL_READY);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    std::thread::sleep(Duration::from_millis(150));
+    let screen = eng.master.screen();
+    assert_eq!(
+        screen.matches("HDRMARK|").count(),
+        2,
+        "the same-directory prompt must be folded; the first and the new prompt keep theirs, got {screen:?}"
+    );
+    assert!(
+        screen.contains("❯ true; printf"),
+        "the folded prompt should keep the submitted command, got {screen:?}"
+    );
+
+    // The third command changes the directory, so the prompt after it keeps its header.
+    eng.writer
+        .write_all(b"cd /; printf 'P11K-%s\\n' THREE\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "P11K-THREE", SHELL_READY);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    eng.writer
+        .write_all(b"true; printf 'P11K-%s\\n' FOUR\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "P11K-FOUR", SHELL_READY);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    std::thread::sleep(Duration::from_millis(150));
+    let screen = eng.master.screen();
+    assert_eq!(
+        screen.matches("HDRMARK|").count(),
+        3,
+        "the prompt after a directory change must keep its header, got {screen:?}"
+    );
+}
+
+/// A resize while a command runs must leave one clean prompt when the command finishes, with the
+/// output intact.
+#[test]
+fn resize_while_a_command_runs_keeps_the_next_prompt_clean() {
+    let mut eng = spawn_engine_with_theme(RESIZE_THEME);
+    wait_ready(&eng.master);
+    eng.writer
+        .write_all(b"sleep 1; printf 'P11K-%s\\n' LATE\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    // Let the command start before the resize lands under it.
+    std::thread::sleep(Duration::from_millis(200));
+    eng.master.resize(60, 20);
+    read_until(&eng.master, "P11K-LATE", SHELL_READY);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    std::thread::sleep(Duration::from_millis(150));
+    let screen = eng.master.screen();
+    assert_eq!(
+        screen.matches("HDRMARK|").count(),
+        1,
+        "one header after a resize during a command, got {screen:?}"
+    );
+    assert!(
+        screen.contains("P11K-LATE"),
+        "the command output must survive the resize, got {screen:?}"
+    );
+}
+
+/// `show-ruler` with a multi-line header: the ruler belongs to the prompt area, so the output
+/// above the next prompt must survive the ruler and every header row.
+#[test]
+fn show_ruler_with_a_multi_line_header_keeps_the_output() {
+    let theme = "layout {\n    left { line { dir }; line { time } }\n    right { line { status } }\n    \
+                 show-ruler #true\n}\nsegments {\n    status verbose=#true\n}\n    \
+                 frame { first-prefix \"HDRMARK|\" }\n";
+    let mut eng = spawn_engine_with_theme(theme);
+    wait_ready(&eng.master);
+
+    eng.writer
+        .write_all(b"printf 'P11K-%s-OUTPUT\\n' multi\n")
+        .unwrap();
+    eng.writer.flush().unwrap();
+    read_until(&eng.master, "P11K-multi-OUTPUT", SHELL_READY);
+    read_until(&eng.master, "HDRMARK|", SHELL_READY);
+    std::thread::sleep(Duration::from_millis(150));
+    let screen = eng.master.screen();
+    assert!(
+        screen.contains("P11K-multi-OUTPUT"),
+        "the next prompt must not cover the previous output, got {screen:?}"
+    );
+    assert_eq!(
+        screen.matches("HDRMARK|").count(),
+        2,
+        "the previous prompt and the new one, got {screen:?}"
+    );
+    assert!(
+        screen.lines().any(|line| {
+            let t = line.trim();
+            !t.is_empty() && t.chars().all(|c| c == '─' || c == '-')
+        }),
+        "a full ruler row should be visible, got {screen:?}"
+    );
+}
+
 /// After a resize: exactly one header, no leftover content above it, and the input line directly
 /// under it keeps the typed buffer.
 ///
