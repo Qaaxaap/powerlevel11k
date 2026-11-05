@@ -126,7 +126,7 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 2G
+          gc-max-store-size-linux: 3G
 
       # The nix cache covers the store, not the cargo registry or the build directory, so the
       # devShell would recompile the workspace on every run without this. The architecture is in
@@ -153,6 +153,67 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: nix develop --command just differential
 
+  # The render check runs p11k inside a real kitty terminal in a headless sway compositor and
+  # compares the captured pixels with the committed reference frames. Its toolchain lives in a
+  # separate devShell, so it is a job of its own instead of part of `just verify`.
+  #
+  # It shares the x86_64 cache key: both jobs need the same flake inputs, and a second key would
+  # store a second copy of the store. The gc limit covers the visual devShell on top of the
+  # default one, and the cargo key is shared for the same reason.
+  render:
+    name: render
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        if: needs.changes.outputs.code == 'true'
+
+      - uses: cachix/install-nix-action@v31
+        if: needs.changes.outputs.code == 'true'
+        with:
+          extra_nix_config: |
+            keep-env-derivations = true
+            keep-outputs = true
+
+      - uses: nix-community/cache-nix-action@v7
+        if: needs.changes.outputs.code == 'true'
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 3G
+
+      - name: Cache cargo
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.arch }}-${{ runner.os }}-
+
+      # The build runs in the default devShell so cargo reuses the cached target directory; the
+      # check itself runs in the visual devShell with --ignore-environment, so the caller's
+      # environment does not leak into the rendered frames.
+      - name: Build the engine
+        if: needs.changes.outputs.code == 'true'
+        run: nix develop --command cargo build -p p11k-engine --bin p11k
+
+      - name: Render check
+        if: needs.changes.outputs.code == 'true'
+        run: nix develop .#visual --ignore-environment --command bash tools/visual/check.sh
+
+      - name: Upload the captured frames and diffs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: render-check
+          path: .cache/render-check/
+          retention-days: 7
+
   # The flake is the supported Nix install path. This job builds the package once, instead of
   # repeating the same build on every architecture. The workspace tests run in `just verify`.
   nix:
@@ -176,7 +237,7 @@ jobs:
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 2G
+          gc-max-store-size-linux: 3G
 
       - name: Package
         if: needs.changes.outputs.code == 'true'

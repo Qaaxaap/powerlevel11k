@@ -81,3 +81,17 @@ changelog tag="":
 # find the default Maple Mono family.
 demo:
     nix shell nixpkgs#agg nixpkgs#imagemagick nixpkgs#fontconfig --command tools/demo/capture.sh
+
+# Capture the reference prompt in a real terminal and compare the pixels with the committed
+# reference frame. The build runs in the default devShell so cargo caches apply; the capture and
+# the comparison run in the visual devShell with --ignore-environment, so nothing comes from the
+# caller. See tools/visual/README.md.
+render-check:
+    nix develop --command cargo build -p p11k-engine --bin p11k
+    nix develop .#visual --ignore-environment --command bash tools/visual/check.sh
+
+# Regenerate the reference frame after a deliberate rendering change. Review the image before
+# committing it: the command cannot decide whether a change is intended.
+render-update:
+    nix develop --command cargo build -p p11k-engine --bin p11k
+    nix develop .#visual --ignore-environment --command bash tools/visual/check.sh --update
