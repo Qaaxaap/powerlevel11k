@@ -5,17 +5,20 @@
 # affect the build or the tests. Prints `code=false` when every path is
 # documentation, and the workflow then skips the heavy jobs.
 #
-# Documentation is a closed list: Markdown, docs/images, the license files, the
-# contributor list and the issue templates. Anything else counts as code, so a
-# new file type runs the full CI until it is added here.
+# Documentation is a closed list: the root documents, docs/, the license files, the
+# contributor list and the issue and pull request templates. A Markdown file elsewhere,
+# for example a crate README, counts as code. Anything else counts as code, so a new file
+# type runs the full CI until it is added here.
 set -eu
 
 code=false
 while IFS= read -r path; do
     [ -n "$path" ] || continue
     case $path in
-        *.md | docs/images/* | LICENSE | LICENSE.* | COPYING | COPYING.* | \
-            .all-contributorsrc | .github/ISSUE_TEMPLATE/*) ;;
+        README.md | README.zh.md | CHANGELOG.md | CONTRIBUTING.md | CONTRIBUTING.zh.md | \
+            CODE_OF_CONDUCT.md | SECURITY.md | AGENTS.md | docs/* | \
+            .github/ISSUE_TEMPLATE/* | .github/pull_request_template.md | \
+            LICENSE | LICENSE.* | COPYING | COPYING.* | .all-contributorsrc) ;;
         *) code=true ;;
     esac
 done

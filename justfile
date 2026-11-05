@@ -26,10 +26,14 @@ lint:
 test:
     cargo test --all --locked
 
+# Run the differential tests against the original gitstatusd. The devShell sets GITSTATUSD_PATH.
+differential:
+    cargo test -p p11k-d --test compat -- --ignored
+
 # Everything a pull request must pass.
 check: fmt-check nix-fmt-check lint test
 
-# The full local gate: what CI runs.
+# The full local gate. CI also runs `just differential` and `just nix-build`.
 verify: fmt-check nix-fmt-check lint test deny spell
 
 # Build the binaries.

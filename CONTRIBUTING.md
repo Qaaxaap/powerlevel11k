@@ -13,11 +13,11 @@ Everything the build and the tests need is pinned in `flake.nix`. The demo recor
 ```bash
 nix develop
 just check         # fmt-check + clippy + test: the fast gate
-just nix-check     # the same tests inside the nix sandbox
+just nix-check     # the same tests inside the nix sandbox, debug build
 just build         # the binaries: p11k and p11k-d
 ```
 
-`just verify` is what CI runs on x86_64 and aarch64, so there is no second command line to keep in sync. `just check` is the faster gate without `deny` and `spell`. The MSRV job runs `cargo check --all-targets --locked`. The other recipes cover the rest of the infrastructure:
+`just verify` is what CI runs on x86_64 and aarch64. The `nix` job runs `just nix-build` and checks the package. `just differential` runs the compatibility tests on both architectures. `just check` is the faster gate without `deny` and `spell`. The MSRV job runs `cargo check --all-targets --locked`. The other recipes cover the rest of the infrastructure:
 
 - `just deny`: dependency licences, bans and advisories
 - `just spell`: typos

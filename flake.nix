@@ -124,6 +124,9 @@
           inherit version;
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
+          # The checks serve developers, not release artifacts: build them in the debug profile
+          # so they skip the release optimization pass.
+          buildType = "debug";
           nativeBuildInputs = with pkgs; [
             pkg-config
             cmake
