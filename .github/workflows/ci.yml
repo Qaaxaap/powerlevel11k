@@ -100,7 +100,7 @@ jobs:
       - uses: nix-community/cache-nix-action@v7
         if: needs.changes.outputs.code == 'true'
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 2G
 
@@ -150,7 +150,7 @@ jobs:
       - uses: nix-community/cache-nix-action@v7
         if: needs.changes.outputs.code == 'true'
         with:
-          primary-key: nix-job-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 2G
 
@@ -182,8 +182,8 @@ jobs:
         if: needs.changes.outputs.code == 'true'
         run: cargo check --all-targets --locked
 
-  # The flake declares aarch64-linux; this job is what makes that true. The runner is native
-  # arm64, so nothing here needs qemu or a cross toolchain.
+  # The runner is native arm64, so the devShell checks and the differential tests run on the
+  # architecture the flake declares. The nix job builds the package on x86_64.
   arm:
     name: aarch64
     needs: changes
@@ -203,7 +203,7 @@ jobs:
       - uses: nix-community/cache-nix-action@v7
         if: needs.changes.outputs.code == 'true'
         with:
-          primary-key: nix-aarch64-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+          primary-key: nix-aarch64-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
           restore-prefixes-first-match: nix-aarch64-
           gc-max-store-size-linux: 2G
 

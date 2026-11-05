@@ -33,7 +33,7 @@ differential:
 # Everything a pull request must pass.
 check: fmt-check nix-fmt-check lint test
 
-# The full local gate: what CI runs.
+# The full local gate. CI also runs `just differential` and `just nix-build`.
 verify: fmt-check nix-fmt-check lint test deny spell
 
 # Build the binaries.
