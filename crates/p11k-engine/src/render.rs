@@ -509,7 +509,22 @@ fn render_segment(
         "nix_shell" => paint(&nix_shell_text(), &style),
         "history" => paint(&info.history.to_string(), &style),
         "vi_mode" => paint(&vi_mode_text(seg), &style),
-        _ => paint(&value_of(seg.content.as_deref(), String::new()), &style),
+        // p10k looks up `prompt_<name>` and has no fallback: an unknown segment renders
+        // nothing, so its configured content is ignored too. The icon-only segments (`os`,
+        // `os_icon`) have no match arm and no text; keep the empty text so that the icon logic
+        // below draws their visual identifier.
+        _ => {
+            if icon_is_content(name) {
+                paint("", &style)
+            } else {
+                return SegmentText {
+                    text: String::new(),
+                    style,
+                    padded: false,
+                    joined_left,
+                };
+            }
+        }
     };
     // Segment icon: config `icon` (auto-overrides the applicable mode by char class) →
     // otherwise the built-in default table.
@@ -566,7 +581,10 @@ fn render_segment(
             if icon_first {
                 paint(&format!("{ic}{pad}"), &icon_style)
             } else {
-                paint(&format!("{pad}{ic}"), &icon_style)
+                // The icon comes after the content: the middle whitespace stays one space
+                // before the icon, and the extra `moderate` space goes to the outer side.
+                let extra = if pad.len() > 1 { " " } else { "" };
+                paint(&format!(" {ic}{extra}"), &icon_style)
             }
         }
         None => String::new(),
@@ -626,8 +644,10 @@ fn render_segment(
     let mut out = String::new();
     // Leading space: always for segments with a background; unconditional for right-column
     // segments, which are always preceded by a separator, and p10k's separator is followed by
-    // a left_space. Transparent segments at the start of the left column get none.
-    if has_real_bg || right {
+    // a left_space. Transparent segments at the start of the left column get none. A joined
+    // segment gets none: p10k emits no left_space for it, and the previous segment's trailing
+    // space is the only gap.
+    if (has_real_bg || right) && !joined_left {
         out.push_str(&paint(" ", &style));
     }
     out.push_str(&body);
@@ -2690,6 +2710,12 @@ fn assemble_row(
         // separator (same bg → sub, different color / current has none → segment); previous
         // has none → a space. Segments carry their trailing padding (see render_segment), so no
         // extra space is added, avoiding doubles (p10k uses one space between them).
+        // A `_joined` first segment has no left neighbor: the suffix does nothing, so it keeps
+        // the normal leading space of a line-start segment (docs/config-language.md). The
+        // space carries the segment background, like every other segment padding.
+        if !has_left && s.joined_left && s.style.bg != Color::Default {
+            out.push_str(&paint(" ", &s.style));
+        }
         if has_left && !s.joined_left {
             let prev_has = prev_bg != Color::Default;
             if prev_has {
@@ -2739,6 +2765,11 @@ fn assemble_row(
             ));
         }
         for (i, s) in parts.iter().enumerate() {
+            // A joined first segment has no left neighbor: keep the normal leading space,
+            // painted with the segment background.
+            if i == 0 && s.joined_left {
+                right_str.push_str(&paint(" ", &s.style));
+            }
             if i > 0 && !s.joined_left {
                 // Inter-segment separation on the right: same color → right_sub (the segment
                 // foreground drawn on the segment background), different → right_segment
@@ -2954,6 +2985,24 @@ mod tests {
         Some(rest[..rest.find('m')?].to_string())
     }
 
+    /// Strips SGR sequences, leaving visible characters.
+    fn strip_sgr(s: &str) -> String {
+        let mut out = String::new();
+        let mut it = s.chars().peekable();
+        while let Some(c) = it.next() {
+            if c == '\u{1b}' {
+                for d in it.by_ref() {
+                    if d == 'm' {
+                        break;
+                    }
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
     /// A `_joined` segment shares a block with the one to its left: no `segment` arrow and no
     /// `sub` line between them, even with different backgrounds (p10k's `elif (( joined ))`,
     /// `p10k.zsh:681-691`).
@@ -2992,19 +3041,195 @@ mod tests {
         );
     }
 
+    /// A `_joined` segment shares the block with its left neighbor: p10k emits no left_space
+    /// for it, so the only space between the two segments is the previous segment's trailing
+    /// space.
+    #[test]
+    fn joined_segment_has_no_leading_space() {
+        let mut cfg = Config::default();
+        cfg.segments.insert(
+            "vcs".into(),
+            crate::config::Segment {
+                content: Some("X".into()),
+                ..Default::default()
+            },
+        );
+        let plain = render_segment(&cfg, "vcs", &info("/tmp", None), None, true, None, false);
+        let joined = render_segment(&cfg, "vcs", &info("/tmp", None), None, true, None, true);
+        let p = strip_sgr(&plain.text);
+        let j = strip_sgr(&joined.text);
+        assert!(
+            p.starts_with(' '),
+            "a plain right-column segment starts with its padding, got {p:?}"
+        );
+        assert!(
+            !j.starts_with(' '),
+            "a joined segment starts with its content, got {j:?}"
+        );
+        assert_eq!(display_width(&p), display_width(&j) + 1);
+    }
+
+    /// A `_joined` suffix on the first segment has no left neighbor to join: it keeps the
+    /// normal leading space of a line-start segment (docs/config-language.md).
+    #[test]
+    fn joined_first_segment_keeps_its_leading_space() {
+        let seps = crate::config::Separators {
+            segment: ">".into(),
+            sub: "|".into(),
+            end: String::new(),
+            left_tail: String::new(),
+            ..Default::default()
+        };
+        let seg = |text: &str, bg: u8, joined_left: bool| SegmentText {
+            text: text.to_string(),
+            style: Style {
+                bg: Color::Xterm(bg),
+                ..Default::default()
+            },
+            padded: true,
+            joined_left,
+        };
+        let out = assemble_row(&[seg("A", 1, true), seg("B", 2, false)], &[], 0, &seps, 0);
+        let visible = strip_sgr(&out);
+        let leading = visible.chars().take_while(|&c| c == ' ').count();
+        assert_eq!(
+            leading, 1,
+            "the first joined segment should keep one leading space, got {visible:?}"
+        );
+        assert!(
+            out.contains("\x1b[48;5;1m "),
+            "the leading space should carry the segment background, got {out:?}"
+        );
+    }
+
+    /// The `_joined` suffix only affects the boundary to the left. Prefix, suffix and the
+    /// attach slots keep their normal order inside the segment.
+    #[test]
+    fn joined_segment_keeps_attach_slots_and_prefix_suffix() {
+        let mut cfg = Config::default();
+        cfg.segments.insert(
+            "vcs".into(),
+            crate::config::Segment {
+                content: Some("X".into()),
+                prefix: Some("on ".into()),
+                suffix: Some("!".into()),
+                text_left: Some(crate::config::AttachText {
+                    text: "L".into(),
+                    fg: None,
+                }),
+                text_middle: Some(crate::config::AttachText {
+                    text: "M".into(),
+                    fg: None,
+                }),
+                text_right: Some(crate::config::AttachText {
+                    text: "R".into(),
+                    fg: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let seg = render_segment(&cfg, "vcs", &info("/tmp", None), None, false, None, true);
+        let text = strip_sgr(&seg.text);
+        assert!(
+            text.starts_with("on L"),
+            "a joined segment keeps its prefix and text-left, got {text:?}"
+        );
+        let li = text.find('L').expect("text-left");
+        let mi = text.find('M').expect("text-middle");
+        let xi = text.find('X').expect("content");
+        let ri = text.find('R').expect("text-right");
+        let si = text.find('!').expect("suffix");
+        assert!(
+            li < mi && mi < xi && xi < ri && ri < si,
+            "attach slots and suffix keep their order, got {text:?}"
+        );
+    }
+
+    /// An unknown segment name is ignored: p10k looks up `prompt_<name>` and has no fallback,
+    /// so a name without an implementation renders nothing, its configured content included.
+    #[test]
+    fn unknown_segment_renders_nothing() {
+        let mut cfg = Config::default();
+        cfg.layout.left = vec![vec![Element::Seg("nosuch".into())]];
+        cfg.segments.insert(
+            "nosuch".into(),
+            crate::config::Segment {
+                content: Some("secret".into()),
+                ..Default::default()
+            },
+        );
+        let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
+        assert!(
+            !h.contains("secret"),
+            "unknown segments are ignored, got {h:?}"
+        );
+    }
+
+    /// Icon-only segments (`os_icon`, `os`) have no text and no `match` arm: the icon logic
+    /// draws the visual identifier. They must survive the unknown-segment check.
+    #[test]
+    fn icon_only_segment_renders_its_icon() {
+        let cfg = Config::parse("layout { left { line { os_icon } } }").unwrap();
+        let icon = os_icon(&cfg.mode);
+        assert!(!icon.is_empty(), "the os icon has a fallback");
+        let h = strip_sgr(&render_header_lines(&cfg, &info("/tmp", None), None, 80)[0]);
+        assert!(
+            h.contains(&icon),
+            "os_icon should render its icon, got {h:?}"
+        );
+    }
+
+    /// The icon padding sits between the icon and the content. With the icon after the content
+    /// (right column), the extra `moderate` space lands on the outer side of the icon; the
+    /// middle whitespace before the icon stays one space.
+    #[test]
+    fn right_column_icon_padding_lands_outside_the_icon() {
+        let draw = |padding: Option<&str>| {
+            let prefix = padding
+                .map(|p| format!("icon-padding \"{p}\"\n"))
+                .unwrap_or_default();
+            let cfg = Config::parse(&format!(
+                "{prefix}layout {{\n    right {{ line {{ dir }} }}\n}}\n"
+            ))
+            .unwrap();
+            strip_sgr(&render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80)[0])
+        };
+        for (padding, trailing) in [(None, 1usize), (Some("moderate"), 2)] {
+            let line = draw(padding);
+            let chars: Vec<char> = line.chars().collect();
+            let i = chars
+                .iter()
+                .position(|&c| c == '\u{f115}')
+                .unwrap_or_else(|| panic!("folder icon should render, got {line:?}"));
+            assert!(
+                i >= 2 && chars[i - 1] == ' ' && chars[i - 2] != ' ',
+                "{padding:?}: the icon should have one middle space before it, got {line:?}"
+            );
+            let after = chars[i + 1..]
+                .iter()
+                .rev()
+                .take_while(|&&c| c == ' ')
+                .count();
+            assert_eq!(
+                after, trailing,
+                "{padding:?}: wrong space count after the icon, got {line:?}"
+            );
+        }
+    }
+
     #[test]
     fn segment_prefix_and_suffix_render() {
         // p10k's SEG_PREFIX/SEG_SUFFIX (vcs `on `, exec `took `):
         // drawn at the very start/end of the segment.
         let mut cfg = Config::default();
-        cfg.layout.left = vec![vec![Element::Seg("custom".into())]];
+        cfg.layout.left = vec![vec![Element::Seg("vcs".into())]];
         let s = crate::config::Segment {
             content: Some("main".into()),
             prefix: Some("on ".into()),
             suffix: Some("!".into()),
             ..Default::default()
         };
-        cfg.segments.insert("custom".into(), s);
+        cfg.segments.insert("vcs".into(), s);
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(h.contains("on "), "prefix should render, got {h:?}");
         assert!(h.contains("main"), "content should render, got {h:?}");
