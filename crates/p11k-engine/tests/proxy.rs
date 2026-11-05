@@ -1039,6 +1039,29 @@ fn fish_resize_repaints_the_header() {
     assert_resized_screen(&eng.master);
 }
 
+/// The echo of a submitted command belongs to the scrollback, not to the prompt window: the new
+/// header must be painted on the blank rows fish prints, not over the command line. The engine
+/// covered one row too many because fish's single blank row became an empty string through
+/// `string collect`, so the header landed on the echoed command instead of the row below it.
+#[test]
+fn fish_keeps_the_command_echo_on_screen() {
+    let mut eng = spawn_engine_shell_with_theme("fish", RESIZE_THEME);
+    wait_ready(&eng.master);
+
+    eng.writer.write_all(b"sleep 1\n").unwrap();
+    eng.writer.flush().unwrap();
+    let screen = eng.master.screen_until("HDRMARK|", 2, SHELL_READY);
+    assert!(
+        screen.contains("sleep 1"),
+        "the command echo must stay above the new prompt, got {screen:?}"
+    );
+    assert_eq!(
+        screen.matches("HDRMARK|").count(),
+        2,
+        "one header per prompt, got {screen:?}"
+    );
+}
+
 /// `show-ruler` adds a row above the header. That row belongs to the prompt area, so the shell
 /// must print it too; otherwise the next prompt's ruler covers the last line of the output.
 #[test]

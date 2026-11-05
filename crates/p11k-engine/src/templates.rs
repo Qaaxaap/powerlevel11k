@@ -286,10 +286,14 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
+        printf '\r'
         if test -z "$_instant"
-            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
+            # Print the blank header rows directly: `string collect` drops the final newline,
+            # so a single row would become an empty string and the engine would cover one row
+            # too many. The resize reflow above the header is cleared by the engine.
+            printf '\n%.0s' (seq 1 $_p11k_rows)
         end
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
+        printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -303,10 +307,14 @@ function fish_prompt
     set -g _p11k_rows $_ack[1]
     set -g _p11k_prefix $_ack[2]
     if test -z "$_instant"
-        # `string collect` keeps the newlines a command substitution would strip.
-        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
+        # Print the blank header rows directly: `string collect` drops the final newline, so a
+        # single row would become an empty string and the engine would cover one row too many.
+        printf '\r'
+        printf '\n%.0s' (seq 1 $_p11k_rows)
+    else
+        printf '\r'
     end
-    printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
+    printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
 end
 
 # ===== user config =====
@@ -341,10 +349,14 @@ function fish_prompt
         set -g _p11k_last_cols $COLUMNS
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
+        printf '\r'
         if test -z "$_instant"
-            set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
+            # Print the blank header rows directly: `string collect` drops the final newline,
+            # so a single row would become an empty string and the engine would cover one row
+            # too many. The resize reflow above the header is cleared by the engine.
+            printf '\n%.0s' (seq 1 $_p11k_rows)
         end
-        printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
+        printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
         return
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
@@ -358,10 +370,14 @@ function fish_prompt
     set -g _p11k_rows $_ack[1]
     set -g _p11k_prefix $_ack[2]
     if test -z "$_instant"
-        # `string collect` keeps the newlines a command substitution would strip.
-        set _lead (printf '\n%.0s' (seq 1 $_p11k_rows) | string collect)
+        # Print the blank header rows directly: `string collect` drops the final newline, so a
+        # single row would become an empty string and the engine would cover one row too many.
+        printf '\r'
+        printf '\n%.0s' (seq 1 $_p11k_rows)
+    else
+        printf '\r'
     end
-    printf '\r%s\e]1337;p11k;p\a%s' "$_lead" "$_p11k_prefix"
+    printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
 end
 "#;
 

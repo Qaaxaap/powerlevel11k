@@ -266,6 +266,10 @@ pub fn run() -> anyhow::Result<()> {
     // the colour of the frame's last prefix (PSReadLine issues #986 and #4716). The forwarding
     // path rewrites that stripped copy back to the coloured one.
     let mut pwsh_prefix: Option<(String, String)> = None;
+    // Rows the terminal reflowed the previous header into above the new header after a resize.
+    // The prompt repaint covers the header rows but not those extra rows, so they are cleared
+    // before the repaint.
+    let mut resize_extra_rows: usize = 0;
 
     // instant header: don't wait for the inner shell to finish loading a slow user rc; draw a
     // provisional header from the engine cwd right away so the prompt is visible as soon as the
@@ -376,6 +380,12 @@ pub fn run() -> anyhow::Result<()> {
                     pixel_height: yp,
                 })?;
                 last_size = (r, c, xp, yp);
+                // At the new width the terminal may split the old header rows into more rows
+                // than the header has; those extra rows sit above the header the shell is
+                // about to reprint and the signal repaint would leave them behind.
+                if prompt.at_prompt() {
+                    resize_extra_rows = reflow_extra_rows(last_header.as_deref(), c as usize);
+                }
                 debug(&format!("resized pty to {}x{} ({}x{} px)", r, c, xp, yp));
                 // During the instant phase no shell `r` announce triggers a repaint yet, so
                 // the screen still holds the copy drawn at the old column count (possibly
@@ -653,6 +663,20 @@ pub fn run() -> anyhow::Result<()> {
                     let before = rewrite_pwsh_prefix(&scan.before, shell, pwsh_prefix.as_ref());
                     stdout.write_all(&before)?;
                     for _ in 0..scan.signals {
+                        if resize_extra_rows > 0 {
+                            // The reflowed rows sit above the header the shell just reprinted;
+                            // clear them before the repaint covers the header itself.
+                            let rows = geometry.header_rows.max(1) + resize_extra_rows;
+                            write!(stdout, "\x1b7\x1b[{}A", rows)?;
+                            for i in 0..resize_extra_rows {
+                                write!(stdout, "\r\x1b[K")?;
+                                if i + 1 < resize_extra_rows {
+                                    write!(stdout, "\x1b[1B")?;
+                                }
+                            }
+                            write!(stdout, "\x1b8")?;
+                            resize_extra_rows = 0;
+                        }
                         // The instant header sits above the input line, and the real header has to
                         // replace it in place. bash and fish repaint the prompt over the row the
                         // engine drew its instant prefix on, so stepping up over the header lands
@@ -749,6 +773,24 @@ fn open_fifo(path: &std::path::Path, flags: libc::c_int) -> io::Result<i32> {
         return Err(io::Error::last_os_error());
     }
     Ok(fd)
+}
+
+/// Rows the terminal reflow adds when `lines` (the previous header) are rendered at `cols`:
+/// everything above one row per header line. The engine cannot move those rows by "up N rows"
+/// after a reflow; the signal repaint clears them instead.
+fn reflow_extra_rows(lines: Option<&[String]>, cols: usize) -> usize {
+    let Some(lines) = lines else {
+        return 0;
+    };
+    let cols = cols.max(1);
+    let rows: usize = lines
+        .iter()
+        .map(|line| {
+            let width = crate::render::display_width_of(line);
+            if width == 0 { 1 } else { width.div_ceil(cols) }
+        })
+        .sum();
+    rows.saturating_sub(lines.len())
 }
 
 /// Whether this prompt folds. `same-dir` compares the directory with the one recorded on the
