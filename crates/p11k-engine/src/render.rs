@@ -510,14 +510,20 @@ fn render_segment(
         "history" => paint(&info.history.to_string(), &style),
         "vi_mode" => paint(&vi_mode_text(seg), &style),
         // p10k looks up `prompt_<name>` and has no fallback: an unknown segment renders
-        // nothing, so its configured content is ignored too.
+        // nothing, so its configured content is ignored too. The icon-only segments (`os`,
+        // `os_icon`) have no match arm and no text; keep the empty text so that the icon logic
+        // below draws their visual identifier.
         _ => {
-            return SegmentText {
-                text: String::new(),
-                style,
-                padded: false,
-                joined_left,
-            };
+            if icon_is_content(name) {
+                paint("", &style)
+            } else {
+                return SegmentText {
+                    text: String::new(),
+                    style,
+                    padded: false,
+                    joined_left,
+                };
+            }
         }
     };
     // Segment icon: config `icon` (auto-overrides the applicable mode by char class) →
@@ -3069,6 +3075,20 @@ mod tests {
         assert!(
             !h.contains("secret"),
             "unknown segments are ignored, got {h:?}"
+        );
+    }
+
+    /// Icon-only segments (`os_icon`, `os`) have no text and no `match` arm: the icon logic
+    /// draws the visual identifier. They must survive the unknown-segment check.
+    #[test]
+    fn icon_only_segment_renders_its_icon() {
+        let cfg = Config::parse("layout { left { line { os_icon } } }").unwrap();
+        let icon = os_icon(&cfg.mode);
+        assert!(!icon.is_empty(), "the os icon has a fallback");
+        let h = strip_sgr(&render_header_lines(&cfg, &info("/tmp", None), None, 80)[0]);
+        assert!(
+            h.contains(&icon),
+            "os_icon should render its icon, got {h:?}"
         );
     }
 
