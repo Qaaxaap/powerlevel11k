@@ -127,7 +127,7 @@ jobs:
       # binary, which the devShell provides through GITSTATUSD_PATH.
       - name: Differential tests
         if: needs.changes.outputs.code == 'true'
-        run: nix develop --command bash -c 'cargo test -p p11k-d --test compat -- --ignored'
+        run: nix develop --command just differential
 
   # The flake is the supported Nix install path. This job checks the flake's checks and the
   # package in one place, instead of repeating the same build on every architecture.
@@ -233,4 +233,4 @@ jobs:
       # binary, which the devShell provides through GITSTATUSD_PATH.
       - name: Differential tests
         if: needs.changes.outputs.code == 'true'
-        run: nix develop --command bash -c 'cargo test -p p11k-d --test compat -- --ignored'
+        run: nix develop --command just differential
