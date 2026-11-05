@@ -18,6 +18,9 @@ nix develop --command just render-check
 nix develop --command just render-update
 ```
 
+The four shells are captured in parallel, each with its own compositor, terminal and output
+directory. The capture takes about eight seconds; the comparison is a few hundred milliseconds.
+
 The captures and the diff images land in `.cache/render-check/`:
 
 ```text
@@ -56,6 +59,8 @@ Every input that can move a pixel is pinned:
   rc files;
 - `tools/visual/reference.kdl`, which has no segment that changes on its own (time, execution
   time, background jobs) and no machine-dependent segment (the OS icon);
+- the cursor is painted with the background colour (`kitty.conf`), so whether the terminal draws
+  it, and in which blink phase, cannot enter the frame;
 - the frame is captured after two identical grim captures, never after a fixed sleep.
 
 Without `/dev/dri` the compositor falls back to pixman. A GPU run (gles2) can produce slightly
@@ -64,7 +69,19 @@ kitty, the font or the renderer means regenerating the reference in the same com
 
 ## Adding a shell or a scene
 
-`capture.sh` loops over the shells in `--shells` (default: `zsh bash fish pwsh`) and starts
-`p11k` through `record-tui.sh`. The recorded frame name is `<out>/<shell>/p11k-<shell>-000.png`.
-A new scene is a new theme file plus a new capture step; keep the reference set small and
-reviewable.
+`capture.sh` starts one independent run per shell in `--shells` (default: `zsh bash fish pwsh`)
+and waits for all of them; the recorded frame name is `<out>/<shell>/p11k-<shell>-000.png`. A new
+scene is a new theme file plus a new capture step; keep the reference set small and reviewable.
+
+## CI
+
+The `render` job in `.github/workflows/ci.yml` runs the check on x86_64. It does not run in
+`just verify`: the visual toolchain devShell is heavy and the reference frames only exist for
+x86_64. Like the other jobs it is skipped for documentation-only changes through the `changes`
+job.
+
+The job shares the x86_64 cache keys on purpose: both jobs need the same flake inputs and the
+same cargo build directory, and a second key per job would store a second copy. The Nix store
+cache limit is 3G to leave room for the visual devShell. A failed run uploads
+`.cache/render-check/` (the captures and the diff images) as a workflow artifact.
+

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Capture the reference prompt in a real terminal for every shell the engine proxies.
 #
-# Each run uses the same fixed repository, HOME and theme, so the only variable is the shell.
-# The frames land in OUT/<shell>/p11k-<shell>-000.png and compare.sh checks them against the
-# committed reference frames.
+# Each shell runs its own headless compositor and kitty instance in parallel; the shared inputs
+# are the fixed repository, HOME and theme, so the only variable is the shell. The frames land in
+# OUT/<shell>/p11k-<shell>-000.png and compare.sh checks them against the committed reference
+# frames.
 #
 # Environment (set by the Nix wrapper):
 #   P11K_VISUAL_REFERENCE   the theme file
@@ -66,6 +67,12 @@ rm -rf "$HOME_DIR"
 mkdir -p "$HOME_DIR"
 : > "$HOME_DIR/empty.ps1"
 
+size_args=()
+[ -n "$SIZE" ] && size_args=(--size "$SIZE")
+
+shells=()
+pids=()
+start=$SECONDS
 for shell in $SHELLS; do
   run="$OUT/run-$shell.sh"
   cat > "$run" <<EOF
@@ -78,21 +85,32 @@ EOF
   chmod +x "$run"
 
   mkdir -p "$OUT/$shell"
-  size_args=()
-  [ -n "$SIZE" ] && size_args=(--size "$SIZE")
-  # pwsh starts its runtime and PSReadLine before the prompt exists; the other shells are ready
-  # almost immediately. The stable-frame wait is the real gate, this is only the lower bound.
-  min_wait="3"
-  [ "$shell" = "pwsh" ] && min_wait="10"
+  # Every shell prints its first prompt well within a second on its own, but four compositors and
+  # terminals start at once and the load stretches that; the stable-frame wait that follows is the
+  # real gate. Three seconds covers the parallel start-up with room to spare. The runs are
+  # independent: own compositor, terminal, sockets and output directory, and a distinct kitty
+  # title per shell.
   bash "$P11K_VISUAL_RECORD_TUI" \
     --out "$OUT/$shell" \
     "${size_args[@]}" \
     --kitty-conf "$P11K_VISUAL_KITTY_CONF" \
-    --min-wait "$min_wait" \
+    --min-wait 3 \
     --title "p11k-$shell" \
     --type "sleep 1" \
     --type-wait 2 \
-    -- "$run"
+    -- "$run" > "$OUT/$shell/capture.log" 2>&1 &
+  pids+=($!)
+  shells+=("$shell")
 done
 
-echo "capture: frames under $OUT" >&2
+status=0
+for i in "${!pids[@]}"; do
+  if ! wait "${pids[$i]}"; then
+    echo "capture: ${shells[$i]} failed" >&2
+    tail -20 "$OUT/${shells[$i]}/capture.log" >&2
+    status=1
+  fi
+done
+[ "$status" = 0 ] || exit 1
+
+echo "capture: frames under $OUT ($((SECONDS - start))s elapsed)" >&2
