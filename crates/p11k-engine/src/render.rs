@@ -2710,6 +2710,11 @@ fn assemble_row(
         // separator (same bg → sub, different color / current has none → segment); previous
         // has none → a space. Segments carry their trailing padding (see render_segment), so no
         // extra space is added, avoiding doubles (p10k uses one space between them).
+        // A `_joined` first segment has no left neighbor: the suffix does nothing, so it keeps
+        // the normal leading space of a line-start segment (docs/config-language.md).
+        if !has_left && s.joined_left && s.style.bg != Color::Default {
+            out.push(' ');
+        }
         if has_left && !s.joined_left {
             let prev_has = prev_bg != Color::Default;
             if prev_has {
@@ -2759,6 +2764,10 @@ fn assemble_row(
             ));
         }
         for (i, s) in parts.iter().enumerate() {
+            // A joined first segment has no left neighbor: keep the normal leading space.
+            if i == 0 && s.joined_left {
+                right_str.push(' ');
+            }
             if i > 0 && !s.joined_left {
                 // Inter-segment separation on the right: same color → right_sub (the segment
                 // foreground drawn on the segment background), different → right_segment
@@ -3056,6 +3065,77 @@ mod tests {
             "a joined segment starts with its content, got {j:?}"
         );
         assert_eq!(display_width(&p), display_width(&j) + 1);
+    }
+
+    /// A `_joined` suffix on the first segment has no left neighbor to join: it keeps the
+    /// normal leading space of a line-start segment (docs/config-language.md).
+    #[test]
+    fn joined_first_segment_keeps_its_leading_space() {
+        let seps = crate::config::Separators {
+            segment: ">".into(),
+            sub: "|".into(),
+            end: String::new(),
+            left_tail: String::new(),
+            ..Default::default()
+        };
+        let seg = |text: &str, bg: u8, joined_left: bool| SegmentText {
+            text: text.to_string(),
+            style: Style {
+                bg: Color::Xterm(bg),
+                ..Default::default()
+            },
+            padded: true,
+            joined_left,
+        };
+        let out = assemble_row(&[seg("A", 1, true), seg("B", 2, false)], &[], 0, &seps, 0);
+        let leading = out.chars().take_while(|&c| c == ' ').count();
+        assert_eq!(
+            leading, 1,
+            "the first joined segment should keep one leading space, got {out:?}"
+        );
+    }
+
+    /// The `_joined` suffix only affects the boundary to the left. Prefix, suffix and the
+    /// attach slots keep their normal order inside the segment.
+    #[test]
+    fn joined_segment_keeps_attach_slots_and_prefix_suffix() {
+        let mut cfg = Config::default();
+        cfg.segments.insert(
+            "vcs".into(),
+            crate::config::Segment {
+                content: Some("X".into()),
+                prefix: Some("on ".into()),
+                suffix: Some("!".into()),
+                text_left: Some(crate::config::AttachText {
+                    text: "L".into(),
+                    fg: None,
+                }),
+                text_middle: Some(crate::config::AttachText {
+                    text: "M".into(),
+                    fg: None,
+                }),
+                text_right: Some(crate::config::AttachText {
+                    text: "R".into(),
+                    fg: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let seg = render_segment(&cfg, "vcs", &info("/tmp", None), None, false, None, true);
+        let text = strip_sgr(&seg.text);
+        assert!(
+            text.starts_with("on L"),
+            "a joined segment keeps its prefix and text-left, got {text:?}"
+        );
+        let li = text.find('L').expect("text-left");
+        let mi = text.find('M').expect("text-middle");
+        let xi = text.find('X').expect("content");
+        let ri = text.find('R').expect("text-right");
+        let si = text.find('!').expect("suffix");
+        assert!(
+            li < mi && mi < xi && xi < ri && ri < si,
+            "attach slots and suffix keep their order, got {text:?}"
+        );
     }
 
     /// An unknown segment name is ignored: p10k looks up `prompt_<name>` and has no fallback,
