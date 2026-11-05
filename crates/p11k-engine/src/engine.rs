@@ -261,6 +261,11 @@ pub fn run() -> anyhow::Result<()> {
     // Time of the last empty enter sent on pwsh's behalf (dragging a window fires SIGWINCH
     // repeatedly, so it must be throttled).
     let mut last_pwsh_nudge: Option<std::time::Instant> = None;
+    // The pwsh input-line prefix as the shell was handed it: the coloured form and its visible
+    // text. PSReadLine repaints the prompt from a stripped copy, so a redraw would otherwise drop
+    // the colour of the frame's last prefix (PSReadLine issues #986 and #4716). The forwarding
+    // path rewrites that stripped copy back to the coloured one.
+    let mut pwsh_prefix: Option<(String, String)> = None;
 
     // instant header: don't wait for the inner shell to finish loading a slow user rc; draw a
     // provisional header from the engine cwd right away so the prompt is visible as soon as the
@@ -479,6 +484,13 @@ pub fn run() -> anyhow::Result<()> {
                         // could not tell `OK_PIPE` from `OK`.
                         let state_name = crate::render::prompt_state(&config, Some(&info));
                         let prefix = Geometry::prefix_for(&config, shell, state_name);
+                        if shell == Shell::Pwsh {
+                            // Keep the visible text next to the coloured form: PSReadLine
+                            // repaints the prompt from the visible text only, and the
+                            // forwarding path replaces that copy with the coloured one.
+                            pwsh_prefix =
+                                Some((crate::render::strip_ansi(&prefix), prefix.clone()));
+                        }
                         // Transient prompt: `same-dir` folds the header only when the command left
                         // the shell where it was (p10k's `always` / `same-dir` split). The engine
                         // decides because it already knows both directories; the shell only reads
@@ -638,7 +650,8 @@ pub fn run() -> anyhow::Result<()> {
                     // follows the signal is forwarded after that. A completion list, Ctrl-L or a
                     // pager page reprints the whole prompt, which arrives as another signal.
                     let scan = scanner.push(&buf[..n]);
-                    stdout.write_all(&scan.before)?;
+                    let before = rewrite_pwsh_prefix(&scan.before, shell, pwsh_prefix.as_ref());
+                    stdout.write_all(&before)?;
                     for _ in 0..scan.signals {
                         // The instant header sits above the input line, and the real header has to
                         // replace it in place. bash and fish repaint the prompt over the row the
@@ -663,7 +676,8 @@ pub fn run() -> anyhow::Result<()> {
                         instant_drawn = false;
                         prompt = PromptState::Prompt;
                     }
-                    stdout.write_all(&scan.after)?;
+                    let after = rewrite_pwsh_prefix(&scan.after, shell, pwsh_prefix.as_ref());
+                    stdout.write_all(&after)?;
                     // Instant-phase bookkeeping: a newline means the shell printed something
                     // during init (rc echo/warning), so the rows we drew have been pushed down.
                     if instant_drawn {
@@ -750,6 +764,36 @@ fn transient_folds(
         crate::config::TransientPrompt::Always => true,
         crate::config::TransientPrompt::SameDir => last_cwd == Some(cwd),
     }
+}
+
+/// PSReadLine repaints the prompt from a copy without the SGR sequences it was handed, so the
+/// frame's last prefix loses its colour after the first redraw (PSReadLine issues #986 and
+/// #4716: it does not remember the colours of the prompt). Replace that visible copy with the
+/// coloured form. The match is the exact visible input-line prefix; command output that happens
+/// to contain the same bytes would be rewritten too, but the prefix is the frame's last piece
+/// plus the prompt char and that collision is not a practical concern. A prefix split across two
+/// pty reads is not rewritten; the reads are 8 KiB and the prefix starts at an output boundary.
+fn rewrite_pwsh_prefix(data: &[u8], shell: Shell, prefix: Option<&(String, String)>) -> Vec<u8> {
+    let Some((visible, colored)) = prefix else {
+        return data.to_vec();
+    };
+    if shell != Shell::Pwsh || visible.is_empty() {
+        return data.to_vec();
+    }
+    let visible = visible.as_bytes();
+    let colored = colored.as_bytes();
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        if data[i..].starts_with(visible) {
+            out.extend_from_slice(colored);
+            i += visible.len();
+        } else {
+            out.push(data[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Write the ack atomically. The shell polls for the file and reads it the moment it exists, so

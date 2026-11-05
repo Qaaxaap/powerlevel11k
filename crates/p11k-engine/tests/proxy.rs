@@ -1418,6 +1418,51 @@ fn pwsh_echoes_typed_characters() {
     marker_shell_echoes_typed_characters("pwsh");
 }
 
+/// PSReadLine repaints the prompt from a copy without the SGR sequences it was handed
+/// (PowerShell/PSReadLine#986 and #4716), so the frame's last prefix lost its colour on the first
+/// redraw. The engine rewrites the repainted visible prefix back to the coloured form; every copy
+/// of the prefix in the captured byte stream has to keep the frame colour.
+#[test]
+fn pwsh_redraws_keep_the_input_prefix_colour() {
+    let _guard = PWSH_SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let theme = r#"mode "nerdfont-complete"
+layout { left { line { dir; status } } }
+frame fg=240 { last-prefix "╰─" }
+segments { status verbose=#true }
+"#;
+    let mut eng = spawn_engine_shell_with_theme("pwsh", theme);
+    let _ = read_until(&eng.master, "╰", Duration::from_secs(20));
+    eng.writer.write_all(b"a").unwrap();
+    eng.writer.flush().unwrap();
+    let _ = eng.master.screen_until("╰─", 1, Duration::from_secs(10));
+    // PSReadLine repaints the prompt once the input line is live; poll the captured stream
+    // instead of guessing a delay.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let stream = loop {
+        let stream =
+            String::from_utf8_lossy(&std::fs::read(&eng.master.capture).unwrap_or_default())
+                .into_owned();
+        if stream.matches("╰─").count() >= 2 || Instant::now() >= deadline {
+            break stream;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let copies: Vec<usize> = stream.match_indices("╰─").map(|(i, _)| i).collect();
+    assert!(
+        copies.len() >= 2,
+        "PSReadLine must have repainted the prompt; captured {stream:?}"
+    );
+    for index in copies {
+        let context = &stream[index.saturating_sub(40)..index];
+        assert!(
+            context.contains("\u{1b}[38;5;240m"),
+            "the input prefix lost the frame colour: {context:?}"
+        );
+    }
+}
+
 /// The git worker finishes after the prompt is already on screen. Its result has to wake the
 /// main loop and repaint the header: without the wake byte the vcs segment stays absent until
 /// the next keypress.
