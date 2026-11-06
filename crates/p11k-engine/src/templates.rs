@@ -89,6 +89,12 @@ fi
 PROMPT="$_p11k_signal$P11K_PREFIX_OK"
 RPROMPT=''
 PROMPT2='> '
+# zsh prints its EOF mark (a reverse-video `%` at an unterminated output line) before the first
+# prompt. On the instant header the mark shows as a flash just before the real redraw. p11k owns
+# the prompt, so hide the mark; this runs after the user rc so a later assignment cannot bring it
+# back. Only the mark is cleared, not `PROMPT_SP` itself: the rest of that output terminates the
+# line before the prompt, and the engine's signal handling relies on it.
+PROMPT_EOL_MARK=''
 precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
 # zle-line-init takes one handler: keep the user's, then register the engine announce.
 if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p11k_line_init ]]; then
