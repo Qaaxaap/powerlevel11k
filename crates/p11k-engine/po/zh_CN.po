@@ -35,20 +35,20 @@ msgstr "当前不在 p11k 会话中（P11K_ENGINE_PID 未设置）"
 
 #: crates/p11k-engine/src/cli.rs:231
 msgid "invalid P11K_ENGINE_PID (must be a positive process id)"
-msgstr ""
+msgstr "无效的 P11K_ENGINE_PID（必须是正的进程号）"
 
 #: crates/p11k-engine/src/cli.rs:241 crates/p11k-engine/src/cli.rs:251
 msgid ""
 "not inside a p11k session (session data is missing; restart the session)"
-msgstr ""
+msgstr "不在 p11k 会话中（会话数据缺失，请尝试重启会话）"
 
 #: crates/p11k-engine/src/cli.rs:284
 msgid "cannot write the reload request:"
-msgstr ""
+msgstr "无法写入 reload 请求："
 
 #: crates/p11k-engine/src/cli.rs:295
 msgid "cannot remove the reload request:"
-msgstr ""
+msgstr "无法删除 reload 请求："
 
 #: crates/p11k-engine/src/cli.rs:300
 msgid "cannot signal the engine (the session may have exited)"
@@ -56,11 +56,11 @@ msgstr "无法向引擎发送信号（会话可能已退出）"
 
 #: crates/p11k-engine/src/cli.rs:311
 msgid "cannot read the session file:"
-msgstr ""
+msgstr "无法读取会话文件："
 
 #: crates/p11k-engine/src/cli.rs:314
 msgid "the session token does not match; the pid may belong to another process"
-msgstr ""
+msgstr "会话令牌不匹配，该 pid 可能属于另一个进程"
 
 #: crates/p11k-engine/src/cli.rs:338
 msgid ""
