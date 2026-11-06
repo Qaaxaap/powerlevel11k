@@ -34,7 +34,7 @@ differential:
 check: fmt-check nix-fmt-check lint test
 
 # The full local gate. CI also runs `just differential` and `just nix-build`.
-verify: fmt-check nix-fmt-check lint test deny spell
+verify: check deny spell
 
 # Build the binaries.
 build:
