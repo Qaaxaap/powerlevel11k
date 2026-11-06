@@ -649,14 +649,6 @@ impl Repo {
                 assume_unchanged: assume,
             };
         }
-        log::debug!(
-            "index stats: size={} staged={} unstaged={} conflicted={} untracked={}",
-            stats.index_size,
-            cap(self.staged_stats.staged, limits.max_num_staged),
-            stats.num_unstaged,
-            stats.num_conflicted,
-            stats.num_untracked
-        );
         stats.num_staged = cap(self.staged_stats.staged, limits.max_num_staged);
         stats.num_conflicted = cap(self.staged_stats.conflicted, limits.max_num_conflicted);
         stats.num_staged_new = cap(self.staged_stats.staged_new, stats.num_staged as i64);
@@ -679,6 +671,10 @@ impl Repo {
                 self.compute_dirty(&limits, &index, &candidates, &mut stats);
             }
         }
+
+        // The counters are final after the dirty scan; log them here so diagnostics show the
+        // values the response carries.
+        log::debug!("{}", index_stats_line(&stats));
 
         // Put the tree back into the cache (untracked state persists with it).
         self.index_tree = Some(index);
@@ -1050,4 +1046,41 @@ fn should_continue(c1: usize, m1: i64, c2: usize, m2: i64) -> bool {
     let reached1 = m1 >= 0 && c1 >= m1 as usize;
     let reached2 = m2 >= 0 && c2 >= m2 as usize;
     !(reached1 && reached2)
+}
+
+/// One-line summary of the final index counters for the debug log.
+fn index_stats_line(stats: &IndexStats) -> String {
+    format!(
+        "index stats: size={} staged={} unstaged={} conflicted={} untracked={}",
+        stats.index_size,
+        stats.num_staged,
+        stats.num_unstaged,
+        stats.num_conflicted,
+        stats.num_untracked
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The debug line reports the counters it is given. The caller runs it after the dirty scan,
+    /// so those values are final.
+    #[test]
+    fn index_stats_line_reports_the_counters() {
+        let stats = IndexStats {
+            index_size: 3,
+            num_staged: 1,
+            num_unstaged: 2,
+            num_conflicted: 4,
+            num_untracked: 5,
+            ..Default::default()
+        };
+        let line = index_stats_line(&stats);
+        assert!(line.contains("size=3"), "got {line}");
+        assert!(line.contains("staged=1"), "got {line}");
+        assert!(line.contains("unstaged=2"), "got {line}");
+        assert!(line.contains("conflicted=4"), "got {line}");
+        assert!(line.contains("untracked=5"), "got {line}");
+    }
 }
