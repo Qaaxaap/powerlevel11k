@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k\n"
 "Report-Msgid-Bugs-To: https://github.com/Qaaxaap/powerlevel11k/issues\n"
-"POT-Creation-Date: 2026-11-06 17:10+0800\n"
+"POT-Creation-Date: 2026-11-06 18:15+0800\n"
 "PO-Revision-Date: 2025-01-01 00:00+0000\n"
 "Last-Translator: p11k\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -19,31 +19,56 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: crates/p11k-engine/src/cli.rs:173 crates/p11k-engine/src/cli.rs:194
+#: crates/p11k-engine/src/cli.rs:181 crates/p11k-engine/src/cli.rs:202
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr "读取配置失败，回退内置 lean 主题: "
 
-#: crates/p11k-engine/src/cli.rs:184
+#: crates/p11k-engine/src/cli.rs:192
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr "未知预设，回退内置 lean 主题（可选 lean/classic/rainbow/pure）: "
 
-#: crates/p11k-engine/src/cli.rs:214
+#: crates/p11k-engine/src/cli.rs:224
 msgid "not inside a p11k session (P11K_ENGINE_PID is unset)"
 msgstr "当前不在 p11k 会话中（P11K_ENGINE_PID 未设置）"
 
-#: crates/p11k-engine/src/cli.rs:222
+#: crates/p11k-engine/src/cli.rs:231
+msgid "invalid P11K_ENGINE_PID (must be a positive process id)"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:241 crates/p11k-engine/src/cli.rs:251
+msgid ""
+"not inside a p11k session (session data is missing; restart the session)"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:284
+msgid "cannot write the reload request:"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:295
+msgid "cannot remove the reload request:"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:300
+msgid "cannot signal the engine (the session may have exited)"
+msgstr "无法向引擎发送信号（会话可能已退出）"
+
+#: crates/p11k-engine/src/cli.rs:311
+msgid "cannot read the session file:"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:314
+msgid "the session token does not match; the pid may belong to another process"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:338
 msgid ""
 "this session has no theme file: it was started with --preset or the built-in "
 "theme"
 msgstr "本会话没有主题文件：启动时用的是 --preset 或内置主题"
 
-#: crates/p11k-engine/src/cli.rs:235
-msgid "cannot signal the engine (the session may have exited)"
-msgstr "无法向引擎发送信号（会话可能已退出）"
-
-#: crates/p11k-engine/src/cli.rs:258
+#: crates/p11k-engine/src/cli.rs:358
 msgid ""
 "unknown shell in the config, falling back to $SHELL (expected zsh/bash/fish/"
 "pwsh): "
@@ -66,7 +91,7 @@ msgstr " 需要文本（位置字符串）"
 msgid "unknown config key: "
 msgstr "无法识别的配置键: "
 
-#: crates/p11k-engine/src/engine.rs:202
+#: crates/p11k-engine/src/engine.rs:210
 msgid "the inner shell failed to start"
 msgstr "内部 shell 启动失败"
 

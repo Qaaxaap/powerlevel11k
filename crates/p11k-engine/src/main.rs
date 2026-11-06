@@ -70,10 +70,10 @@ fn main() -> anyhow::Result<()> {
     log::init();
     apply_log_level();
     // `p11k configure`: enter the interactive theme wizard without spawning a shell.
-    // `p11k reload`: ask the engine of this session to re-read its theme file.
-    match cli.command {
+    // `p11k reload`: ask the engine of this session to re-read a theme file.
+    match &cli.command {
         Some(Command::Configure) => return wizard::run(),
-        Some(Command::Reload) => return reload_engine(),
+        Some(Command::Reload { config }) => return reload_engine(config.clone()),
         None => {}
     }
 

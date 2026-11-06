@@ -68,7 +68,7 @@ pub fn run() -> anyhow::Result<()> {
     // theme; the engine then has nothing to re-read). Made absolute, because the reload
     // command reads it from wherever the shell happens to be, not from the starting directory.
     // A path that cannot be resolved is kept as it is: reloading then reports the real error.
-    let config_path = theme_file().map(|p| p.canonicalize().unwrap_or(p));
+    let mut config_path = theme_file().map(|p| p.canonicalize().unwrap_or(p));
     let mut prefix = crate::render::input_prefix(&config, None);
     // The prompt skeleton each shell prints: `header_rows` blank rows for the header, then the
     // zero-width prompt-ready signal. Handed over as data so no template carries it. The engine
@@ -81,6 +81,9 @@ pub fn run() -> anyhow::Result<()> {
     // would make the line editor count it as visible width.
     let mut geometry = Geometry::new(&config, shell);
     let state = StateDir::create(shell)?;
+    // Keep the theme file this session uses where `p11k reload` can read it. An empty value
+    // records a session without a theme file (a preset or the built-in theme).
+    state.write_current_config(config_path.as_deref())?;
     info(&format!(
         "engine start: dir={} announce={} ack={} header_rows={} shell={:?}",
         state.dir.display(),
@@ -148,6 +151,11 @@ pub fn run() -> anyhow::Result<()> {
     // theme came from. An empty P11K_CONFIG means the theme is a preset or the built-in one,
     // and there is nothing to re-read.
     cmd.env("P11K_ENGINE_PID", process::id().to_string());
+    // `p11k reload` proves it talks to this session, not to whatever process now owns the old
+    // pid: the token here matches the one in `session`, and the session directory holds the
+    // current theme path and the reload request.
+    cmd.env("P11K_ENGINE_TOKEN", &state.token);
+    cmd.env("P11K_ENGINE_SESSION", &state.dir);
     if let Some(path) = &config_path {
         cmd.env("P11K_CONFIG", path);
     } else {
@@ -323,46 +331,58 @@ pub fn run() -> anyhow::Result<()> {
         // keeps the theme already in use (the reload command reports that error itself); the
         // git worker is respawned so the vcs properties follow the new theme too.
         if RELOAD_FLAG.swap(false, Ordering::Relaxed) {
-            match config_path.as_deref().map(load_config_file) {
-                Some(Ok(new_config)) => {
-                    // The shell re-reads the header height from the ack on every prompt, so a
-                    // reload that changes it lands on the next one. The prefix travelled to the
-                    // shell at startup and can only change with a restart.
-                    config = new_config;
-                    prefix = crate::render::input_prefix(&config, None);
-                    let new_geometry = Geometry::new(&config, shell);
-                    if new_geometry.prefix_ok != geometry.prefix_ok
-                        || new_geometry.prefix_err != geometry.prefix_err
-                    {
-                        info(
-                            "reload: the input-line prefix changed; it takes effect after a restart",
-                        );
+            match state.take_reload_request() {
+                Ok(request) => {
+                    if request.is_some() {
+                        config_path = request;
                     }
-                    let header_rows_changed = new_geometry.header_rows != geometry.header_rows;
-                    geometry = new_geometry;
-                    let (tx, rx) = mpsc::channel::<GitRequest>();
-                    req_tx = tx;
-                    spawn_git_worker(&config, rx, res_tx.clone());
-                    info("reload: theme reloaded");
-                    // A changed row count only takes effect on the next prompt, so repainting
-                    // now would move the cursor by the old amount.
-                    if prompt.at_prompt() && !header_rows_changed {
-                        let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
-                        // The theme changed: paint over whatever the old theme left.
-                        last_header = None;
-                        theme::redraw_header_cfg(
-                            &mut stdout,
-                            last_size.1 as usize,
-                            &config,
-                            current_info.as_ref().unwrap_or(&instant_info),
-                            vcs,
-                            &mut last_header,
-                        )?;
-                        stdout.flush()?;
+                    match config_path.as_deref().map(load_config_file) {
+                        Some(Ok(new_config)) => {
+                            // The shell re-reads the header height from the ack on every prompt,
+                            // so a reload that changes it lands on the next one. The prefix
+                            // travelled to the shell at startup and can only change with a
+                            // restart.
+                            config = new_config;
+                            prefix = crate::render::input_prefix(&config, None);
+                            let new_geometry = Geometry::new(&config, shell);
+                            if new_geometry.prefix_ok != geometry.prefix_ok
+                                || new_geometry.prefix_err != geometry.prefix_err
+                            {
+                                info(
+                                    "reload: the input-line prefix changed; it takes effect after a restart",
+                                );
+                            }
+                            let header_rows_changed =
+                                new_geometry.header_rows != geometry.header_rows;
+                            geometry = new_geometry;
+                            // Remember the file so a later reload without `--config` re-reads it.
+                            state.write_current_config(config_path.as_deref())?;
+                            let (tx, rx) = mpsc::channel::<GitRequest>();
+                            req_tx = tx;
+                            spawn_git_worker(&config, rx, res_tx.clone());
+                            info("reload: theme reloaded");
+                            // A changed row count only takes effect on the next prompt, so
+                            // repainting now would move the cursor by the old amount.
+                            if prompt.at_prompt() && !header_rows_changed {
+                                let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
+                                // The theme changed: paint over whatever the old theme left.
+                                last_header = None;
+                                theme::redraw_header_cfg(
+                                    &mut stdout,
+                                    last_size.1 as usize,
+                                    &config,
+                                    current_info.as_ref().unwrap_or(&instant_info),
+                                    vcs,
+                                    &mut last_header,
+                                )?;
+                                stdout.flush()?;
+                            }
+                        }
+                        Some(Err(e)) => info(&format!("reload: keeping the current theme: {e}")),
+                        None => info("reload: this session has no theme file"),
                     }
                 }
-                Some(Err(e)) => info(&format!("reload: keeping the current theme: {e}")),
-                None => info("reload: this session has no theme file"),
+                Err(e) => info(&format!("reload: cannot read the request: {e}")),
             }
         }
         // resize signal: sync the inner pty size (including pixels). zsh/bash/fish all

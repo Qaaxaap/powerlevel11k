@@ -64,10 +64,14 @@ pub struct Cli {
 }
 
 /// Commands that do not start an engine.
-#[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Configure,
-    Reload,
+    Reload {
+        /// theme file to re-read
+        #[arg(long, value_name = "path")]
+        config: Option<PathBuf>,
+    },
 }
 
 static ARGS: OnceLock<Cli> = OnceLock::new();
@@ -153,12 +157,16 @@ pub fn load_config_file(path: &Path) -> Result<Config, String> {
 }
 
 /// The theme file the engine should read: `--config <path>` if given, otherwise the default
-/// location, when a theme was written there (by `p11k configure` or by hand).
+/// location when a theme was written there. A `--preset` session has no file of its own.
 pub fn theme_file() -> Option<PathBuf> {
-    args().config.clone().or_else(|| {
-        let path = crate::config::default_config_path();
-        path.is_file().then_some(path)
-    })
+    if let Some(path) = args().config.clone() {
+        return Some(path);
+    }
+    if args().preset.is_some() {
+        return None;
+    }
+    let path = crate::config::default_config_path();
+    path.is_file().then_some(path)
 }
 
 /// Load the theme: `--config` file > `--preset` > the theme file in the config directory >
@@ -198,13 +206,15 @@ pub fn load_config() -> Config {
     fallback()
 }
 
-/// `p11k reload`: re-read the theme file of the session this shell belongs to.
+/// `p11k reload [--config <path>]`: re-read a theme file in the session this shell belongs to.
 ///
-/// The engine exports `P11K_CONFIG` and `P11K_ENGINE_PID` into the inner shell. The file is
-/// parsed here first, so a syntax error is reported by this command in the ordinary way
-/// instead of leaving the prompt silently unchanged; the engine then reads it again and keeps
-/// the theme it already has if the file stopped parsing in between.
-pub fn reload_engine() -> anyhow::Result<()> {
+/// The engine exports the session directory, a per-session token and the pid into the inner
+/// shell. The token proves the pid still belongs to that engine after a crash and restart, so a
+/// reused pid cannot receive SIGUSR1. The file is parsed here first, so a syntax error is
+/// reported by this command in the ordinary way instead of leaving the prompt silently unchanged;
+/// the engine then reads it again and keeps the theme it already has if the file stopped parsing
+/// in between.
+pub fn reload_engine(config: Option<PathBuf>) -> anyhow::Result<()> {
     let pid = std::env::var("P11K_ENGINE_PID")
         .ok()
         .and_then(|p| p.parse::<libc::pid_t>().ok());
@@ -215,21 +225,76 @@ pub fn reload_engine() -> anyhow::Result<()> {
         );
         process::exit(1);
     };
-    let path = std::env::var("P11K_CONFIG").unwrap_or_default();
-    if path.is_empty() {
+    if pid <= 0 {
         eprintln!(
             "p11k: {}",
-            t("this session has no theme file: it was started with --preset or the built-in theme")
+            t("invalid P11K_ENGINE_PID (must be a positive process id)")
         );
         process::exit(1);
     }
-    let path = Path::new(&path);
-    if let Err(e) = load_config_file(path) {
-        eprintln!("p11k: {path:?}: {e}");
+    let Some(session_dir) = std::env::var_os("P11K_ENGINE_SESSION")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+    else {
+        eprintln!(
+            "p11k: {}",
+            t("not inside a p11k session (session data is missing; restart the session)")
+        );
+        process::exit(1);
+    };
+    let Some(token) = std::env::var("P11K_ENGINE_TOKEN")
+        .ok()
+        .filter(|t| !t.is_empty())
+    else {
+        eprintln!(
+            "p11k: {}",
+            t("not inside a p11k session (session data is missing; restart the session)")
+        );
+        process::exit(1);
+    };
+    if let Err(error) = verify_session(&session_dir, &token) {
+        eprintln!("p11k: {error}");
         process::exit(1);
     }
-    // SIGUSR1 only raises a flag; the engine re-reads the file on its next loop pass.
+
+    let target = match config {
+        Some(path) => path,
+        None => {
+            let default = crate::config::default_config_path();
+            let default = default.is_file().then_some(default);
+            match reload_target(&session_dir, default) {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!("p11k: {error}");
+                    process::exit(1);
+                }
+            }
+        }
+    };
+    let target = target.canonicalize().unwrap_or(target);
+    if let Err(error) = load_config_file(&target) {
+        eprintln!("p11k: {target:?}: {error}");
+        process::exit(1);
+    }
+    let request = session_dir.join("reload-request");
+    if let Err(error) = crate::state::write_private(&request, target.as_os_str().as_encoded_bytes())
+    {
+        eprintln!(
+            "p11k: {} {request:?}: {error}",
+            t("cannot write the reload request:")
+        );
+        process::exit(1);
+    }
+    // SIGUSR1 only raises a flag; the engine reads the request and reloads on its next loop pass.
     if unsafe { libc::kill(pid, libc::SIGUSR1) } != 0 {
+        if let Err(error) = std::fs::remove_file(&request)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "p11k: {} {request:?}: {error}",
+                t("cannot remove the reload request:")
+            );
+        }
         eprintln!(
             "p11k: {}",
             t("cannot signal the engine (the session may have exited)")
@@ -237,6 +302,41 @@ pub fn reload_engine() -> anyhow::Result<()> {
         process::exit(1);
     }
     Ok(())
+}
+
+/// Check that the token in the session directory matches the one the engine exported.
+fn verify_session(session_dir: &Path, token: &str) -> Result<(), String> {
+    let path = session_dir.join("session");
+    let stored = std::fs::read_to_string(&path)
+        .map_err(|error| format!("{} {path:?}: {error}", t("cannot read the session file:")))?;
+    if stored.trim() != token {
+        return Err(t(
+            "the session token does not match; the pid may belong to another process",
+        ));
+    }
+    Ok(())
+}
+
+/// The file a plain `p11k reload` should re-read: the session's current theme file, the file
+/// the engine exported at startup, or the default config when it exists.
+fn reload_target(session_dir: &Path, default: Option<PathBuf>) -> Result<PathBuf, String> {
+    if let Ok(bytes) = std::fs::read(session_dir.join("current-config"))
+        && !bytes.is_empty()
+    {
+        use std::os::unix::ffi::OsStringExt;
+        return Ok(PathBuf::from(std::ffi::OsString::from_vec(bytes)));
+    }
+    if let Ok(path) = std::env::var("P11K_CONFIG")
+        && !path.is_empty()
+    {
+        return Ok(PathBuf::from(path));
+    }
+    if let Some(path) = default {
+        return Ok(path);
+    }
+    Err(t(
+        "this session has no theme file: it was started with --preset or the built-in theme",
+    ))
 }
 
 /// Which shell to proxy: `--shell <name>` if given, else the `shell` node of the theme,
@@ -305,6 +405,18 @@ mod tests {
     #[test]
     fn subcommands_parse() {
         let cli = Cli::try_parse_from(["p11k", "reload"]).unwrap();
-        assert_eq!(cli.command, Some(Command::Reload));
+        assert_eq!(cli.command, Some(Command::Reload { config: None }));
+    }
+
+    /// `reload --config <path>` carries the file the engine should switch to.
+    #[test]
+    fn reload_config_is_parsed() {
+        let cli = Cli::try_parse_from(["p11k", "reload", "--config", "/tmp/theme.kdl"]).unwrap();
+        assert_eq!(
+            cli.command,
+            Some(Command::Reload {
+                config: Some(PathBuf::from("/tmp/theme.kdl")),
+            })
+        );
     }
 }

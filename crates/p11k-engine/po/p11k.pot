@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k 1.0.0-alpha.1\n"
 "Report-Msgid-Bugs-To: https://github.com/Qaaxaap/powerlevel11k/issues\n"
-"POT-Creation-Date: 2026-11-06 17:18+0800\n"
+"POT-Creation-Date: 2026-11-06 18:15+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,31 +17,56 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/p11k-engine/src/cli.rs:173 crates/p11k-engine/src/cli.rs:194
+#: crates/p11k-engine/src/cli.rs:181 crates/p11k-engine/src/cli.rs:202
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:184
+#: crates/p11k-engine/src/cli.rs:192
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:214
+#: crates/p11k-engine/src/cli.rs:224
 msgid "not inside a p11k session (P11K_ENGINE_PID is unset)"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:222
+#: crates/p11k-engine/src/cli.rs:231
+msgid "invalid P11K_ENGINE_PID (must be a positive process id)"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:241 crates/p11k-engine/src/cli.rs:251
+msgid ""
+"not inside a p11k session (session data is missing; restart the session)"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:284
+msgid "cannot write the reload request:"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:295
+msgid "cannot remove the reload request:"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:300
+msgid "cannot signal the engine (the session may have exited)"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:311
+msgid "cannot read the session file:"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:314
+msgid "the session token does not match; the pid may belong to another process"
+msgstr ""
+
+#: crates/p11k-engine/src/cli.rs:338
 msgid ""
 "this session has no theme file: it was started with --preset or the built-in "
 "theme"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:235
-msgid "cannot signal the engine (the session may have exited)"
-msgstr ""
-
-#: crates/p11k-engine/src/cli.rs:258
+#: crates/p11k-engine/src/cli.rs:358
 msgid ""
 "unknown shell in the config, falling back to $SHELL (expected zsh/bash/fish/"
 "pwsh): "
@@ -63,7 +88,7 @@ msgstr ""
 msgid "unknown config key: "
 msgstr ""
 
-#: crates/p11k-engine/src/engine.rs:202
+#: crates/p11k-engine/src/engine.rs:210
 msgid "the inner shell failed to start"
 msgstr ""
 
