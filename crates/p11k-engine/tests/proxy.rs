@@ -593,6 +593,19 @@ fn initial_prompt_shows_header_and_input_line() {
     );
 }
 
+/// zsh prints its EOF mark (a reverse-video `%`) before the first prompt when the output line
+/// looks unterminated. On the instant header that mark shows as a flash just before the real
+/// header redraws; p11k owns the prompt, so the mark must not reach the terminal at all.
+#[test]
+fn zsh_startup_does_not_flash_the_eof_mark() {
+    let eng = spawn_engine();
+    let startup = wait_ready(&eng.master);
+    assert!(
+        !startup.contains("\x1b[7m%"),
+        "zsh's PROMPT_SP mark must not reach the terminal, got {startup:?}"
+    );
+}
+
 /// bash reprints the whole `PS1` whenever readline redraws the prompt over itself, and
 /// showing completion candidates is one of those cases. `PS1` now carries the prompt-ready
 /// signal and the prefix itself, so a reprint must produce a clean prompt: no leftover marker,
