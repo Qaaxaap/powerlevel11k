@@ -51,6 +51,10 @@ pub struct Request {
 ///
 /// Malformed requests panic: the original `VERIFY` aborts on failure, which
 /// terminates the daemon — the same behavior is kept.
+/// Parse one request (without MSG_SEP).
+///
+/// Malformed input panics, mirroring the original's VERIFY. The daemon calls this inside
+/// `catch_unwind`, logs the panic, and keeps serving, so a bad message does not end the daemon.
 pub fn parse_request(bytes: &[u8]) -> Request {
     if bytes.is_empty() {
         panic!("malformed request: empty message");

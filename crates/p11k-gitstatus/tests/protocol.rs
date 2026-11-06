@@ -60,7 +60,8 @@ fn parse_request_empty_input() {
     protocol::parse_request(b"");
 }
 
-/// Malformed: missing field separator (the original VERIFY → abort; p11k panics, mirroring it).
+/// Malformed: missing field separator (the original VERIFY → abort; p11k panics, and the daemon
+/// catches that panic and keeps serving).
 #[test]
 #[should_panic(expected = "missing dir field")]
 fn malformed_no_field_sep() {
