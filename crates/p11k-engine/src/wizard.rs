@@ -46,7 +46,7 @@ fn flow(out: &mut io::Stdout) -> io::Result<Step<()>> {
         s => return Ok(early(s)),
     };
     // 2. Style.
-    let kind = match ask_style(out)? {
+    let kind = match ask_style(out, &mode)? {
         Step::Answer(k) => k,
         s => return Ok(early(s)),
     };
@@ -144,8 +144,11 @@ fn flow(out: &mut io::Stdout) -> io::Result<Step<()>> {
         Step::Quit => return Ok(Step::Quit),
     }
     // 15. Write to disk (asking about overwrite first if it exists).
-    write_config(out, &cfg).map_err(|e| io::Error::other(e.to_string()))?;
-    Ok(Step::Answer(()))
+    match write_config(out, &cfg).map_err(|e| io::Error::other(e.to_string()))? {
+        Step::Answer(()) => Ok(Step::Answer(())),
+        Step::Restart => Ok(Step::Restart),
+        Step::Quit => Ok(Step::Quit),
+    }
 }
 
 // ---- UI basics ----
@@ -164,9 +167,38 @@ fn line(out: &mut io::Stdout, s: &str) -> io::Result<()> {
 
 /// Read one key and normalize it: `q`, Ctrl-C (ISIG is cleared in raw mode, so 0x03 arrives
 /// as a byte) and Esc all count as `q` (abort and exit), and EOF counts as `q` too — otherwise
-/// the caller would receive `None`, fall into `_ => {}` and redraw forever. Other bytes are
-/// returned as is; their meaning (`r`/`y`/`n`/digits) is up to the caller.
+/// the caller would receive `None`, fall into `_ => {}` and redraw forever. Arrow keys and other
+/// escape sequences are consumed and ignored: a direction key is not an answer and must not quit
+/// the wizard. Other bytes are returned as is; their meaning (`r`/`y`/`n`/digits) is up to the
+/// caller.
 fn key() -> io::Result<u8> {
+    loop {
+        let b = read_byte()?;
+        if b != 0x1b {
+            return Ok(normalize_key(b));
+        }
+        // Esc alone aborts. A sequence (arrow keys, Home, End, Delete, ...) follows within a few
+        // milliseconds; wait for that follow-up byte instead of treating the Esc as final.
+        if !readable_within(20)? {
+            return Ok(b'q');
+        }
+        let next = read_byte()?;
+        if next == b'[' || next == b'O' {
+            // Consume the parameter, intermediate and final bytes of the CSI or SS3 sequence.
+            loop {
+                let c = read_byte()?;
+                if is_escape_final(c) {
+                    break;
+                }
+            }
+            continue;
+        }
+        return Ok(b'q');
+    }
+}
+
+/// Read one byte from the terminal. EOF maps to `q` so callers cannot loop on `None`.
+fn read_byte() -> io::Result<u8> {
     let mut b = [0u8; 1];
     loop {
         let n = unsafe { libc::read(libc::STDIN_FILENO, b.as_mut_ptr().cast(), 1) };
@@ -178,12 +210,44 @@ fn key() -> io::Result<u8> {
             return Err(e);
         }
         if n == 0 {
-            return Ok(b'q'); // EOF (Ctrl-D) is treated as aborting
+            return Ok(b'q');
         }
-        return Ok(match b[0] {
-            0x03 | 0x1b => b'q', // Ctrl-C / Esc
-            other => other,
-        });
+        return Ok(b[0]);
+    }
+}
+
+/// Ctrl-C and a lone Esc abort; every other byte is an answer.
+fn normalize_key(byte: u8) -> u8 {
+    match byte {
+        0x03 | 0x1b => b'q',
+        other => other,
+    }
+}
+
+/// Final byte of a CSI/SS3 sequence (0x40..=0x7e). Parameter and intermediate bytes are below
+/// that range, so this finds the end of arrow-key and similar sequences.
+fn is_escape_final(byte: u8) -> bool {
+    (0x40..=0x7e).contains(&byte)
+}
+
+/// Whether stdin has a byte within `ms` milliseconds. `false` also covers the lone-Esc case when
+/// the terminal sent nothing else.
+fn readable_within(ms: i32) -> io::Result<bool> {
+    let mut pfd = libc::pollfd {
+        fd: libc::STDIN_FILENO,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        let n = unsafe { libc::poll(&mut pfd, 1, ms) };
+        if n < 0 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        return Ok(n > 0);
     }
 }
 
@@ -289,10 +353,19 @@ fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
 }
 
 /// Style: each of the four presets comes with a live prompt preview.
-fn ask_style(out: &mut io::Stdout) -> io::Result<Step<PresetKind>> {
+/// Prompt preview for one preset and icon mode. The style preview has to use the icon mode the
+/// user just chose, otherwise it shows Nerd Font glyphs after the user picked ASCII.
+fn style_preview(kind: PresetKind, mode: &IconMode) -> Vec<String> {
+    let mut cfg = presets::build(kind);
+    cfg.mode = mode.clone();
+    preview_lines(&cfg)
+}
+
+/// Style: each of the four presets comes with a live prompt preview.
+fn ask_style(out: &mut io::Stdout, mode: &IconMode) -> io::Result<Step<PresetKind>> {
     let titles = PresetKind::ALL.map(|k| k.title());
     let i = ask_choice_preview(out, msgid("Prompt Style"), &titles, |i| {
-        preview_lines(&presets::build(PresetKind::ALL[i]))
+        style_preview(PresetKind::ALL[i], mode)
     })?;
     match i {
         Step::Answer(i) => Ok(Step::Answer(PresetKind::ALL[i])),
@@ -758,8 +831,21 @@ fn ask_apply(
     }
 }
 
-/// Yes/no question; when `sample` is present, a line with the glyph sample is shown before the options.
+/// Yes/no question; when `sample` is present, a line with the glyph sample is shown before the
+/// options. `title`, `yes` and `no` are msgids.
 fn ask_yn(
+    out: &mut io::Stdout,
+    title: &str,
+    yes: &str,
+    no: &str,
+    sample: Option<&str>,
+) -> io::Result<Step<bool>> {
+    ask_yn_title(out, &t(title), yes, no, sample)
+}
+
+/// Like [`ask_yn`] with an already translated title. Dynamic titles (an overwrite question with a
+/// path) go through this variant so gettext sees the text once.
+fn ask_yn_title(
     out: &mut io::Stdout,
     title: &str,
     yes: &str,
@@ -768,7 +854,7 @@ fn ask_yn(
 ) -> io::Result<Step<bool>> {
     loop {
         clear(out);
-        line(out, &t(title))?;
+        line(out, title)?;
         if let Some(s) = sample {
             line(out, "")?;
             // The glyph sample is not text; emit it verbatim.
@@ -838,23 +924,20 @@ fn preview(out: &mut io::Stdout, cfg: &Config) -> io::Result<()> {
     Ok(())
 }
 
-fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
+fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<Step<()>> {
     let path = crate::config::default_config_path();
     let p = path.display();
     if path.exists() {
         // p10k: `p11k config file already exists. Overwrite <path>?`
-        match ask_yn(
-            out,
-            &format!(
-                "{} {p}?",
-                t(msgid("p11k config file already exists. Overwrite"))
-            ),
-            msgid("Yes."),
-            msgid("No."),
-            None,
-        )? {
+        let title = format!(
+            "{} {p}?",
+            t(msgid("p11k config file already exists. Overwrite"))
+        );
+        match ask_yn_title(out, &title, msgid("Yes."), msgid("No."), None)? {
             Step::Answer(true) => {}
-            _ => return Ok(()),
+            Step::Answer(false) => return Ok(Step::Quit),
+            Step::Restart => return Ok(Step::Restart),
+            Step::Quit => return Ok(Step::Quit),
         }
     }
     if let Some(dir) = path.parent() {
@@ -895,7 +978,7 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<()> {
             "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise they will stack.",
         ),
     )?;
-    Ok(())
+    Ok(Step::Answer(()))
 }
 
 #[cfg(test)]
@@ -914,5 +997,34 @@ mod tests {
         let lean_cfg = presets::lean(false);
         assert_eq!(time_bg(PresetKind::Lean, &lean_cfg), None);
         assert_eq!(time_bg(PresetKind::Pure, &presets::pure(false)), None);
+    }
+
+    /// Ctrl-C and Esc abort; ordinary answer keys pass through.
+    #[test]
+    fn key_normalization_keeps_answers_and_maps_aborts_to_q() {
+        assert_eq!(normalize_key(0x03), b'q');
+        assert_eq!(normalize_key(0x1b), b'q');
+        assert_eq!(normalize_key(b'r'), b'r');
+        assert_eq!(normalize_key(b'y'), b'y');
+        assert_eq!(normalize_key(b'1'), b'1');
+    }
+
+    /// CSI/SS3 final bytes end an escape sequence; digits and punctuation inside it do not.
+    #[test]
+    fn escape_sequences_are_consumed_to_their_final_byte() {
+        // Up arrow `ESC [ A`, Delete `ESC [ 3 ~`, SS3 up `ESC O A`.
+        assert!(is_escape_final(b'A'));
+        assert!(is_escape_final(b'~'));
+        assert!(!is_escape_final(b'3'));
+        assert!(!is_escape_final(b';'));
+    }
+
+    /// The style preview has to use the chosen icon mode. ASCII and Nerd Font produce different
+    /// glyphs, so the rendered previews differ.
+    #[test]
+    fn the_style_preview_uses_the_icon_mode() {
+        let ascii = style_preview(PresetKind::Lean, &IconMode::Ascii);
+        let nerd = style_preview(PresetKind::Lean, &IconMode::NerdfontComplete);
+        assert_ne!(ascii, nerd);
     }
 }
