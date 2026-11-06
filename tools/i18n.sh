@@ -63,6 +63,10 @@ update)
   [[ -f $pot ]] || { echo "run '$0 extract' first" >&2; exit 2; }
   for f in "$po"/*.po; do
     msgmerge --quiet --update --backup=none "$f" "$pot"
+    # msgmerge keeps removed msgids as obsolete `#~` entries. They are never used at runtime and
+    # accumulate across updates, so drop them right away.
+    msgattrib --no-obsolete --output-file="$f.tmp" "$f"
+    mv "$f.tmp" "$f"
     echo "merged $pot -> $f"
   done
   ;;
