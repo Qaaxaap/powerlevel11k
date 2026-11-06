@@ -324,15 +324,12 @@ fn render_row(
                 render_segment(config, name, info, vcs, right, dir_budget, true)
             }
             Element::Text(t) => {
-                let mut style = config
-                    .segment("text")
-                    .effective_style(None, &config.defaults);
-                if style.bg == Color::Default {
-                    style.bg = if config.defaults.bg != Color::Default {
-                        config.defaults.bg.clone()
-                    } else {
-                        Color::Xterm(0)
-                    };
+                let text = config.segment("text");
+                let mut style = text.effective_style(None, &config.defaults);
+                // `text` inherits fg and bold from defaults, never the background: the
+                // terminal's own background shows through unless the `text` segment sets a bg.
+                if text.style.bg == Color::Default {
+                    style.bg = Color::Default;
                 }
                 SegmentText {
                     text: paint(&expand_env(t), &style),
@@ -3845,6 +3842,57 @@ mod tests {
                 .unwrap();
         let h = render_header_lines(&cfg, &info("/tmp", None), None, 80).join("\r\n");
         assert!(h.contains(&home), "text should expand env vars, got: {h:?}");
+    }
+
+    /// `text` elements inherit `fg` and `bold` from `defaults`, never its background. A
+    /// background the `text` segment sets itself still applies.
+    #[test]
+    fn text_elements_do_not_inherit_the_defaults_background() {
+        let cfg = Config::parse("defaults fg=200 bg=236\nlayout {}").unwrap();
+        let row = render_row(
+            &cfg,
+            &[Element::Text("hi".into())],
+            &info("/tmp", None),
+            None,
+            false,
+            None,
+        );
+        assert_eq!(
+            row[0].style.bg,
+            Color::Default,
+            "text must stay transparent"
+        );
+        assert_eq!(row[0].style.fg, Color::Xterm(200));
+
+        let cfg = Config::parse("defaults bg=236\nsegments { text bg=31 }\nlayout {}").unwrap();
+        let row = render_row(
+            &cfg,
+            &[Element::Text("hi".into())],
+            &info("/tmp", None),
+            None,
+            false,
+            None,
+        );
+        assert_eq!(
+            row[0].style.bg,
+            Color::Xterm(31),
+            "an explicit text bg applies"
+        );
+    }
+
+    /// A transparent `text` element must not fall back to black.
+    #[test]
+    fn text_elements_stay_transparent_without_defaults_bg() {
+        let cfg = Config::parse("layout {}").unwrap();
+        let row = render_row(
+            &cfg,
+            &[Element::Text("hi".into())],
+            &info("/tmp", None),
+            None,
+            false,
+            None,
+        );
+        assert_eq!(row[0].style.bg, Color::Default);
     }
 
     #[test]
