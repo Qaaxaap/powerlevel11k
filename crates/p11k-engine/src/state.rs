@@ -38,17 +38,11 @@ impl StateDir {
             return Err(io::Error::last_os_error());
         }
 
-        // One protocol rc per shell. The temp rc read path is kept for debugging.
+        // One protocol rc per shell.
         let rc = match shell {
             Shell::Zsh => {
                 let rc = dir.join(".zshrc");
-                let content = match std::env::var("P11K_ZSHRC") {
-                    Ok(path) => {
-                        fs::read_to_string(&path).unwrap_or_else(|_| ZSHRC_TEMPLATE.to_string())
-                    }
-                    Err(_) => ZSHRC_TEMPLATE.to_string(),
-                };
-                fs::write(&rc, content)?;
+                fs::write(&rc, ZSHRC_TEMPLATE)?;
                 rc
             }
             Shell::Bash => {

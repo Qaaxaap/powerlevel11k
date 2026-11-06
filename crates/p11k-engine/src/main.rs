@@ -51,7 +51,7 @@ mod wake;
 mod window;
 mod wizard;
 
-use cli::{print_help, reload_engine};
+use cli::{Command, apply_log_level, parse, reload_engine};
 use i18n::t;
 
 fn main() -> anyhow::Result<()> {
@@ -62,29 +62,19 @@ fn main() -> anyhow::Result<()> {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
     // Text is translated by locale (English by default; Chinese in po/zh_CN.po).
     i18n::init();
-    // `--version`/`--help` are handled before touching any terminal state so they work in
-    // pipes and environments without a tty (CI, version checks from scripts).
-    if std::env::args().any(|a| a == "--version" || a == "-V") {
-        println!("p11k {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
-    if std::env::args().any(|a| a == "--help" || a == "-h") {
-        print_help();
-        return Ok(());
-    }
+    // clap parses once here. `--version` and `--help` are handled before any terminal state is
+    // touched, so they work in pipes and environments without a tty (CI, version checks).
+    let cli = parse();
     // Rotate an oversized diagnostics log before the engine starts appending to it, then apply
     // `--log-level` (the default is info).
     log::init();
-    if let Some(level) = cli::log_level_from_args() {
-        log::set_level(level);
-    }
+    apply_log_level();
     // `p11k configure`: enter the interactive theme wizard without spawning a shell.
-    if std::env::args().any(|a| a == "configure") {
-        return wizard::run();
-    }
     // `p11k reload`: ask the engine of this session to re-read its theme file.
-    if std::env::args().any(|a| a == "reload") {
-        return reload_engine();
+    match cli.command {
+        Some(Command::Configure) => return wizard::run(),
+        Some(Command::Reload) => return reload_engine(),
+        None => {}
     }
 
     // Recursion check: P11K_ENGINE set means this engine is a redundant instance started
