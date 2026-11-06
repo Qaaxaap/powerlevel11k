@@ -264,6 +264,18 @@ mod tests {
     }
 
     #[test]
+    fn catalogs_have_no_obsolete_entries() {
+        // msgmerge keeps removed msgids as obsolete `#~` entries. They are never used at runtime
+        // and accumulate across updates; the update helper prunes them, and this guard stops
+        // them from coming back unnoticed.
+        let po = include_str!("../po/zh_CN.po");
+        assert!(
+            !po.lines().any(|line| line.starts_with("#~")),
+            "zh_CN.po has obsolete entries; run tools/i18n.sh update"
+        );
+    }
+
+    #[test]
     fn chinese_locale_gets_translations_and_missing_ones_fall_back() {
         let dir = env!("P11K_LOCALEDIR");
         let _ = bindtextdomain("p11k", dir);
