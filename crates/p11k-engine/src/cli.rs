@@ -2,9 +2,12 @@
 
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::OnceLock;
+
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::config::Config;
-use crate::i18n::{msgid, t};
+use crate::i18n::t;
 use crate::presets;
 
 /// The shell the engine proxies.
@@ -35,35 +38,111 @@ impl Shell {
     }
 }
 
-/// The `--shell <name>` argument, verbatim: an unrecognised name has to fall through to the
-/// config and `$SHELL`, so the caller cannot resolve it here.
-fn shell_name_from_args() -> Option<String> {
-    let args: Vec<String> = std::env::args().collect();
-    let pos = args.iter().position(|a| a == "--shell")?;
-    args.get(pos + 1).cloned()
+/// Parsed command line. clap renders the help output itself, so that text stays English; the
+/// engine's own messages still go through gettext.
+#[derive(Parser, Debug, Default)]
+#[command(name = "p11k", version, disable_help_subcommand = true)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
+    /// inner shell to proxy
+    #[arg(long, value_name = "name")]
+    pub shell: Option<String>,
+
+    /// KDL theme file
+    #[arg(long, value_name = "path")]
+    pub config: Option<PathBuf>,
+
+    /// built-in theme
+    #[arg(long, value_name = "name")]
+    pub preset: Option<String>,
+
+    /// diagnostics log level
+    #[arg(long = "log-level", value_name = "level")]
+    pub log_level: Option<String>,
 }
 
-/// Read the KDL theme file from `--config <path>`.
-fn config_from_args() -> Option<PathBuf> {
-    let args: Vec<String> = std::env::args().collect();
-    let pos = args.iter().position(|a| a == "--config")?;
-    args.get(pos + 1).map(PathBuf::from)
+/// Commands that do not start an engine.
+#[derive(Subcommand, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    Configure,
+    Reload,
 }
 
-/// Take a built-in preset name (lean/classic/rainbow/pure) from `--preset <name>`.
-fn preset_from_args() -> Option<String> {
-    let args: Vec<String> = std::env::args().collect();
-    let pos = args.iter().position(|a| a == "--preset")?;
-    args.get(pos + 1).cloned()
+static ARGS: OnceLock<Cli> = OnceLock::new();
+
+/// Parse the command line once. clap handles `--help` and `--version` inside this call.
+pub fn parse() -> &'static Cli {
+    ARGS.get_or_init(|| {
+        let matches = cli_command().get_matches();
+        Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+    })
 }
 
-/// Read `--log-level <off|error|info|debug>`. An unknown name is ignored, which keeps the
-/// default instead of refusing to start over a typo in a diagnostic flag.
-pub fn log_level_from_args() -> Option<crate::log::Level> {
-    let args: Vec<String> = std::env::args().collect();
-    let pos = args.iter().position(|a| a == "--log-level")?;
-    args.get(pos + 1)
-        .and_then(|name| crate::log::Level::parse(name))
+fn args() -> &'static Cli {
+    ARGS.get().unwrap_or_else(|| parse())
+}
+
+/// Apply `--log-level` once the log system is initialized.
+pub fn apply_log_level() {
+    if let Some(level) = args()
+        .log_level
+        .as_deref()
+        .and_then(crate::log::Level::parse)
+    {
+        crate::log::set_level(level);
+    }
+}
+
+/// The clap command. clap does not translate the text it renders, so the help output stays
+/// English; messages the engine prints itself still go through gettext.
+fn cli_command() -> clap::Command {
+    Cli::command()
+        .about("p11k: a prompt engine that draws the header of zsh, bash, fish and pwsh prompts")
+        .mut_arg("shell", |arg| {
+            arg.help(
+                "inner shell to proxy: zsh, bash, fish or pwsh (default: the `shell` config node, else $SHELL)",
+            )
+        })
+        .mut_arg("config", |arg| {
+            arg.help("KDL theme file (default: ~/.config/p11k/p11k.kdl, else the built-in lean theme)")
+        })
+        .mut_arg("preset", |arg| {
+            arg.help("built-in theme: lean, classic, rainbow or pure")
+        })
+        .mut_arg("log_level", |arg| {
+            arg.help("diagnostics log level: off, error, info or debug (default: info)")
+        })
+        .mut_subcommand("configure", |command| {
+            command.about("interactive theme wizard")
+        })
+        .mut_subcommand("reload", |command| {
+            command.about("re-read the theme file of the running session")
+        })
+        .after_help(environment_help())
+}
+
+/// The environment variables a user may set. Internal variables the engine exports stay out of
+/// `--help`; the protocol documents them.
+fn environment_help() -> String {
+    [
+        "Environment:".to_string(),
+        format!(
+            "  {:<18} {}",
+            "P11K_ENGINE",
+            "set by the engine for the inner shell; guards against recursive startup"
+        ),
+        format!(
+            "  {:<18} {}",
+            "P11K_USER_ZSHRC", "zsh rc to source instead of $HOME/.zshrc"
+        ),
+        format!(
+            "  {:<18} {}",
+            "P11K_USER_PROFILE", "pwsh profile to source instead of $PROFILE"
+        ),
+    ]
+    .join("\n")
 }
 
 /// Read and parse one KDL theme file.
@@ -76,7 +155,7 @@ pub fn load_config_file(path: &Path) -> Result<Config, String> {
 /// The theme file the engine should read: `--config <path>` if given, otherwise the default
 /// location, when a theme was written there (by `p11k configure` or by hand).
 pub fn theme_file() -> Option<PathBuf> {
-    config_from_args().or_else(|| {
+    args().config.clone().or_else(|| {
         let path = crate::config::default_config_path();
         path.is_file().then_some(path)
     })
@@ -86,8 +165,8 @@ pub fn theme_file() -> Option<PathBuf> {
 /// the built-in lean theme. The first three report and fall back on failure.
 pub fn load_config() -> Config {
     let fallback = || Config::default_lean().expect("built-in lean config should be valid");
-    if let Some(path) = config_from_args() {
-        match load_config_file(&path) {
+    if let Some(path) = args().config.as_deref() {
+        match load_config_file(path) {
             Ok(c) => return c,
             Err(e) => eprintln!(
                 "p11k: {}{path:?}: {e}",
@@ -95,8 +174,8 @@ pub fn load_config() -> Config {
             ),
         }
     }
-    if let Some(name) = preset_from_args() {
-        if let Some(kind) = presets::by_name(&name) {
+    if let Some(name) = args().preset.as_deref() {
+        if let Some(kind) = presets::by_name(name) {
             return presets::build(kind);
         }
         eprintln!(
@@ -169,7 +248,7 @@ pub fn reload_engine() -> anyhow::Result<()> {
 /// from zsh still reports /bin/zsh), but CI runner environments happen to carry such
 /// variables, which made every default-shell launch look like pwsh and fail to start.
 pub fn detect_shell(config: &Config) -> Shell {
-    let cli = shell_name_from_args();
+    let cli = args().shell.clone();
     if let Some(name) = config.shell.as_deref()
         && shell_by_name(name).is_none()
     {
@@ -203,44 +282,29 @@ pub fn shell_by_name(name: &str) -> Option<Shell> {
     }
 }
 
-/// `--help` usage text. Each line goes through gettext (literals are tagged with `msgid`
-/// so xgettext picks them up); empty lines are printed directly to keep an empty msgid out
-/// of the po files.
-pub fn print_help() {
-    for line in [
-        msgid("usage: p11k [options]"),
-        msgid("       p11k configure"),
-        msgid("       p11k reload"),
-        "",
-        msgid("Options:"),
-        msgid(
-            "  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: the `shell` config node, else $SHELL)",
-        ),
-        msgid(
-            "  --config <path>  KDL theme file (default: ~/.config/p11k/p11k.kdl, else the built-in lean theme)",
-        ),
-        msgid("  --preset <name>  built-in theme: lean, classic, rainbow or pure"),
-        msgid(
-            "  --log-level <lvl>  diagnostics log level: off, error, info or debug (default: info)",
-        ),
-        msgid("  --version        print the version and exit"),
-        msgid("  --help           print this help and exit"),
-        "",
-        msgid("Commands:"),
-        msgid("  configure        interactive theme wizard"),
-        msgid("  reload           re-read the theme file of the running session"),
-        "",
-        msgid("Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"),
-        msgid("P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"),
-        msgid("overrides the translation directory. The engine exports P11K_CONFIG and"),
-        msgid("P11K_ENGINE_PID into the shell for `p11k reload`."),
-        "",
-        msgid("To use p11k as your theme, add one line to your shell rc — see README.md."),
-    ] {
-        if line.is_empty() {
-            println!();
-        } else {
-            println!("{}", t(line));
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--config configure` names the file `configure`; it must not enter the wizard. The
+    /// previous `args().any(...)` scan treated the value as a subcommand.
+    #[test]
+    fn a_config_value_is_not_a_subcommand() {
+        let cli = Cli::try_parse_from(["p11k", "--config", "configure"]).unwrap();
+        assert!(cli.command.is_none());
+        assert_eq!(cli.config.as_deref(), Some(Path::new("configure")));
+    }
+
+    /// `--shell` takes a value; it must not swallow the next option as one.
+    #[test]
+    fn shell_does_not_swallow_the_next_option() {
+        assert!(Cli::try_parse_from(["p11k", "--shell", "--config", "x"]).is_err());
+    }
+
+    /// Subcommands still parse as subcommands.
+    #[test]
+    fn subcommands_parse() {
+        let cli = Cli::try_parse_from(["p11k", "reload"]).unwrap();
+        assert_eq!(cli.command, Some(Command::Reload));
     }
 }

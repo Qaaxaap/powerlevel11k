@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k\n"
 "Report-Msgid-Bugs-To: https://github.com/Qaaxaap/powerlevel11k/issues\n"
-"POT-Creation-Date: 2026-11-01 02:34+0800\n"
+"POT-Creation-Date: 2026-11-06 17:10+0800\n"
 "PO-Revision-Date: 2025-01-01 00:00+0000\n"
 "Last-Translator: p11k\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -19,118 +19,35 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: crates/p11k-engine/src/cli.rs:93 crates/p11k-engine/src/cli.rs:114
+#: crates/p11k-engine/src/cli.rs:173 crates/p11k-engine/src/cli.rs:194
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr "读取配置失败，回退内置 lean 主题: "
 
-#: crates/p11k-engine/src/cli.rs:104
+#: crates/p11k-engine/src/cli.rs:184
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr "未知预设，回退内置 lean 主题（可选 lean/classic/rainbow/pure）: "
 
-#: crates/p11k-engine/src/cli.rs:134
+#: crates/p11k-engine/src/cli.rs:214
 msgid "not inside a p11k session (P11K_ENGINE_PID is unset)"
 msgstr "当前不在 p11k 会话中（P11K_ENGINE_PID 未设置）"
 
-#: crates/p11k-engine/src/cli.rs:142
+#: crates/p11k-engine/src/cli.rs:222
 msgid ""
 "this session has no theme file: it was started with --preset or the built-in "
 "theme"
 msgstr "本会话没有主题文件：启动时用的是 --preset 或内置主题"
 
-#: crates/p11k-engine/src/cli.rs:155
+#: crates/p11k-engine/src/cli.rs:235
 msgid "cannot signal the engine (the session may have exited)"
 msgstr "无法向引擎发送信号（会话可能已退出）"
 
-#: crates/p11k-engine/src/cli.rs:178
+#: crates/p11k-engine/src/cli.rs:258
 msgid ""
 "unknown shell in the config, falling back to $SHELL (expected zsh/bash/fish/"
 "pwsh): "
 msgstr "配置里的 shell 无法识别，回退到 $SHELL（可选 zsh/bash/fish/pwsh）: "
-
-#: crates/p11k-engine/src/cli.rs:210
-msgid "usage: p11k [options]"
-msgstr "用法: p11k [选项]"
-
-#: crates/p11k-engine/src/cli.rs:211
-msgid "       p11k configure"
-msgstr "       p11k configure"
-
-#: crates/p11k-engine/src/cli.rs:212
-msgid "       p11k reload"
-msgstr "       p11k reload"
-
-#: crates/p11k-engine/src/cli.rs:214
-msgid "Options:"
-msgstr "选项:"
-
-#: crates/p11k-engine/src/cli.rs:216
-msgid ""
-"  --shell <name>   inner shell to proxy: zsh, bash, fish or pwsh (default: "
-"the `shell` config node, else $SHELL)"
-msgstr ""
-"  --shell <名字>   被代理的内部 shell：zsh、bash、fish 或 pwsh（缺省取配置里"
-"的 `shell` 节点，无则用 $SHELL）"
-
-#: crates/p11k-engine/src/cli.rs:219
-msgid ""
-"  --config <path>  KDL theme file (default: ~/.config/p11k/p11k.kdl, else "
-"the built-in lean theme)"
-msgstr ""
-"  --config <路径>  KDL 主题文件（缺省 ~/.config/p11k/p11k.kdl，无则用内置 "
-"lean 主题）"
-
-#: crates/p11k-engine/src/cli.rs:221
-msgid "  --preset <name>  built-in theme: lean, classic, rainbow or pure"
-msgstr "  --preset <名字>  内置主题：lean、classic、rainbow 或 pure"
-
-#: crates/p11k-engine/src/cli.rs:223
-msgid ""
-"  --log-level <lvl>  diagnostics log level: off, error, info or debug "
-"(default: info)"
-msgstr "  --log-level <lvl>  诊断日志级别：off、error、info 或 debug（默认 info）"
-
-#: crates/p11k-engine/src/cli.rs:225
-msgid "  --version        print the version and exit"
-msgstr "  --version        打印版本后退出"
-
-#: crates/p11k-engine/src/cli.rs:226
-msgid "  --help           print this help and exit"
-msgstr "  --help           打印本说明后退出"
-
-#: crates/p11k-engine/src/cli.rs:228
-msgid "Commands:"
-msgstr "子命令:"
-
-#: crates/p11k-engine/src/cli.rs:229
-msgid "  configure        interactive theme wizard"
-msgstr "  configure        交互式主题向导"
-
-#: crates/p11k-engine/src/cli.rs:230
-msgid "  reload           re-read the theme file of the running session"
-msgstr "  reload           重新读取当前会话的主题文件"
-
-#: crates/p11k-engine/src/cli.rs:232
-msgid "Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"
-msgstr "环境变量：P11K_ENGINE 用于防止递归加载；P11K_USER_ZSHRC 与"
-
-#: crates/p11k-engine/src/cli.rs:233
-msgid "P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"
-msgstr "P11K_USER_PROFILE 用于覆盖所 source 的 rc；P11K_LOCALEDIR"
-
-#: crates/p11k-engine/src/cli.rs:234
-msgid "overrides the translation directory. The engine exports P11K_CONFIG and"
-msgstr "用于覆盖翻译目录。引擎会把 P11K_CONFIG 与"
-
-#: crates/p11k-engine/src/cli.rs:235
-msgid "P11K_ENGINE_PID into the shell for `p11k reload`."
-msgstr "P11K_ENGINE_PID 导出给 shell，供 `p11k reload` 使用。"
-
-#: crates/p11k-engine/src/cli.rs:237
-msgid ""
-"To use p11k as your theme, add one line to your shell rc — see README.md."
-msgstr "若要将 p11k 用作主题，请在 shell rc 中加入一行，详见 README.zh.md"
 
 # ---- 配置解析 ----
 #: crates/p11k-engine/src/config.rs:486
@@ -149,20 +66,20 @@ msgstr " 需要文本（位置字符串）"
 msgid "unknown config key: "
 msgstr "无法识别的配置键: "
 
-#: crates/p11k-engine/src/engine.rs:181
+#: crates/p11k-engine/src/engine.rs:202
 msgid "the inner shell failed to start"
 msgstr "内部 shell 启动失败"
 
 # ---- 引擎本体 ----
-#: crates/p11k-engine/src/main.rs:97
+#: crates/p11k-engine/src/main.rs:88
 msgid "recursive launch detected (p11k started inside a p11k session)"
 msgstr "检测到递归启动（在 p11k 会话内再次启动 p11k）"
 
-#: crates/p11k-engine/src/main.rs:98
+#: crates/p11k-engine/src/main.rs:89
 msgid "make sure the bootstrap line in ~/.zshrc is guarded, e.g.:"
 msgstr "请确认 ~/.zshrc 中的引导行包含递归判断，例如："
 
-#: crates/p11k-engine/src/main.rs:102
+#: crates/p11k-engine/src/main.rs:93
 msgid "cannot exec zsh -f: "
 msgstr "exec zsh -f 失败: "
 
@@ -462,6 +379,80 @@ msgid ""
 "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise "
 "they will stack."
 msgstr "引擎即主题：请先移除原有的 ZSH_THEME/主题设置，否则会叠加。"
+
+#, fuzzy
+#~ msgid ""
+#~ "inner shell to proxy: zsh, bash, fish or pwsh (default: the `shell` "
+#~ "config node, else $SHELL)"
+#~ msgstr ""
+#~ "  --shell <名字>   被代理的内部 shell：zsh、bash、fish 或 pwsh（缺省取配置"
+#~ "里的 `shell` 节点，无则用 $SHELL）"
+
+#, fuzzy
+#~ msgid ""
+#~ "KDL theme file (default: ~/.config/p11k/p11k.kdl, else the built-in lean "
+#~ "theme)"
+#~ msgstr ""
+#~ "  --config <路径>  KDL 主题文件（缺省 ~/.config/p11k/p11k.kdl，无则用内置 "
+#~ "lean 主题）"
+
+#, fuzzy
+#~ msgid "built-in theme: lean, classic, rainbow or pure"
+#~ msgstr "  --preset <名字>  内置主题：lean、classic、rainbow 或 pure"
+
+#, fuzzy
+#~ msgid "diagnostics log level: off, error, info or debug (default: info)"
+#~ msgstr ""
+#~ "  --log-level <lvl>  诊断日志级别：off、error、info 或 debug（默认 info）"
+
+#, fuzzy
+#~ msgid "interactive theme wizard"
+#~ msgstr "  configure        交互式主题向导"
+
+#, fuzzy
+#~ msgid "re-read the theme file of the running session"
+#~ msgstr "  reload           重新读取当前会话的主题文件"
+
+#, fuzzy
+#~ msgid "print this help and exit"
+#~ msgstr "  --help           打印本说明后退出"
+
+#, fuzzy
+#~ msgid "print the version and exit"
+#~ msgstr "  --version        打印版本后退出"
+
+#~ msgid "usage: p11k [options]"
+#~ msgstr "用法: p11k [选项]"
+
+#~ msgid "       p11k configure"
+#~ msgstr "       p11k configure"
+
+#~ msgid "       p11k reload"
+#~ msgstr "       p11k reload"
+
+#~ msgid "Options:"
+#~ msgstr "选项:"
+
+#~ msgid "Commands:"
+#~ msgstr "子命令:"
+
+#~ msgid ""
+#~ "Environment: P11K_ENGINE guards against recursion; P11K_USER_ZSHRC and"
+#~ msgstr "环境变量：P11K_ENGINE 用于防止递归加载；P11K_USER_ZSHRC 与"
+
+#~ msgid "P11K_USER_PROFILE override the rc that gets sourced; P11K_LOCALEDIR"
+#~ msgstr "P11K_USER_PROFILE 用于覆盖所 source 的 rc；P11K_LOCALEDIR"
+
+#~ msgid ""
+#~ "overrides the translation directory. The engine exports P11K_CONFIG and"
+#~ msgstr "用于覆盖翻译目录。引擎会把 P11K_CONFIG 与"
+
+#~ msgid "P11K_ENGINE_PID into the shell for `p11k reload`."
+#~ msgstr "P11K_ENGINE_PID 导出给 shell，供 `p11k reload` 使用。"
+
+#~ msgid ""
+#~ "To use p11k as your theme, add one line to your shell rc — see README.md."
+#~ msgstr "若要将 p11k 用作主题，请在 shell rc 中加入一行，详见 README.zh.md"
 
 #~ msgid "unknown shell in P11K_SHELL; cannot check the theme against it"
 #~ msgstr "P11K_SHELL 里的 shell 名无法识别，无法用它校验主题"

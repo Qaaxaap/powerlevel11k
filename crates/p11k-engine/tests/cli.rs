@@ -36,24 +36,41 @@ fn short_version_flag_works_too() {
 }
 
 #[test]
-fn help_lists_the_flags_and_the_wizard() {
+fn help_lists_the_flags_and_the_commands() {
     let (stdout, stderr, code) = p11k(&["--help"]);
     assert_eq!(code, 0, "stderr: {stderr}");
     for needle in [
-        "usage: p11k",
-        "p11k configure",
-        "p11k reload",
+        "Usage: p11k",
+        "Commands:",
+        "Options:",
+        "configure",
+        "reload",
         "--shell",
         "--config",
         "--preset",
+        "--log-level",
         "--version",
         "--help",
-        "configure",
-        "reload",
+        "Environment:",
+        "P11K_ENGINE",
+        "P11K_USER_ZSHRC",
+        "P11K_USER_PROFILE",
     ] {
         assert!(
             stdout.contains(needle),
             "help should mention {needle}: {stdout}"
+        );
+    }
+    // Internal variables and the removed zsh-only debug override stay out of the user help.
+    for needle in [
+        "P11K_ZSHRC",
+        "P11K_LOCALEDIR",
+        "P11K_ENGINE_PID",
+        "P11K_CONFIG",
+    ] {
+        assert!(
+            !stdout.contains(needle),
+            "help should not mention {needle}: {stdout}"
         );
     }
 }

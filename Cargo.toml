@@ -11,6 +11,7 @@ license = "LGPL-3.0-or-later"
 rust-version = "1.95"
 
 [workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
 libc = "0.2"
 git2 = "0.21"
 portable-pty = "0.9"
