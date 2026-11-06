@@ -504,12 +504,13 @@ impl Repo {
         let mut best: Option<String> = None;
         if let Ok(tags) = self.git.references_glob("refs/tags/*") {
             for t in tags.flatten() {
-                // resolve: peel annotated tags down to the commit.
+                // A lightweight tag points straight at the commit; an annotated tag points at a
+                // tag object, so peel it before comparing with HEAD.
                 let matches = t
                     .resolve()
                     .ok()
-                    .and_then(|r| r.target())
-                    .map(|o| o == oid)
+                    .and_then(|r| r.peel(git2::ObjectType::Commit).ok())
+                    .map(|c| c.id() == oid)
                     .unwrap_or(false);
                 if matches
                     && let Ok(name) = t.shorthand()
