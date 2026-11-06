@@ -40,8 +40,15 @@ p11k (powerlevel11k) is a prompt engine written in Rust. The engine runs as a lo
 
 ## Decisions
 
-- Ask the maintainer before a change to public behaviour, an interface, a dependency, the config language or the release process.
+- Ask the maintainer before a change to public behaviour, an interface, the config language or the release process.
 - Ask when a trade-off is unclear. Do not lower the specification or drop options by guessing.
+
+## Dependencies
+
+- Use a maintained crate instead of hand-writing general-purpose code. Argument parsing, JSON, date and time formatting, glob matching, version parsing and process control are solved problems.
+- The size of the dependency tree is not a constraint. Avoiding a well-maintained dependency is not a goal of this project. A hand-written reimplementation carries its own maintenance cost, and is usually the worse trade.
+- A new dependency needs no prior approval. It must pass `just deny` (licences, bans, advisories) and build with the MSRV in `rust-toolchain.toml`. State it in the pull request.
+- Ask before a dependency that changes the build environment, such as a new system library or a toolchain requirement.
 
 ## Text
 
