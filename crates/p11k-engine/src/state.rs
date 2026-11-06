@@ -14,6 +14,15 @@ pub struct StateDir {
     pub rc: PathBuf,
     pub announce: PathBuf,
     pub ack: PathBuf,
+    /// Random per-session token. `p11k reload` reads the copy in `session` and compares it with
+    /// the value the engine exported, so a reused pid cannot receive its signal.
+    pub token: String,
+    /// Path of the theme file this session uses, kept so a later `p11k reload` without
+    /// `--config` re-reads the same file. Empty means the session has no theme file.
+    pub current_config: PathBuf,
+    /// Set by `p11k reload --config` before it signals the engine; the engine consumes it and
+    /// switches to that file.
+    pub reload_request: PathBuf,
 }
 
 impl StateDir {
@@ -27,6 +36,14 @@ impl StateDir {
         // State, not temp: the run directory holds the rc files and the protocol files, and a
         // crash leaves it behind for a bug report. `Drop` removes it on a clean exit.
         let dir = create_run_dir(base)?;
+        // A per-session token makes `p11k reload` safe across pid reuse: the command must show
+        // the same token the engine wrote here, and the kernel may have reused the pid after a
+        // crash and restart.
+        let token = random_token()?;
+        let session = dir.join("session");
+        write_private(&session, token.as_bytes())?;
+        let current_config = dir.join("current-config");
+        let reload_request = dir.join("reload-request");
         // A FIFO, not a plain file: the engine waits on it with poll instead of re-reading a
         // file every few milliseconds. The shell writes with `>>`, which opens the write end
         // and blocks only until the engine's read end is available.
@@ -68,10 +85,66 @@ impl StateDir {
         Ok(Self {
             announce,
             ack: dir.join("ack"),
+            token,
+            current_config,
+            reload_request,
             dir,
             rc,
         })
     }
+
+    /// Record the theme file this session is using. Called after the theme loads and after a
+    /// reload switches to another file; `p11k reload` without `--config` reads it back.
+    pub fn write_current_config(&self, path: Option<&Path>) -> io::Result<()> {
+        match path {
+            Some(path) => write_private(&self.current_config, path.as_os_str().as_encoded_bytes()),
+            None => match fs::remove_file(&self.current_config) {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e),
+            },
+        }
+    }
+
+    /// Consume the path `p11k reload --config` left behind. A missing file means a plain
+    /// reload, which uses the session's current theme file.
+    pub fn take_reload_request(&self) -> io::Result<Option<PathBuf>> {
+        let bytes = match fs::read(&self.reload_request) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        fs::remove_file(&self.reload_request)?;
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        use std::os::unix::ffi::OsStringExt;
+        Ok(Some(PathBuf::from(std::ffi::OsString::from_vec(bytes))))
+    }
+}
+
+/// 16 random bytes as hex. `/dev/urandom` exists on every Unix p11k targets; a failure here is
+/// fatal for the engine because `reload` would otherwise have no session proof.
+fn random_token() -> io::Result<String> {
+    use std::io::Read;
+    let mut bytes = [0u8; 16];
+    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// Write a file only the current user can read. The session directory itself may be traversable,
+/// but the token and the reload request must not be readable by other users.
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.flush()
 }
 
 /// Create `base/run-<pid>`, replacing a directory a crashed engine left behind.
@@ -253,6 +326,64 @@ mod tests {
         let _ = child.kill();
         let _ = child.wait();
         assert!(kept, "a live pid keeps its run directory");
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The session token is what lets `p11k reload` tell this engine apart from a process that
+    /// later inherited its pid. It has to be written where the command reads it, and it must not
+    /// be readable by other users.
+    #[test]
+    fn session_token_is_written_and_private() {
+        let base = temp_base("token");
+        let state = StateDir::create_in(&base, Shell::Zsh).unwrap();
+        let session = state.dir.join("session");
+        let stored = fs::read_to_string(&session).unwrap();
+        assert!(!state.token.is_empty());
+        assert_eq!(stored, state.token);
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&session).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the token file must stay private");
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The reload request is a one-shot handover: the engine reads the path and removes the file
+    /// so a stale request cannot redirect the next SIGUSR1.
+    #[test]
+    fn a_reload_request_is_consumed_once() {
+        let base = temp_base("reload-request");
+        let state = StateDir::create_in(&base, Shell::Zsh).unwrap();
+        write_private(&state.reload_request, b"/tmp/theme.kdl").unwrap();
+        assert_eq!(
+            state.take_reload_request().unwrap(),
+            Some(PathBuf::from("/tmp/theme.kdl"))
+        );
+        assert!(
+            state.take_reload_request().unwrap().is_none(),
+            "the request must be consumed once"
+        );
+
+        drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// The engine records the theme file it uses; a plain `p11k reload` reads it back.
+    #[test]
+    fn current_config_tracks_the_theme_file() {
+        let base = temp_base("current-config");
+        let state = StateDir::create_in(&base, Shell::Zsh).unwrap();
+        state
+            .write_current_config(Some(Path::new("/tmp/theme.kdl")))
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(&state.current_config).unwrap(),
+            "/tmp/theme.kdl"
+        );
+        state.write_current_config(None).unwrap();
+        assert!(!state.current_config.exists());
 
         drop(state);
         let _ = fs::remove_dir_all(&base);
