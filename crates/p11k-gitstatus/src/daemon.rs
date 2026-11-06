@@ -1,5 +1,5 @@
 use crate::options::Options;
-use crate::protocol::{self, Request, Response};
+use crate::protocol::{self, Response};
 use crate::repo::RepoCache;
 use std::panic::AssertUnwindSafe;
 use std::process::exit;
@@ -48,6 +48,8 @@ impl Daemon {
     /// - A response that cannot be written stops the daemon: the stream is at an arbitrary
     ///   offset and the shell restarts it. A closed pipe means the shell is gone, so that case
     ///   exits quietly.
+    /// - A malformed message panics in `parse_request` (the original's VERIFY). The panic is
+    ///   caught, logged, and the loop keeps serving; one bad message must not end the daemon.
     pub fn run(&mut self) -> ! {
         let mut buf: Vec<u8> = Vec::new();
         loop {
@@ -55,8 +57,7 @@ impl Daemon {
             if let Some(pos) = buf.iter().position(|&b| b == protocol::MSG_SEP) {
                 let msg: Vec<u8> = buf.drain(..=pos).collect();
                 let bytes = &msg[..msg.len() - 1]; // strip MSG_SEP
-                let req = protocol::parse_request(bytes);
-                if let Err(err) = self.process_request(req) {
+                if let Err(err) = self.process_message(bytes) {
                     match err {
                         // The shell exited and closed the pipe: the original exits quietly.
                         RequestError::Write(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
@@ -66,9 +67,10 @@ impl Daemon {
                             eprintln!("gitstatusd: write: {e}");
                             exit(1);
                         }
+                        // The original catches the exception from VERIFY, logs it, and keeps
+                        // serving; one bad message must not take the daemon down.
                         RequestError::Panic => {
                             eprintln!("gitstatusd: error processing request");
-                            exit(1);
                         }
                     }
                 }
@@ -118,14 +120,16 @@ impl Daemon {
         }
     }
 
-    /// Handle one request and write the response.
+    /// Handle one raw message: parse it, answer it, and write the response.
     ///
-    /// A panicking request is caught so the daemon reports what happened; the caller decides
-    /// whether the loop can continue. An empty dir yields a non-repo response (the `}hello`
-    /// handshake also takes this path); otherwise open the repo — success gives a repo
-    /// response, failure gives a non-repo response.
-    fn process_request(&mut self, req: Request) -> Result<(), RequestError> {
+    /// Parsing and handling both run inside `catch_unwind`. A malformed message panics in
+    /// `parse_request` (the original's VERIFY), and the loop logs the panic and keeps serving.
+    /// An empty dir yields a non-repo response (the `}hello` handshake also takes this path);
+    /// otherwise open the repo — success gives a repo response, failure gives a non-repo
+    /// response.
+    fn process_message(&mut self, bytes: &[u8]) -> Result<(), RequestError> {
         let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let req = protocol::parse_request(bytes);
             let resp = match self.cache.get_or_open(&req.dir, req.dir_is_gitdir) {
                 Some(repo) => Response {
                     id: req.id.clone(),
@@ -192,7 +196,8 @@ impl Daemon {
 enum RequestError {
     /// The response could not be written completely.
     Write(std::io::Error),
-    /// The handler panicked; the response may be partial.
+    /// Parsing or handling panicked; the response may be partial. The loop logs it and
+    /// continues, matching the original's exception handling.
     Panic,
 }
 
