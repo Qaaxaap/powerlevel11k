@@ -79,14 +79,28 @@
       # The captured frames contain the font raster, so the family is part of the fixed
       # environment. Maple Mono NF is the family the reference frames are made with; DejaVu
       # covers characters outside the family.
+      #
+      # The file must not include /etc/fonts/conf.d: that directory differs between the local
+      # host and the CI runner, and the hinting/subpixel settings in it change the glyph raster.
+      # The raster settings are pinned here instead.
       visualFontsConf =
         pkgs:
-        pkgs.makeFontsConf {
-          fontDirectories = [
-            pkgs.dejavu_fonts
-            pkgs.maple-mono."NF"
-          ];
-        };
+        pkgs.writeText "p11k-visual-fonts.conf" ''
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+          <fontconfig>
+            <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+            <dir>${pkgs.maple-mono."NF"}/share/fonts</dir>
+            <cachedir>/tmp/p11k-visual-fontconfig</cachedir>
+            <match target="font">
+              <edit name="antialias" mode="assign"><bool>true</bool></edit>
+              <edit name="hinting" mode="assign"><bool>true</bool></edit>
+              <edit name="hintstyle" mode="assign"><const>hintslight</const></edit>
+              <edit name="rgba" mode="assign"><const>none</const></edit>
+              <edit name="lcdfilter" mode="assign"><const>lcdnone</const></edit>
+            </match>
+          </fontconfig>
+        '';
 
     in
     {
