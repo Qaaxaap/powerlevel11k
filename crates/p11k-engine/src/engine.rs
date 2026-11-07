@@ -288,6 +288,7 @@ pub fn run() -> anyhow::Result<()> {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "~".into()),
         exec_seconds: 0.0,
+        exec_ms: None,
         jobs: 0,
         history: 0,
         pipestatus: Vec::new(),
@@ -485,12 +486,18 @@ pub fn run() -> anyhow::Result<()> {
                             "h: exit={:?} cwd={:?} jobs={}",
                             info.exit_code, info.cwd, info.jobs
                         ));
-                        // Command duration = last enter → this precmd (0 on the first prompt
-                        // without last_enter).
-                        info.exec_seconds = last_enter
+                        // Command duration: the shell's own measurement wins. The engine timing
+                        // (last enter → this precmd) is the fallback for prompts where the shell
+                        // sends no value. Always consume last_enter: a delayed announce must not
+                        // hand the next command's timing to a later prompt.
+                        let engine_seconds = last_enter
                             .take()
                             .map(|t| t.elapsed().as_secs_f64())
                             .unwrap_or(0.0);
+                        info.exec_seconds = info
+                            .exec_ms
+                            .map(|ms| ms as f64 / 1000.0)
+                            .unwrap_or(engine_seconds);
                         prompt = PromptState::Running; // the next signal paints the input line
                         // The instant header stays flagged until the first signal arrives: that is
                         // where the real header replaces it in place.

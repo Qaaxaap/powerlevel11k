@@ -266,6 +266,7 @@ fn sample_info() -> HeaderInfo {
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|_| "~".into()),
         exec_seconds: 3.5,
+        exec_ms: None,
         jobs: 1,
         history: 0,
         pipestatus: Vec::new(),
