@@ -1,6 +1,6 @@
 .cache/
 
-# Unreviewed render captures; they become references only after `just render-accept`.
+# Unreviewed render captures. Run just render-accept to make them references.
 tools/visual/expected-pending/
 
 # ── Rust (Cargo) ──

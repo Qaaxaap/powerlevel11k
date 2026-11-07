@@ -6,15 +6,15 @@
 # `--ignore-environment`: the shell provides the compositor, terminal, image tools, fonts, bats
 # and the four shells, and the caller's environment is not visible.
 #
-# Each shell is a bats file with one test per scene and size; `bats --jobs N` captures the frames
-# in parallel and reports one TAP result per frame.
+# Each shell is a bats file. The file has one test per scene and size. `bats --jobs N`
+# captures the frames in parallel and reports one TAP result per frame.
 #
 # Usage: check.sh [--update] [-j N]
 #
-#   --update   capture every frame into tools/visual/expected-pending/<arch>/ instead of
-#              comparing. Review the images, then run `just render-accept` to make them the
-#              committed references.
-#   -j/--jobs N  bats parallelism (default 4).
+#   --update   Capture each frame into tools/visual/expected-pending/<arch>/. The script
+#              does not compare the frames. Review the images, then run `just render-accept`
+#              to make them the committed references.
+#   -j/--jobs N  Bats parallelism (default 4).
 
 set -euo pipefail
 

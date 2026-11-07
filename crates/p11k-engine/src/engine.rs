@@ -486,10 +486,10 @@ pub fn run() -> anyhow::Result<()> {
                             "h: exit={:?} cwd={:?} jobs={}",
                             info.exit_code, info.cwd, info.jobs
                         ));
-                        // Command duration: the shell's own measurement wins. The engine timing
-                        // (last enter → this precmd) is the fallback for prompts where the shell
-                        // sends no value. Always consume last_enter: a delayed announce must not
-                        // hand the next command's timing to a later prompt.
+                        // Use the shell's own command duration. The engine timing (last
+                        // enter → this precmd) is the fallback when the shell sends no value.
+                        // Always consume last_enter. A delayed announce must not give the next
+                        // command's timing to a later prompt.
                         let engine_seconds = last_enter
                             .take()
                             .map(|t| t.elapsed().as_secs_f64())
