@@ -7,8 +7,10 @@
 # file hash would also cover the encoder and the metadata, which do not affect the screen.
 #
 # Usage:
-#   compare.sh --out DIR [--expected DIR] [--shells "zsh bash fish pwsh"] [--update]
+#   compare.sh --out DIR [--expected DIR] --frames "zsh-700x450 bash-700x450" [--update]
 #
+#   --frames LIST   Frame names. The script compares OUT/<frame>/p11k-<frame>-000.png with
+#                   EXPECTED/<arch>/<frame>.png.
 #   --expected DIR  reference directory in the working tree (default: tools/visual/expected).
 #                   It stays a working-tree path on purpose: --update writes the new frames into
 #                   the checkout, and the Nix store copy is read-only.
@@ -19,7 +21,7 @@ set -euo pipefail
 
 OUT="./render-check"
 EXPECTED="./tools/visual/expected"
-SHELLS="zsh bash fish pwsh"
+FRAMES=""
 UPDATE="0"
 
 die() {
@@ -31,7 +33,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
     --expected) EXPECTED="$2"; shift 2 ;;
-    --shells) SHELLS="$2"; shift 2 ;;
+    --frames) FRAMES="$2"; shift 2 ;;
     --update) UPDATE="1"; shift ;;
     -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}" | sed -n '/^#/s/^# \{0,1\}//p'; exit 0 ;;
     *) die "unknown argument: $1" ;;
@@ -82,57 +84,57 @@ ae_metric() {
 }
 
 if [ "$UPDATE" = "1" ]; then
-  for shell in $SHELLS; do
-    actual="$OUT/$shell/p11k-$shell-000.png"
-    [ -f "$actual" ] || die "--update needs the capture for $shell: $actual"
-    cp "$actual" "$EXPECTED_DIR/$shell.png"
-    echo "compare: updated $EXPECTED_DIR/$shell.png"
+  for frame in $FRAMES; do
+    actual="$OUT/$frame/p11k-$frame-000.png"
+    [ -f "$actual" ] || die "--update needs the capture for $frame: $actual"
+    cp "$actual" "$EXPECTED_DIR/$frame.png"
+    echo "compare: updated $EXPECTED_DIR/$frame.png"
   done
   exit 0
 fi
 
 status=0
-for shell in $SHELLS; do
-  actual="$OUT/$shell/p11k-$shell-000.png"
-  reference="$EXPECTED_DIR/$shell.png"
+for frame in $FRAMES; do
+  actual="$OUT/$frame/p11k-$frame-000.png"
+  reference="$EXPECTED_DIR/$frame.png"
   if [ ! -f "$actual" ]; then
-    echo "compare: missing capture for $shell: $actual" >&2
+    echo "compare: missing capture for $frame: $actual" >&2
     status=1
     continue
   fi
   if [ ! -f "$reference" ]; then
-    echo "compare: missing reference for $shell: $reference" >&2
+    echo "compare: missing reference for $frame: $reference" >&2
     echo "compare: run with --update, review the image, then commit it" >&2
     status=1
     continue
   fi
   metric=$(ae_metric "$actual" "$reference")
   if [ "$metric" = "0" ]; then
-    echo "compare: $shell ok"
+    echo "compare: $frame ok"
     continue
   fi
-  echo "compare: $shell differs by $metric pixels" >&2
-  diff="$OUT/diff-$shell.png"
-  if magick compare "$actual" "$reference" "$diff" 2>"$OUT/diff-$shell.err"; then
-    echo "compare: $shell: the diff pass returned success after a non-zero AE metric" >&2
+  echo "compare: $frame differs by $metric pixels" >&2
+  diff="$OUT/diff-$frame.png"
+  if magick compare "$actual" "$reference" "$diff" 2>"$OUT/diff-$frame.err"; then
+    echo "compare: $frame: the diff pass returned success after a non-zero AE metric" >&2
     status=1
     continue
   else
     diff_rc=$?
   fi
   if [ "$diff_rc" != "1" ]; then
-    cat "$OUT/diff-$shell.err" >&2
-    echo "compare: $shell: could not write the diff image (exit $diff_rc)" >&2
+    cat "$OUT/diff-$frame.err" >&2
+    echo "compare: $frame: could not write the diff image (exit $diff_rc)" >&2
     status=1
     continue
   fi
   if [ ! -s "$diff" ]; then
-    cat "$OUT/diff-$shell.err" >&2
-    echo "compare: $shell: the diff image was not written to $diff" >&2
+    cat "$OUT/diff-$frame.err" >&2
+    echo "compare: $frame: the diff image was not written to $diff" >&2
     status=1
     continue
   fi
-  rm -f "$OUT/diff-$shell.err"
+  rm -f "$OUT/diff-$frame.err"
   status=1
 done
 

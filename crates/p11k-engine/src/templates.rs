@@ -16,12 +16,34 @@ _p11k_signal=$'%{\e]1337;p11k;p\a%}'
 _p11k_status=0
 _p11k_pwd=$PWD
 
+# Command timing for zsh. Zsh has no CMD_DURATION. A preexec hook records EPOCHREALTIME
+# before the command runs. Precmd turns the difference into milliseconds for the announce.
+# Without the datetime module, EPOCHREALTIME stays empty and the engine uses its own timing.
+zmodload -i zsh/datetime
+typeset -g _p11k_cmd_start
+_p11k_preexec() { _p11k_cmd_start=${EPOCHREALTIME:-} }
+autoload -Uz add-zsh-hook
+add-zsh-hook preexec _p11k_preexec
+
 _p11k_precmd() {
   _p11k_status=$?
   # Capture $pipestatus right away: any command below resets it.
   _p11k_pipes="${pipestatus}"
   _p11k_pwd=$PWD
-  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes" >> "$P11K_ANNOUNCE"
+  # Milliseconds between preexec and this precmd. The field stays empty on the first
+  # prompt. It also stays empty when the shell cannot measure the duration. The engine then
+  # uses its Enter → precmd timing.
+  local _dur=
+  if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
+    # EPOCHREALTIME has more digits than a 64-bit integer can hold when the dot is removed.
+    # Keep microseconds. Use seconds * 1e6 plus the first six fractional digits.
+    local _start=$_p11k_cmd_start _now=$EPOCHREALTIME
+    local _start_s=${_start%%.*} _start_f=${_start#*.}
+    local _now_s=${_now%%.*} _now_f=${_now#*.}
+    (( _dur = ( _now_s * 1000000 + 10#${_now_f:0:6} - _start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
+    _p11k_cmd_start=
+  fi
+  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes"$'\t'"$_dur" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   # The ack carries the prompt shape: header height on the first line, then the two prefix
   # strings. Reading them every prompt is what lets a reload change either without a restart.
@@ -198,13 +220,36 @@ pub const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol 
 _p11k_signal=$'\e]1337;p11k;p\a'
 PS1="\[$_p11k_signal\]"
 
+# Command timing for bash. Bash has no CMD_DURATION and no preexec. A DEBUG trap records
+# EPOCHREALTIME before the first simple command after a prompt. `_p11k_cmd_start` is set once
+# per command. A pipeline or a compound command does not overwrite the start with a later
+# element.
+_p11k_cmd_start=
+_p11k_preexec() {
+  # The trap also fires for the PROMPT_COMMAND function itself. That call is not a user
+  # command. It must not start a timer.
+  [[ $BASH_COMMAND == _p11k_prompt_command ]] && return
+  [[ -n ${_p11k_cmd_start:-} ]] && return
+  _p11k_cmd_start=${EPOCHREALTIME:-}
+}
+trap '_p11k_preexec' DEBUG
+
 # PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
 # then wait for the engine ack before returning.
 _p11k_prompt_command() {
   # Read both in one `local`: any command in between, `local` included, resets $PIPESTATUS, so
   # capturing $? first would leave the pipeline statuses reporting the `local` that read it.
   local _pipes="${PIPESTATUS[*]}" _st=$?
-  printf 'h\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" >> "$P11K_ANNOUNCE"
+  # Milliseconds between the DEBUG trap and this prompt command. The field is empty on the
+  # first prompt. It is also empty when the shell cannot measure the duration. The engine then
+  # falls back to its own timing.
+  local _dur=
+  if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
+    local _start=${_p11k_cmd_start//./} _now=${EPOCHREALTIME//./}
+    (( _dur = (_now - _start) / 1000 ))
+    _p11k_cmd_start=
+  fi
+  printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" "$_dur" >> "$P11K_ANNOUNCE"
   until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
   # The ack carries the prompt shape: header height on the first line, then the two prefix
   # strings. Reading them every prompt is what lets a reload change either without a restart.
@@ -258,6 +303,7 @@ fi
 PS1="\[$_p11k_signal\]"
 PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
+trap '_p11k_preexec' DEBUG
 "#;
 
 /// fish protocol layer (injected via XDG_CONFIG_HOME redirection). fish_prompt + announce.
@@ -302,7 +348,15 @@ function fish_prompt
         printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
         return
     end
-    printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
+    # $CMD_DURATION is fish's own measurement of the previous command in milliseconds.
+    # Fish sets it before the prompt renders. Send it to the engine. The engine then does not
+    # infer the duration from the Enter → precmd wall clock. That clock races with a delayed
+    # announce.
+    set -l _cmd_ms ''
+    if set -q CMD_DURATION
+        set _cmd_ms $CMD_DURATION
+    end
+    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
     end
@@ -365,7 +419,14 @@ function fish_prompt
         printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
         return
     end
-    printf 'h\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" >> $P11K_ANNOUNCE
+    # $CMD_DURATION is fish's own measurement of the previous command in milliseconds, taken
+    # before the prompt renders. Send it so the engine does not have to infer the duration from
+    # the Enter → precmd wall clock, which races with a delayed announce.
+    set -l _cmd_ms ''
+    if set -q CMD_DURATION
+        set _cmd_ms $CMD_DURATION
+    end
+    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
     while not test -f $P11K_ACK
         sleep 0.005
     end
@@ -419,8 +480,14 @@ function global:P11kEnginePrompt {
     # HistoryInfo.Id is PowerShell's nearest equivalent (session-unique and
     # monotonic). .Count drops when MaximumHistoryCount trims; Id survives that.
     # After Clear-History there is nothing left to read, so it reports 0.
-    $P11kHist = if ($h = Get-History -Count 1) { $h.Id } else { 0 }
-    [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n")
+    $P11kLast = Get-History -Count 1
+    $P11kHist = if ($P11kLast) { $P11kLast.Id } else { 0 }
+    # PowerShell records the command start and end on the history entry. Send the duration in
+    # milliseconds. The engine then does not infer it from the Enter → precmd wall clock.
+    $P11kExecMs = if ($P11kLast.StartExecutionTime -and $P11kLast.EndExecutionTime) {
+        [int]($P11kLast.EndExecutionTime - $P11kLast.StartExecutionTime).TotalMilliseconds
+    } else { '' }
+    [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`t$P11kExecMs`n")
     # Wait for the engine ack: the prompt string is printed first, the header is backfilled after.
     while (-not [IO.File]::Exists($script:P11kAck)) { Start-Sleep -Milliseconds 5 }
     # The ack carries the prompt shape: header height on the first line, then the two prefix
@@ -464,6 +531,26 @@ function global:prompt { P11kEnginePrompt }
 mod tests {
     use super::*;
 
+    /// Each shell sends its own command duration. Fish sends CMD_DURATION. Zsh and bash send
+    /// EPOCHREALTIME around preexec and prompt. Pwsh sends history timestamps. The engine falls
+    /// back to its Enter timing only when the field is absent.
+    #[test]
+    fn every_template_sends_a_shell_measured_duration() {
+        assert!(
+            ZSHRC_TEMPLATE.contains("EPOCHREALTIME"),
+            "zsh preexec/precmd timing"
+        );
+        assert!(
+            BASHRC_TEMPLATE.contains("EPOCHREALTIME"),
+            "bash DEBUG/prompt timing"
+        );
+        assert!(FISH_TEMPLATE.contains("CMD_DURATION"), "fish CMD_DURATION");
+        assert!(
+            PWSH_TEMPLATE.contains("StartExecutionTime"),
+            "pwsh history timing"
+        );
+    }
+
     /// pwsh has no zle: the signal travels inside the prompt string, so the protocol layer must
     /// do all three of announce `h`, wait for the ack and emit the signal plus the prefix (resize
     /// only appends an `r` and must not return early — then nothing backfills the header and the
@@ -479,7 +566,7 @@ mod tests {
             t.contains("P11kEnginePrompt"),
             "prompt must forward to the engine implementation"
         );
-        assert!(t.contains(r#""h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`n""#));
+        assert!(t.contains(r#""h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`t$P11kExecMs`n""#));
         assert!(t.contains(r#""r`n""#), "resize must announce r");
         assert!(
             t.contains("while (-not [IO.File]::Exists($script:P11kAck))"),

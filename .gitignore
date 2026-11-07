@@ -1,5 +1,8 @@
 .cache/
 
+# Unreviewed render captures. Run just render-accept to make them references.
+tools/visual/expected-pending/
+
 # ── Rust (Cargo) ──
 # Compiled files and executables
 /target

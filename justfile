@@ -86,12 +86,19 @@ demo:
 # reference frame. The build runs in the default devShell so cargo caches apply; the capture and
 # the comparison run in the visual devShell with --ignore-environment, so nothing comes from the
 # caller. See tools/visual/README.md.
-render-check:
+render-check *args:
     nix develop --command cargo build -p p11k-engine --bin p11k
-    nix develop .#visual --ignore-environment --command bash tools/visual/check.sh
+    nix develop .#visual --ignore-environment --command bash tools/visual/check.sh {{args}}
 
-# Regenerate the reference frame after a deliberate rendering change. Review the image before
-# committing it: the command cannot decide whether a change is intended.
-render-update:
+# Capture new frames after a deliberate rendering change. The captures go to
+# tools/visual/expected-pending. They are not references until a person reviews and accepts
+# them. Pass -j/--jobs N to change the bats parallelism.
+render-update *args:
     nix develop --command cargo build -p p11k-engine --bin p11k
-    nix develop .#visual --ignore-environment --command bash tools/visual/check.sh --update
+    nix develop .#visual --ignore-environment --command bash tools/visual/check.sh --update {{args}}
+
+# Copy the reviewed pending frames into tools/visual/expected. Run this only after a person
+# checks each image against the intended layout. The frames then become the reference that CI
+# compares against.
+render-accept:
+    bash tools/visual/accept.sh

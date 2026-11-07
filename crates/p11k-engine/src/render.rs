@@ -2988,6 +2988,7 @@ mod tests {
             exit_code: code,
             cwd: cwd.to_string(),
             exec_seconds: 0.0,
+            exec_ms: None,
             jobs: 0,
             history: 0,
             pipestatus: Vec::new(),
@@ -3387,6 +3388,7 @@ mod tests {
             cfg.segments.insert("command_execution_time".into(), e);
             let i = HeaderInfo {
                 exec_seconds: 3.5,
+                exec_ms: None,
                 ..info("/tmp", None)
             };
             render_header_lines(&cfg, &i, None, 80).join("\n")
@@ -4861,5 +4863,95 @@ mod tests {
             !disk_usage("/tmp").is_empty(),
             "disk_usage should have df output"
         );
+    }
+
+    /// Fixed git status for the golden renders.
+    /// The status covers every vcs state that the header can draw.
+    fn golden_vcs() -> crate::theme::GitStatus {
+        crate::theme::GitStatus {
+            branch: "main".into(),
+            commit: "0123456789abcdef0123456789abcdef01234567".into(),
+            staged: 1,
+            unstaged: 2,
+            conflicted: 0,
+            untracked: 3,
+            ahead: 1,
+            behind: 1,
+            push_ahead: 2,
+            push_behind: 1,
+            stashes: 2,
+            action: "rebase".into(),
+            tag: "v1".into(),
+            remote_branch: "origin/main".into(),
+            commit_summary: "fix wip".into(),
+            index_size: 42,
+            remote_url: "https://github.com/example/repo".into(),
+        }
+    }
+
+    fn golden_info() -> crate::theme::HeaderInfo {
+        crate::theme::HeaderInfo {
+            exit_code: Some(9),
+            cwd: "/srv/p11k/golden/repo".into(),
+            exec_seconds: 12.5,
+            exec_ms: None,
+            jobs: 2,
+            history: 5,
+            pipestatus: vec![1, 0],
+        }
+    }
+
+    /// A preset with the machine-dependent and clock segments removed.
+    /// The os_icon segment reads the host os-release. The time and date segments read the
+    /// clock. None of them can be part of a committed snapshot.
+    fn golden_config(kind: crate::presets::PresetKind) -> Config {
+        let mut cfg = crate::presets::build(kind);
+        for row in cfg
+            .layout
+            .left
+            .iter_mut()
+            .chain(cfg.layout.right.iter_mut())
+        {
+            row.retain(|el| {
+                !matches!(el, Element::Seg(name) if matches!(name.as_str(), "os_icon" | "time" | "date"))
+            });
+        }
+        cfg
+    }
+
+    /// The full header and input-line output for one preset.
+    /// The output covers each width in the matrix.
+    fn golden_lines(kind: crate::presets::PresetKind) -> Vec<(usize, Vec<String>)> {
+        let cfg = golden_config(kind);
+        let info = golden_info();
+        let vcs = golden_vcs();
+        [40usize, 80, 120, 160]
+            .into_iter()
+            .map(|cols| {
+                let mut lines = render_header_lines(&cfg, &info, Some(&vcs), cols);
+                lines.push(crate::render::input_prefix(&cfg, None).text);
+                (cols, lines)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn golden_lean() {
+        insta::assert_debug_snapshot!(golden_lines(crate::presets::PresetKind::Lean));
+    }
+
+    #[test]
+    fn golden_classic() {
+        insta::assert_debug_snapshot!(golden_lines(crate::presets::PresetKind::Classic));
+    }
+
+    #[test]
+    fn golden_rainbow() {
+        insta::assert_debug_snapshot!(golden_lines(crate::presets::PresetKind::Rainbow));
+    }
+
+    #[test]
+    fn golden_pure() {
+        insta::assert_debug_snapshot!(golden_lines(crate::presets::PresetKind::Pure));
     }
 }
