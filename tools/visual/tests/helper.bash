@@ -33,9 +33,9 @@ capture_and_compare() {
   fi
   # Pwsh starts slower than the other shells. Give it one more second before the stability
   # check starts. The prompt and the input echo are then on screen.
-  local min_wait=0.5
+  local min_wait=0.7
   if [ "$shell" = "pwsh" ]; then
-    min_wait=1.5
+    min_wait=1.7
   fi
 
   [ -f "$run" ] || {
@@ -49,6 +49,7 @@ capture_and_compare() {
     --kitty-conf "${P11K_VISUAL_KITTY_CONF:?P11K_VISUAL_KITTY_CONF is not set}" \
     --size "$size" \
     --min-wait "$min_wait" \
+    --settle-before-type \
     --title "p11k-$frame" \
     --type "$command" \
     --wait-for-after-type "$marker" \
