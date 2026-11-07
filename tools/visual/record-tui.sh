@@ -25,9 +25,9 @@
 #                         then shows the prompt after that command (wtype sends the keys)
 #   --type-wait SEC       wait after typing before the stable-frame capture (default 2)
 #   --wait-for-after-type FILE
-#                         after Return, wait for this file (written by the command) before
-#                         starting --type-wait; the wait shows the finished command, not a frame
-#                         in the middle of it
+#                         After Return, wait for this file. The command writes the file. Wait
+#                         for it before --type-wait starts. Then the capture shows the finished
+#                         command, not a frame in the middle of it.
 #   --min-wait SEC        minimum wait after the window appears (default 1.5)
 #   --settle-timeout SEC  upper bound for the stable-frame and window waits (default 15)
 #   --wait-for FILE       wait for the TUI's ready marker instead of the minimum wait
@@ -248,8 +248,8 @@ if [ -n "$TYPE_TEXT" ]; then
   sleep 0.1
   kitten @ --to "unix:$KITTY_SOCKET" send-key Return
   if [ -n "$TYPE_WAIT_FOR" ]; then
-    # The command writes this marker when it finishes; wait for that before the fixed
-    # TYPE_WAIT, so the capture is taken after the command completed.
+    # The command writes this marker when it finishes. Wait for the marker before the fixed
+    # TYPE_WAIT. The capture then occurs after the command completed.
     for _ in $(seq 1 $((SETTLE_TIMEOUT * 100))); do
       [ -e "$TYPE_WAIT_FOR" ] && break
       sleep 0.01

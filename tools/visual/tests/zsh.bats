@@ -1,5 +1,6 @@
 #!/usr/bin/env bats
-# The zsh frames: the prompt in a real terminal at three widths, plus the dirty scene.
+# The zsh frames. The prompt runs in a real terminal at three widths. The file also
+# captures the dirty scene.
 
 load helper
 

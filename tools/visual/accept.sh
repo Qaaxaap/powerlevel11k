@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Copy the reviewed pending reference frames into the committed expected set.
 #
-# `just render-update` writes captures to tools/visual/expected-pending/<arch>/; it never touches
-# tools/visual/expected/. Review every pending image and compare it with the intended layout
-# before running this script. The frames are the reference: a wrong image silently accepts a
-# wrong rendering.
+# `just render-update` writes captures to tools/visual/expected-pending/<arch>/. It never
+# touches tools/visual/expected/. Review each pending image and compare it with the intended
+# layout before you run this script. The frames are the reference. A wrong image accepts a wrong
+# rendering without a warning.
 
 set -euo pipefail
 

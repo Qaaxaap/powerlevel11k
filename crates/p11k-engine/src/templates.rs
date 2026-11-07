@@ -16,9 +16,9 @@ _p11k_signal=$'%{\e]1337;p11k;p\a%}'
 _p11k_status=0
 _p11k_pwd=$PWD
 
-# Command timing: zsh has no CMD_DURATION. A preexec hook records EPOCHREALTIME before the
-# command runs; precmd turns the difference into milliseconds for the announce. Without the
-# datetime module EPOCHREALTIME stays empty and the engine falls back to its own timing.
+# Command timing for zsh. Zsh has no CMD_DURATION. A preexec hook records EPOCHREALTIME
+# before the command runs. Precmd turns the difference into milliseconds for the announce.
+# Without the datetime module, EPOCHREALTIME stays empty and the engine uses its own timing.
 zmodload -i zsh/datetime
 typeset -g _p11k_cmd_start
 _p11k_preexec() { _p11k_cmd_start=${EPOCHREALTIME:-} }
@@ -30,12 +30,13 @@ _p11k_precmd() {
   # Capture $pipestatus right away: any command below resets it.
   _p11k_pipes="${pipestatus}"
   _p11k_pwd=$PWD
-  # Milliseconds between preexec and this precmd. The field stays empty on the first prompt and
-  # when the shell could not measure (the engine then falls back to Enter → precmd timing).
+  # Milliseconds between preexec and this precmd. The field stays empty on the first
+  # prompt. It also stays empty when the shell cannot measure the duration. The engine then
+  # uses its Enter → precmd timing.
   local _dur=
   if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
-    # EPOCHREALTIME has more digits than a 64-bit integer can hold once the dot is removed;
-    # keep microseconds: seconds * 1e6 + the first six fractional digits.
+    # EPOCHREALTIME has more digits than a 64-bit integer can hold when the dot is removed.
+    # Keep microseconds. Use seconds * 1e6 plus the first six fractional digits.
     local _start=$_p11k_cmd_start _now=$EPOCHREALTIME
     local _start_s=${_start%%.*} _start_f=${_start#*.}
     local _now_s=${_now%%.*} _now_f=${_now#*.}
@@ -219,13 +220,14 @@ pub const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol 
 _p11k_signal=$'\e]1337;p11k;p\a'
 PS1="\[$_p11k_signal\]"
 
-# bash has no CMD_DURATION or preexec: a DEBUG trap records EPOCHREALTIME before the first
-# simple command after a prompt. `_p11k_cmd_start` is set once per command, so a pipeline or a
-# compound command does not overwrite the start with a later element.
+# Command timing for bash. Bash has no CMD_DURATION and no preexec. A DEBUG trap records
+# EPOCHREALTIME before the first simple command after a prompt. `_p11k_cmd_start` is set once
+# per command. A pipeline or a compound command does not overwrite the start with a later
+# element.
 _p11k_cmd_start=
 _p11k_preexec() {
-  # The trap also fires for the PROMPT_COMMAND function itself; that call is not a user
-  # command and must not start a timer.
+  # The trap also fires for the PROMPT_COMMAND function itself. That call is not a user
+  # command. It must not start a timer.
   [[ $BASH_COMMAND == _p11k_prompt_command ]] && return
   [[ -n ${_p11k_cmd_start:-} ]] && return
   _p11k_cmd_start=${EPOCHREALTIME:-}
@@ -238,8 +240,9 @@ _p11k_prompt_command() {
   # Read both in one `local`: any command in between, `local` included, resets $PIPESTATUS, so
   # capturing $? first would leave the pipeline statuses reporting the `local` that read it.
   local _pipes="${PIPESTATUS[*]}" _st=$?
-  # Milliseconds between the DEBUG trap and this prompt command. Empty on the first prompt and
-  # when the shell could not measure; the engine then falls back to its own timing.
+  # Milliseconds between the DEBUG trap and this prompt command. The field is empty on the
+  # first prompt. It is also empty when the shell cannot measure the duration. The engine then
+  # falls back to its own timing.
   local _dur=
   if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
     local _start=${_p11k_cmd_start//./} _now=${EPOCHREALTIME//./}
@@ -345,9 +348,10 @@ function fish_prompt
         printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
         return
     end
-    # $CMD_DURATION is fish's own measurement of the previous command in milliseconds, taken
-    # before the prompt renders. Send it so the engine does not have to infer the duration from
-    # the Enter → precmd wall clock, which races with a delayed announce.
+    # $CMD_DURATION is fish's own measurement of the previous command in milliseconds.
+    # Fish sets it before the prompt renders. Send it to the engine. The engine then does not
+    # infer the duration from the Enter → precmd wall clock. That clock races with a delayed
+    # announce.
     set -l _cmd_ms ''
     if set -q CMD_DURATION
         set _cmd_ms $CMD_DURATION
@@ -479,7 +483,7 @@ function global:P11kEnginePrompt {
     $P11kLast = Get-History -Count 1
     $P11kHist = if ($P11kLast) { $P11kLast.Id } else { 0 }
     # PowerShell records the command start and end on the history entry. Send the duration in
-    # milliseconds so the engine does not infer it from the Enter → precmd wall clock.
+    # milliseconds. The engine then does not infer it from the Enter → precmd wall clock.
     $P11kExecMs = if ($P11kLast.StartExecutionTime -and $P11kLast.EndExecutionTime) {
         [int]($P11kLast.EndExecutionTime - $P11kLast.StartExecutionTime).TotalMilliseconds
     } else { '' }
@@ -527,9 +531,9 @@ function global:prompt { P11kEnginePrompt }
 mod tests {
     use super::*;
 
-    /// Every shell sends its own command duration: fish CMD_DURATION, zsh/bash EPOCHREALTIME
-    /// around preexec/prompt, pwsh history timestamps. The engine falls back to its Enter timing
-    /// only when the field is absent.
+    /// Each shell sends its own command duration. Fish sends CMD_DURATION. Zsh and bash send
+    /// EPOCHREALTIME around preexec and prompt. Pwsh sends history timestamps. The engine falls
+    /// back to its Enter timing only when the field is absent.
     #[test]
     fn every_template_sends_a_shell_measured_duration() {
         assert!(

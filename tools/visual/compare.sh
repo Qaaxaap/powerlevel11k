@@ -9,7 +9,7 @@
 # Usage:
 #   compare.sh --out DIR [--expected DIR] --frames "zsh-700x450 bash-700x450" [--update]
 #
-#   --frames LIST   frame names: capture OUT/<frame>/p11k-<frame>-000.png compares with
+#   --frames LIST   Frame names. The script compares OUT/<frame>/p11k-<frame>-000.png with
 #                   EXPECTED/<arch>/<frame>.png.
 #   --expected DIR  reference directory in the working tree (default: tools/visual/expected).
 #                   It stays a working-tree path on purpose: --update writes the new frames into

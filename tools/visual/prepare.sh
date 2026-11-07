@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Prepare the fixed repositories, HOME and per-shell launcher scripts for the bats tests.
 #
-# The tests run in parallel with `bats --jobs`, so everything shared is created here once and is
-# read-only afterwards; each shell only writes its own output directory.
+# The tests run in parallel with `bats --jobs`. This script creates each shared item once. The
+# items are read-only after this step. Each shell writes only its own output directory.
 #
-# Two scenes:
-#   reference  clean repository on main
-#   dirty      repository with a tag, one stash, one staged, one unstaged and one untracked change
+# This script creates two scenes:
+#   reference  A clean repository on main.
+#   dirty      A repository with a tag, one stash, one staged change, one unstaged change and
+#              one untracked change.
 #
 # Environment (set by the Nix wrapper):
 #   P11K_VISUAL_REFERENCE  the theme file
@@ -59,7 +60,7 @@ printf 'reference\n' > "$REPO/file.txt"
 git -C "$REPO" add file.txt
 git -C "$REPO" commit -qm init
 
-# ---- dirty scene: one of every vcs state the header draws ----
+# ---- dirty scene: one change of each vcs state that the header draws ----
 DIRTY_REPO="/tmp/p11k-visual-repo-dirty"
 rm -rf "$DIRTY_REPO"
 mkdir -p "$DIRTY_REPO"
@@ -68,7 +69,7 @@ printf 'dirty\n' > "$DIRTY_REPO/file.txt"
 git -C "$DIRTY_REPO" add file.txt
 git -C "$DIRTY_REPO" commit -qm init
 git -C "$DIRTY_REPO" tag v1
-# Stash one change, then leave one change of each kind behind.
+# Stash one change. Then leave one change of each kind in the worktree.
 printf 'stashed\n' > "$DIRTY_REPO/file.txt"
 git -C "$DIRTY_REPO" stash push -q -m "visual stash"
 printf 'unstaged\n' > "$DIRTY_REPO/file.txt"

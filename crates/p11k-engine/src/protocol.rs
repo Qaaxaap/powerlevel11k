@@ -6,8 +6,8 @@ use crate::theme::HeaderInfo;
 /// Announce messages: drawing the prompt window and resize.
 pub enum AnnMsg {
     /// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>][\t<pipestatus>][\t<exec_ms>]`: precmd
-    /// announce, draws the header. `<pipestatus>` is the pipeline status string; `<exec_ms>` is
-    /// the shell's own command duration in milliseconds.
+    /// announce. It draws the header. `<pipestatus>` is the pipeline status string.
+    /// `<exec_ms>` is the shell's own command duration in milliseconds.
     Header(HeaderInfo),
     /// `r`: resize announce (zsh's TRAPWINCH, bash's trap WINCH, fish's `--on-signal
     /// WINCH`, pwsh compares the window size inside prompt); resize the pty + repaint.
@@ -19,11 +19,12 @@ pub enum AnnMsg {
 
 /// Read pending lines from the announce FIFO and parse them into prompt messages.
 /// Line format (first field is the message type, the rest are tab-separated):
-/// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>][\t<pipestatus>][\t<exec_ms>]`, `r`, `v\t<keymap>`.
-/// Missing fields are tolerated: a failed `<exit>` parse is None, a missing `<cwd>` is an
-/// empty string, missing or invalid `<jobs>`/`<history>` are 0. Only zsh and pwsh send
-/// `<history>`; bash/fish have no such column. `<exec_ms>` is the shell's own command
-/// duration; when absent the engine uses its Enter → precmd timing.
+/// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>][\t<pipestatus>][\t<exec_ms>]`, `r`,
+/// `v\t<keymap>`.
+/// Missing fields are tolerated. A failed `<exit>` parse is None. A missing `<cwd>` is an
+/// empty string. Missing or invalid `<jobs>` and `<history>` are 0. Only zsh and pwsh send
+/// `<history>`. Bash and fish have no such column. `<exec_ms>` is the shell's own command
+/// duration. When it is absent, the engine uses its Enter → precmd timing.
 ///
 /// The caller waits for the FIFO to become readable with poll, so one drain takes everything
 /// that is buffered and returns. A read can end in the middle of a line: the partial line stays
@@ -108,8 +109,8 @@ fn parse_announce_lines(buf: &[u8]) -> Vec<AnnMsg> {
                             .collect()
                     })
                     .unwrap_or_default();
-                // Optional field: milliseconds measured by the shell itself. A missing or
-                // invalid field falls back to the engine's Enter → precmd timing.
+                // The shell can send this optional field. The engine uses it when valid. It
+                // uses its own timing when the field is missing or invalid.
                 let exec_ms = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
                 out.push(AnnMsg::Header(HeaderInfo {
                     exit_code: code,
@@ -332,7 +333,7 @@ mod tests {
         assert!(pending.is_empty());
     }
 
-    /// The optional trailing field carries the shell's own measurement in milliseconds.
+    /// The shell can send its own measurement in the optional trailing field.
     #[test]
     fn announce_reads_the_shell_measured_duration() {
         let mut pending = Vec::new();

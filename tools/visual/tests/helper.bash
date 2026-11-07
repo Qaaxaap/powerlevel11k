@@ -7,8 +7,8 @@
 # Arguments: shell scene size frame
 #   shell  zsh / bash / fish / pwsh
 #   scene  reference / dirty
-#   size   output resolution, e.g. 700x450
-#   frame  comparison name: expected/<arch>/<frame>.png
+#   size   Output resolution, for example 700x450.
+#   frame  Comparison name: expected/<arch>/<frame>.png
 # Failure diagnostics go to file descriptor 3, which bats reports with the test.
 capture_and_compare() {
   local shell=$1
@@ -19,9 +19,9 @@ capture_and_compare() {
   local expected=${P11K_VISUAL_EXPECTED:?P11K_VISUAL_EXPECTED is not set}
   local run="$out/run-$shell-$scene.sh"
   local log="$out/$frame/capture.log"
-  # The command writes this marker after `sleep 1` returns; the recorder waits for it before
-  # starting --type-wait, so the frame is captured after the command finished rather than while
-  # it still runs.
+  # The command writes this marker after `sleep 1` returns. The recorder waits for the marker
+  # before --type-wait starts. The capture then occurs after the command finished. It does not
+  # occur while the command still runs.
   local marker="$out/$frame/command-done"
   rm -f "$marker"
   export P11K_VISUAL_READY="$marker"
@@ -31,8 +31,8 @@ capture_and_compare() {
   else
     command='sleep 1; echo > "$P11K_VISUAL_READY"'
   fi
-  # pwsh starts slower than the other shells: give it one more second before the stability
-  # check starts, so the prompt and the input echo are on screen.
+  # Pwsh starts slower than the other shells. Give it one more second before the stability
+  # check starts. The prompt and the input echo are then on screen.
   local min_wait=0.5
   if [ "$shell" = "pwsh" ]; then
     min_wait=1.5

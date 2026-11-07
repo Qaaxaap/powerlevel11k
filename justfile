@@ -91,13 +91,14 @@ render-check *args:
     nix develop .#visual --ignore-environment --command bash tools/visual/check.sh {{args}}
 
 # Capture new frames after a deliberate rendering change. The captures go to
-# tools/visual/expected-pending; they are not references until they are reviewed and accepted.
-# Pass -j/--jobs N to change the bats parallelism.
+# tools/visual/expected-pending. They are not references until a person reviews and accepts
+# them. Pass -j/--jobs N to change the bats parallelism.
 render-update *args:
     nix develop --command cargo build -p p11k-engine --bin p11k
     nix develop .#visual --ignore-environment --command bash tools/visual/check.sh --update {{args}}
 
-# Copy the reviewed pending frames into tools/visual/expected. Run this only after checking every
-# image against the intended layout: the frames become the reference the CI compares against.
+# Copy the reviewed pending frames into tools/visual/expected. Run this only after a person
+# checks each image against the intended layout. The frames then become the reference that CI
+# compares against.
 render-accept:
     bash tools/visual/accept.sh

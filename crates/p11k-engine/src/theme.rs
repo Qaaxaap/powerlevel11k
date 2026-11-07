@@ -22,9 +22,10 @@ pub struct HeaderInfo {
     pub cwd: String,
     /// Duration of the previous command in seconds (timed by the engine: Enter → this precmd); 0 for the first prompt.
     pub exec_seconds: f64,
-    /// Milliseconds the shell measured for the previous command (`CMD_DURATION` in fish,
-    /// preexec/precmd in zsh, DEBUG/PROMPT_COMMAND in bash, history in pwsh). `None` for shells
-    /// or prompts without a value; the engine then falls back to its own Enter → precmd timing.
+    /// Milliseconds that the shell measured for the previous command. Fish uses
+    /// `CMD_DURATION`. Zsh uses preexec and precmd. Bash uses DEBUG and PROMPT_COMMAND.
+    /// Pwsh uses the history. The value is `None` when the shell has no value. The engine
+    /// then falls back to its own Enter → precmd timing.
     pub exec_ms: Option<u64>,
     pub jobs: usize,
     /// Command number: zsh sends `HISTCMD`, pwsh sends the last history entry's

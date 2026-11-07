@@ -4865,7 +4865,8 @@ mod tests {
         );
     }
 
-    /// Fixed git status for the golden renders: every vcs state the header can draw.
+    /// Fixed git status for the golden renders.
+    /// The status covers every vcs state that the header can draw.
     fn golden_vcs() -> crate::theme::GitStatus {
         crate::theme::GitStatus {
             branch: "main".into(),
@@ -4900,9 +4901,9 @@ mod tests {
         }
     }
 
-    /// A preset with the machine-dependent and clock segments removed: os_icon reads the host
-    /// os-release, and time/date read the clock, so none of them can be part of a committed
-    /// snapshot.
+    /// A preset with the machine-dependent and clock segments removed.
+    /// The os_icon segment reads the host os-release. The time and date segments read the
+    /// clock. None of them can be part of a committed snapshot.
     fn golden_config(kind: crate::presets::PresetKind) -> Config {
         let mut cfg = crate::presets::build(kind);
         for row in cfg
@@ -4918,7 +4919,8 @@ mod tests {
         cfg
     }
 
-    /// Full header and input-line output for one preset at the width matrix.
+    /// The full header and input-line output for one preset.
+    /// The output covers each width in the matrix.
     fn golden_lines(kind: crate::presets::PresetKind) -> Vec<(usize, Vec<String>)> {
         let cfg = golden_config(kind);
         let info = golden_info();
