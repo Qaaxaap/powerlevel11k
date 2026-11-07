@@ -239,25 +239,25 @@ else
   sleep "$MIN_WAIT"
 fi
 
-# Settle: two identical grim captures in a row. The cursor blink is disabled in kitty.conf;
-# without that, a frame is rarely stable.
+# Settle: three identical grim captures in a row, with a 50 ms gap. The cursor blink is
+# disabled in kitty.conf. Without that setting, a frame is rarely stable.
 settle() {
   local stable=0
   local prev=""
-  for _ in $(seq 1 $((SETTLE_TIMEOUT * 100))); do
+  for _ in $(seq 1 $((SETTLE_TIMEOUT * 20))); do
     grim -o "$OUTPUT" "$WORK/settle.png" 2>/dev/null || true
     if [ -s "$WORK/settle.png" ]; then
       local cur
       cur=$(sha256sum "$WORK/settle.png" | cut -d' ' -f1)
       if [ "$cur" = "$prev" ]; then
         stable=$((stable + 1))
-        [ "$stable" -ge 2 ] && return 0
+        [ "$stable" -ge 3 ] && return 0
       else
         stable=0
         prev=$cur
       fi
     fi
-    sleep 0.01
+    sleep 0.05
   done
   echo "[record-tui] warning: no stable frame within ${SETTLE_TIMEOUT}s" >&2
   return 0
@@ -279,8 +279,10 @@ if [ -n "$TYPE_TEXT" ]; then
   done
   [ -S "$KITTY_SOCKET" ] || die "kitty did not create its remote-control socket: $KITTY_SOCKET"
   kitten @ --to "unix:$KITTY_SOCKET" send-text "$TYPE_TEXT"
-  # Let the line editor consume the text before Return; zle otherwise misses the key.
-  sleep 0.1
+  # Let the line editor consume the text before Return. A fixed sleep is too short on a slow
+  # CI runner: the line editor drops Return while it still processes the text.
+  settle
+  sleep 0.05
   kitten @ --to "unix:$KITTY_SOCKET" send-key Return
   if [ -n "$TYPE_WAIT_FOR" ]; then
     # The command writes this marker when it finishes. Wait for the marker before the fixed
