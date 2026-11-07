@@ -24,6 +24,9 @@
 #   --type TEXT           after the window is ready, type TEXT and press Return; the capture
 #                         then shows the prompt after that command (wtype sends the keys)
 #   --type-wait SEC       wait after typing before the stable-frame capture (default 2)
+#   --settle-before-type
+#                         wait for a stable frame before typing, so the first keys do not
+#                         arrive while the shell is still initializing
 #   --wait-for-after-type FILE
 #                         After Return, wait for this file. The command writes the file. Wait
 #                         for it before --type-wait starts. Then the capture shows the finished
@@ -42,6 +45,7 @@ KITTY_CONF=""
 TYPE_TEXT=""
 TYPE_WAIT="2"
 TYPE_WAIT_FOR=""
+SETTLE_BEFORE_TYPE="0"
 MIN_WAIT="1.5"
 SETTLE_TIMEOUT="15"
 WAIT_FOR=""
@@ -62,6 +66,7 @@ while [ $# -gt 0 ]; do
     --type) TYPE_TEXT="$2"; shift 2 ;;
     --type-wait) TYPE_WAIT="$2"; shift 2 ;;
     --wait-for-after-type) TYPE_WAIT_FOR="$2"; shift 2 ;;
+    --settle-before-type) SETTLE_BEFORE_TYPE="1"; shift ;;
     --resize) RESIZES+=("$2"); shift 2 ;;
     --min-wait) MIN_WAIT="$2"; shift 2 ;;
     --settle-timeout) SETTLE_TIMEOUT="$2"; shift 2 ;;
@@ -234,6 +239,36 @@ else
   sleep "$MIN_WAIT"
 fi
 
+# Settle: two identical grim captures in a row. The cursor blink is disabled in kitty.conf;
+# without that, a frame is rarely stable.
+settle() {
+  local stable=0
+  local prev=""
+  for _ in $(seq 1 $((SETTLE_TIMEOUT * 100))); do
+    grim -o "$OUTPUT" "$WORK/settle.png" 2>/dev/null || true
+    if [ -s "$WORK/settle.png" ]; then
+      local cur
+      cur=$(sha256sum "$WORK/settle.png" | cut -d' ' -f1)
+      if [ "$cur" = "$prev" ]; then
+        stable=$((stable + 1))
+        [ "$stable" -ge 2 ] && return 0
+      else
+        stable=0
+        prev=$cur
+      fi
+    fi
+    sleep 0.01
+  done
+  echo "[record-tui] warning: no stable frame within ${SETTLE_TIMEOUT}s" >&2
+  return 0
+}
+
+if [ -n "$TYPE_TEXT" ] && [ "$SETTLE_BEFORE_TYPE" = "1" ]; then
+  # The shell may still draw its first prompt. A stable frame here means the first keys cannot
+  # arrive while the shell initializes.
+  settle
+fi
+
 if [ -n "$TYPE_TEXT" ]; then
   # Type through kitty's remote-control socket instead of the compositor's virtual keyboard:
   # wtype loses the first key event while the window gains focus, which silently changed
@@ -259,27 +294,6 @@ if [ -n "$TYPE_TEXT" ]; then
   sleep "$TYPE_WAIT"
 fi
 
-# Settle: two identical grim captures in a row. The cursor blink is disabled in kitty.conf;
-# without that, a frame is rarely stable.
-stable=0
-prev=""
-for _ in $(seq 1 $((SETTLE_TIMEOUT * 100))); do
-  grim -o "$OUTPUT" "$WORK/settle.png" 2>/dev/null || true
-  if [ -s "$WORK/settle.png" ]; then
-    cur=$(sha256sum "$WORK/settle.png" | cut -d' ' -f1)
-    if [ "$cur" = "$prev" ]; then
-      stable=$((stable + 1))
-      [ "$stable" -ge 2 ] && break
-    else
-      stable=0
-      prev=$cur
-    fi
-  fi
-  sleep 0.01
-done
-if [ "$stable" -lt 2 ]; then
-  echo "[record-tui] warning: no stable frame within ${SETTLE_TIMEOUT}s" >&2
-fi
 
 # ---- capture ----
 n=0
