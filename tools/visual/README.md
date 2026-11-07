@@ -1,5 +1,7 @@
 # Visual render check
 
+[中文](README.zh.md)
+
 The render check runs `p11k` in a real kitty terminal. The terminal runs in a headless sway
 compositor. The check compares the captured pixels with committed reference frames. The proxy
 tests answer a different question. They ask "what bytes did the engine write". This check asks
@@ -62,14 +64,16 @@ one stash, one staged change, one unstaged change and one untracked file. `prepa
 both repositories, the fixed HOME and the launcher scripts once. This step occurs before the
 parallel tests start.
 
-Each frame is a pixel-exact snapshot that a person reviewed. Any pixel difference fails the
-check. The shells paint the same header. Their input line, echo and redraw behaviour differ. A
-shared frame would therefore fail for the shells that did not produce it. A screenshot of a
-correct prompt is the baseline. There is no hand-written expected rendering.
+Each frame is a snapshot that a person reviewed. The comparison ignores antialiased pixels and
+color differences of 1% or less. A difference in layout, text, color or position is larger than
+that and fails the check. The shells paint the same header. Their input line, echo and redraw
+behaviour differ. A shared frame would therefore fail for the shells that did not produce it. A
+screenshot of a correct prompt is the baseline. There is no hand-written expected rendering.
 
 The check compares decoded pixels. A PNG file comparison would also compare the encoder and the
-metadata. Those items do not affect the screen. `compare.sh` uses the ImageMagick AE metric. It
-reports the number of different pixels.
+metadata. Those items do not affect the screen. `compare.sh` runs `odiff --aa --threshold 0.01`.
+The comparison ignores antialiased pixels and small color differences. It reports the number of
+different pixels.
 
 References are per architecture (`expected/x86_64-linux/`, `expected/aarch64-linux/`). The font
 raster can differ between architectures.
