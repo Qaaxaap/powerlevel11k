@@ -22,15 +22,12 @@ capture_and_compare() {
   # The command writes this marker after `sleep 1` returns. The recorder waits for the marker
   # before --type-wait starts. The capture then occurs after the command finished. It does not
   # occur while the command still runs.
-  local marker="$out/$frame/command-done"
+  # The path is fixed and environment-independent: the same command text reaches every shell,
+  # and the input line reads the same on a local run and on CI. `echo done` gives the command
+  # an output object, so pwsh does not open the interactive Write-Output prompt.
+  local marker="/tmp/p11k-visual-$frame-done"
   rm -f "$marker"
-  export P11K_VISUAL_READY="$marker"
-  local command
-  if [ "$shell" = "pwsh" ]; then
-    command='sleep 1; echo > $env:P11K_VISUAL_READY'
-  else
-    command='sleep 1; echo > "$P11K_VISUAL_READY"'
-  fi
+  local command="sleep 1; echo done > $marker"
   # Pwsh starts slower than the other shells. Give it one more second before the stability
   # check starts. The prompt and the input echo are then on screen.
   local min_wait=0.7

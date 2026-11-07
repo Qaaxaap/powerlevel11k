@@ -289,7 +289,11 @@ if [ -n "$TYPE_TEXT" ]; then
       [ -e "$TYPE_WAIT_FOR" ] && break
       sleep 0.01
     done
-    [ -e "$TYPE_WAIT_FOR" ] || die "command marker did not appear: $TYPE_WAIT_FOR"
+    if [ ! -e "$TYPE_WAIT_FOR" ]; then
+      # Keep the frame for diagnosis: the caller uploads the capture directory when a run fails.
+      grim -o "$OUTPUT" "$OUT/command-timeout.png" 2>/dev/null || true
+      die "command marker did not appear: $TYPE_WAIT_FOR"
+    fi
   fi
   sleep "$TYPE_WAIT"
 fi
