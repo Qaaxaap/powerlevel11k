@@ -46,10 +46,23 @@ allow = [
 ]
 
 [bans]
-multiple-versions = "warn"
+multiple-versions = "deny"
 wildcards = "deny"
 # The workspace crates are private and depend on each other by path only.
 allow-wildcard-paths = true
+# Two dependency trees pin an old major version of a shared crate, and no release moves them to
+# the version the rest of the graph uses:
+# - syn 2: derive_more 2.1.1 (dev-dependency chain through iai-callgrind) and thiserror 1
+#   (through filedescriptor/portable-pty) require syn 2. clap_derive and serde_derive use
+#   syn 3.
+# - unicode-width 0.1: miette 7.6.0 (through kdl 6.7.1) requires unicode-width 0.1, while the
+#   engine uses unicode-width 0.2 directly.
+# The ranges keep the exception to the old major version. A new duplicate in either crate, or a
+# duplicate of another crate, still fails the check.
+skip = [
+  { name = "syn", version = "^2" },
+  { name = "unicode-width", version = "^0.1" },
+]
 
 [sources]
 unknown-registry = "deny"
