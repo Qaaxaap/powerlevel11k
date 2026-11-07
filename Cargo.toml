@@ -16,6 +16,7 @@ libc = "0.2"
 git2 = "0.21"
 portable-pty = "0.9"
 unicode-width = "0.2"
+insta = "1"
 
 [profile.release]
 opt-level = 3

@@ -25,5 +25,6 @@ unicode-width = { workspace = true }
 [dev-dependencies]
 # Integration tests: run the engine binary in a pty and assert the passthrough and the prompt
 # output.
+insta = { workspace = true }
 libc = { workspace = true }
 portable-pty = { workspace = true }
