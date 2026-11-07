@@ -24,6 +24,10 @@
 #   --type TEXT           after the window is ready, type TEXT and press Return; the capture
 #                         then shows the prompt after that command (wtype sends the keys)
 #   --type-wait SEC       wait after typing before the stable-frame capture (default 2)
+#   --wait-for-after-type FILE
+#                         after Return, wait for this file (written by the command) before
+#                         starting --type-wait; the wait shows the finished command, not a frame
+#                         in the middle of it
 #   --min-wait SEC        minimum wait after the window appears (default 1.5)
 #   --settle-timeout SEC  upper bound for the stable-frame and window waits (default 15)
 #   --wait-for FILE       wait for the TUI's ready marker instead of the minimum wait
@@ -37,6 +41,7 @@ TITLE="tui"
 KITTY_CONF=""
 TYPE_TEXT=""
 TYPE_WAIT="2"
+TYPE_WAIT_FOR=""
 MIN_WAIT="1.5"
 SETTLE_TIMEOUT="15"
 WAIT_FOR=""
@@ -56,6 +61,7 @@ while [ $# -gt 0 ]; do
     --kitty-conf) KITTY_CONF="$2"; shift 2 ;;
     --type) TYPE_TEXT="$2"; shift 2 ;;
     --type-wait) TYPE_WAIT="$2"; shift 2 ;;
+    --wait-for-after-type) TYPE_WAIT_FOR="$2"; shift 2 ;;
     --resize) RESIZES+=("$2"); shift 2 ;;
     --min-wait) MIN_WAIT="$2"; shift 2 ;;
     --settle-timeout) SETTLE_TIMEOUT="$2"; shift 2 ;;
@@ -241,6 +247,15 @@ if [ -n "$TYPE_TEXT" ]; then
   # Let the line editor consume the text before Return; zle otherwise misses the key.
   sleep 0.1
   kitten @ --to "unix:$KITTY_SOCKET" send-key Return
+  if [ -n "$TYPE_WAIT_FOR" ]; then
+    # The command writes this marker when it finishes; wait for that before the fixed
+    # TYPE_WAIT, so the capture is taken after the command completed.
+    for _ in $(seq 1 $((SETTLE_TIMEOUT * 100))); do
+      [ -e "$TYPE_WAIT_FOR" ] && break
+      sleep 0.01
+    done
+    [ -e "$TYPE_WAIT_FOR" ] || die "command marker did not appear: $TYPE_WAIT_FOR"
+  fi
   sleep "$TYPE_WAIT"
 fi
 
