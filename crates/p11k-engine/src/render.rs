@@ -2988,6 +2988,7 @@ mod tests {
             exit_code: code,
             cwd: cwd.to_string(),
             exec_seconds: 0.0,
+            exec_ms: None,
             jobs: 0,
             history: 0,
             pipestatus: Vec::new(),
@@ -3387,6 +3388,7 @@ mod tests {
             cfg.segments.insert("command_execution_time".into(), e);
             let i = HeaderInfo {
                 exec_seconds: 3.5,
+                exec_ms: None,
                 ..info("/tmp", None)
             };
             render_header_lines(&cfg, &i, None, 80).join("\n")
@@ -4891,6 +4893,7 @@ mod tests {
             exit_code: Some(9),
             cwd: "/srv/p11k/golden/repo".into(),
             exec_seconds: 12.5,
+            exec_ms: None,
             jobs: 2,
             history: 5,
             pipestatus: vec![1, 0],

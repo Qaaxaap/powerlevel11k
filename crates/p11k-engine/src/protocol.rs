@@ -5,7 +5,9 @@ use crate::theme::HeaderInfo;
 
 /// Announce messages: drawing the prompt window and resize.
 pub enum AnnMsg {
-    /// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`: precmd announce, draws the header.
+    /// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>][\t<pipestatus>][\t<exec_ms>]`: precmd
+    /// announce, draws the header. `<pipestatus>` is the pipeline status string; `<exec_ms>` is
+    /// the shell's own command duration in milliseconds.
     Header(HeaderInfo),
     /// `r`: resize announce (zsh's TRAPWINCH, bash's trap WINCH, fish's `--on-signal
     /// WINCH`, pwsh compares the window size inside prompt); resize the pty + repaint.
@@ -17,10 +19,11 @@ pub enum AnnMsg {
 
 /// Read pending lines from the announce FIFO and parse them into prompt messages.
 /// Line format (first field is the message type, the rest are tab-separated):
-/// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>]`, `r`, `v\t<keymap>`.
+/// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>][\t<pipestatus>][\t<exec_ms>]`, `r`, `v\t<keymap>`.
 /// Missing fields are tolerated: a failed `<exit>` parse is None, a missing `<cwd>` is an
 /// empty string, missing or invalid `<jobs>`/`<history>` are 0. Only zsh and pwsh send
-/// `<history>`; bash/fish have no such column.
+/// `<history>`; bash/fish have no such column. `<exec_ms>` is the shell's own command
+/// duration; when absent the engine uses its Enter → precmd timing.
 ///
 /// The caller waits for the FIFO to become readable with poll, so one drain takes everything
 /// that is buffered and returns. A read can end in the middle of a line: the partial line stays
@@ -105,10 +108,14 @@ fn parse_announce_lines(buf: &[u8]) -> Vec<AnnMsg> {
                             .collect()
                     })
                     .unwrap_or_default();
+                // Optional field: milliseconds measured by the shell itself. A missing or
+                // invalid field falls back to the engine's Enter → precmd timing.
+                let exec_ms = parts.next().and_then(|s| s.trim().parse::<u64>().ok());
                 out.push(AnnMsg::Header(HeaderInfo {
                     exit_code: code,
                     cwd,
-                    exec_seconds: 0.0, // filled in by the main loop from last_enter
+                    exec_seconds: 0.0, // filled in by the main loop from exec_ms or last_enter
+                    exec_ms,
                     jobs,
                     history,
                     pipestatus,
@@ -323,6 +330,25 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert!(matches!(msgs[0], AnnMsg::Header(_)));
         assert!(pending.is_empty());
+    }
+
+    /// The optional trailing field carries the shell's own measurement in milliseconds.
+    #[test]
+    fn announce_reads_the_shell_measured_duration() {
+        let mut pending = Vec::new();
+        let msgs = push_announce(&mut pending, b"h\t0\t/tmp\t0\t1\t0\t1234\n");
+        assert_eq!(msgs.len(), 1);
+        let AnnMsg::Header(info) = &msgs[0] else {
+            panic!("expected a header announce");
+        };
+        assert_eq!(info.exec_ms, Some(1234));
+
+        let mut pending = Vec::new();
+        let msgs = push_announce(&mut pending, b"h\t0\t/tmp\n");
+        let AnnMsg::Header(info) = &msgs[0] else {
+            panic!("expected a header announce");
+        };
+        assert_eq!(info.exec_ms, None);
     }
 
     /// A writer that never finishes a line must not grow the buffer without bound.
