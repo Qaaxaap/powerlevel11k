@@ -6,6 +6,11 @@
 # every shell that produced it from a different shell. The comparison decodes the PNG images; a
 # file hash would also cover the encoder and the metadata, which do not affect the screen.
 #
+# `odiff --aa` ignores antialiased pixels. The hints and the raster rounding of the GPU and the
+# CPU can differ between machines by one color level at glyph edges; those pixels are not a
+# rendering defect. `--threshold 0.01` ignores a color difference that is 1% or less; a layout,
+# text, color or position difference is larger and fails.
+#
 # Usage:
 #   compare.sh --out DIR [--expected DIR] --frames "zsh-700x450 bash-700x450" [--update]
 #
@@ -35,7 +40,7 @@ while [ $# -gt 0 ]; do
     --expected) EXPECTED="$2"; shift 2 ;;
     --frames) FRAMES="$2"; shift 2 ;;
     --update) UPDATE="1"; shift ;;
-    -h|--help) sed -n '2,20p' "${BASH_SOURCE[0]}" | sed -n '/^#/s/^# \{0,1\}//p'; exit 0 ;;
+    -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed -n '/^#/s/^# \{0,1\}//p'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -46,41 +51,55 @@ done
 EXPECTED_DIR="$EXPECTED/$P11K_VISUAL_ARCH"
 mkdir -p "$EXPECTED_DIR"
 
-# `magick compare -metric AE` exits 0 when the images are equal and 1 when they differ; the AE
-# metric on stderr is the number of differing pixels. Any other outcome (unreadable file,
-# mismatched sizes) is a comparison error, not a rendering difference.
-ae_metric() {
-  local a=$1 b=$2
-  if metric=$(magick compare -metric AE "$a" "$b" null: 2>&1); then
+# Run odiff for one frame. The exit code is the result: 0 means the frame matches, 22 means
+# pixel differences, and 21 means the image dimensions differ. Any other code is an error.
+# With --parsable-stdout, a pixel difference prints "<different pixels>;<percentage>".
+compare_frame() {
+  local frame=$1
+  local actual="$OUT/$frame/p11k-$frame-000.png"
+  local reference="$EXPECTED_DIR/$frame.png"
+  if [ ! -f "$actual" ]; then
+    echo "compare: missing capture for $frame: $actual" >&2
+    return 2
+  fi
+  if [ ! -f "$reference" ]; then
+    echo "compare: missing reference for $frame: $reference" >&2
+    echo "compare: run with --update, review the image, then commit it" >&2
+    return 2
+  fi
+  local out rc
+  if out=$(odiff --aa --threshold 0.01 --fail-on-layout --parsable-stdout \
+    --diff-color '#ff0000' "$actual" "$reference" "$OUT/diff-$frame.png" 2>&1); then
     rc=0
   else
     rc=$?
   fi
-  # AE prints "<absolute> (<normalized>)". The absolute part can carry a fractional part when
-  # the images have an alpha channel; the integer part is the differing pixel count.
-  raw="$metric"
-  metric=${raw%% *}
-  case "$metric" in
-    ''|*[!0-9.]*)
-      die "comparison failed for $a and $b: $raw"
+  case "$rc" in
+    0)
+      echo "compare: $frame ok"
+      return 0
+      ;;
+    22)
+      local pixels=${out%%;*}
+      case "$pixels" in
+        ''|*[!0-9]*) pixels=$out ;;
+      esac
+      echo "compare: $frame differs by $pixels pixels" >&2
+      if [ ! -s "$OUT/diff-$frame.png" ]; then
+        echo "compare: $frame: the diff image was not written to $OUT/diff-$frame.png" >&2
+        return 2
+      fi
+      return 1
+      ;;
+    21)
+      echo "compare: $frame: the layout differs, the image dimensions do not match" >&2
+      return 1
+      ;;
+    *)
+      echo "compare: $frame: the comparison failed (exit $rc): $out" >&2
+      return 2
       ;;
   esac
-  metric=${metric%%.*}
-  case "$metric" in
-    ''|*[!0-9]*)
-      die "comparison failed for $a and $b: $raw"
-      ;;
-  esac
-  if [ "$rc" != "0" ] && [ "$rc" != "1" ]; then
-    die "comparison failed for $a and $b (exit $rc, metric $raw)"
-  fi
-  if [ "$rc" = "0" ] && [ "$metric" != "0" ]; then
-    die "inconsistent result for $a and $b: exit 0 with $raw differing pixels"
-  fi
-  if [ "$rc" = "1" ] && [ "$metric" = "0" ]; then
-    die "inconsistent result for $a and $b: exit 1 with $raw differing pixels"
-  fi
-  printf '%s' "$metric"
 }
 
 if [ "$UPDATE" = "1" ]; then
@@ -95,47 +114,11 @@ fi
 
 status=0
 for frame in $FRAMES; do
-  actual="$OUT/$frame/p11k-$frame-000.png"
-  reference="$EXPECTED_DIR/$frame.png"
-  if [ ! -f "$actual" ]; then
-    echo "compare: missing capture for $frame: $actual" >&2
-    status=1
-    continue
-  fi
-  if [ ! -f "$reference" ]; then
-    echo "compare: missing reference for $frame: $reference" >&2
-    echo "compare: run with --update, review the image, then commit it" >&2
-    status=1
-    continue
-  fi
-  metric=$(ae_metric "$actual" "$reference")
-  if [ "$metric" = "0" ]; then
-    echo "compare: $frame ok"
-    continue
-  fi
-  echo "compare: $frame differs by $metric pixels" >&2
-  diff="$OUT/diff-$frame.png"
-  if magick compare "$actual" "$reference" "$diff" 2>"$OUT/diff-$frame.err"; then
-    echo "compare: $frame: the diff pass returned success after a non-zero AE metric" >&2
-    status=1
-    continue
+  if compare_frame "$frame"; then
+    :
   else
-    diff_rc=$?
-  fi
-  if [ "$diff_rc" != "1" ]; then
-    cat "$OUT/diff-$frame.err" >&2
-    echo "compare: $frame: could not write the diff image (exit $diff_rc)" >&2
     status=1
-    continue
   fi
-  if [ ! -s "$diff" ]; then
-    cat "$OUT/diff-$frame.err" >&2
-    echo "compare: $frame: the diff image was not written to $diff" >&2
-    status=1
-    continue
-  fi
-  rm -f "$OUT/diff-$frame.err"
-  status=1
 done
 
 exit "$status"

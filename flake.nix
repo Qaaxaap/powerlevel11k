@@ -178,7 +178,8 @@
             pkgs.bats
             # `bats --jobs` shells out to GNU parallel.
             pkgs.parallel
-            pkgs.imagemagick
+            # The frame comparison ignores antialiased pixels and small color differences.
+            pkgs.odiff
             pkgs.zsh
             pkgs.bashInteractive
             pkgs.fish
