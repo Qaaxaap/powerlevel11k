@@ -9,12 +9,7 @@ use crate::theme::GitStatus;
 use std::cell::RefCell;
 
 use super::glob::glob_match_path;
-use super::{
-    aws_eb_env_text, current_dir, detect_os_icon, dir_writable_state, dir_writable_text,
-    dropbox_text, env, env_has_proxy, env_var, fvm_text, haskell_stack_text, in_nix_shell,
-    laravel_version_text, level_icon, package_text, per_directory_history_text, rspec_stats_text,
-    taskwarrior_text, todo_text, toolbox_text,
-};
+use super::{detect_os_icon, dir_writable_state};
 
 pub(super) fn icon_by_mode(e: &IconEntry, mode: &crate::config::IconMode) -> String {
     match mode {
@@ -49,7 +44,6 @@ pub(super) const fn icon(n: &'static str, c: &'static str, a: &'static str) -> I
 }
 
 /// Icon name → default chars for the three font tiers.
-/// Segment rendering resolves icon names via [`segment_icon_key`];
 /// users can override them by icon name in the top-level `icon{}`.
 pub(super) fn icon_default(key: &str) -> Option<IconEntry> {
     match key {
@@ -126,81 +120,6 @@ pub(super) fn icon_default(key: &str) -> Option<IconEntry> {
         "ok" => Some(icon("\u{f00c}", "\u{2714}", "ok")),
         "error" => Some(icon("\u{f00d}", "\u{2718}", "err")),
         "branch" => Some(icon("\u{f126}", "@", "")),
-        _ => None,
-    }
-}
-
-/// Segment → the icon name it references by default. Conditional segments (shown only when
-/// the environment allows) evaluate their condition here; unmet → None (no icon, which hides
-/// the segment together with its empty text).
-pub(super) fn segment_icon_key(name: &str) -> Option<&'static str> {
-    match name {
-        "dir" => Some("folder"),
-        "vcs" => Some("git"),
-        "time" => Some("time"),
-        "date" => Some("date"),
-        "command_execution_time" => Some("execution-time"),
-        "symfony2_version" => Some("symfony"),
-        "symfony2_tests" => Some("test"),
-        "background_jobs" => Some("background-jobs"),
-        "go_version" | "goenv" => Some("go"),
-        "rust_version" => Some("rust"),
-        "node_version" | "nodeenv" | "nodenv" | "nvm" => Some("node"),
-        "php_version" | "phpenv" => Some("php"),
-        "java_version" | "jenv" => Some("java"),
-        "dotnet_version" => Some("dotnet"),
-        "terraform_version" | "terraform" => Some("terraform"),
-        "cpu_arch" => Some("cpu-arch"),
-        "virtualenv" | "anaconda" | "pyenv" => Some("python"),
-        "rbenv" | "chruby" | "rvm" => Some("ruby"),
-        "luaenv" => Some("lua"),
-        "plenv" | "perlbrew" => Some("perl"),
-        "scalaenv" => Some("scala"),
-        "load" => Some("load"),
-        "ram" => Some("ram"),
-        "swap" => Some("swap"),
-        "battery" => Some("battery"),
-        "disk_usage" => Some("disk"),
-        "aws" => Some("aws"),
-        "azure" => Some("azure"),
-        "gcloud" | "google_app_cred" => Some("gcloud"),
-        "kubecontext" => Some("kube"),
-        "ip" => Some("network"),
-        "vpn_ip" => Some("vpn"),
-        "wifi" => Some("wifi"),
-        "public_ip" => Some("public-ip"),
-        "toolbox" => (!toolbox_text().is_empty()).then_some("toolbox"),
-        "dir_writable" => (!dir_writable_text(&current_dir()).is_empty()).then_some("lock"),
-        "per_directory_history" => (!per_directory_history_text().is_empty()).then_some("history"),
-        "haskell_stack" => (!haskell_stack_text().is_empty()).then_some("haskell"),
-        "package" => (!package_text(&current_dir()).is_empty()).then_some("package"),
-        "fvm" => (!fvm_text(&current_dir()).is_empty()).then_some("flutter"),
-        "aws_eb_env" => (!aws_eb_env_text().is_empty()).then_some("aws-eb"),
-        "laravel_version" => {
-            (!laravel_version_text(&current_dir()).is_empty()).then_some("laravel")
-        }
-        "rspec_stats" => (!rspec_stats_text(&current_dir()).is_empty()).then_some("test"),
-        "todo" => (!todo_text().is_empty()).then_some("todo"),
-        "taskwarrior" => (!taskwarrior_text().is_empty()).then_some("taskwarrior"),
-        "dropbox" => (!dropbox_text().is_empty()).then_some("dropbox"),
-        // Environment indicator segments: the icon is conditional too; unmet → None.
-        "ssh" => env().ssh.then_some("ssh"),
-        "proxy" => env_has_proxy().then_some("proxy"),
-        "docker_machine" => env_var("DOCKER_MACHINE_NAME").is_some().then_some("server"),
-        "ranger" => level_icon("RANGER_LEVEL", "\u{f00b}")
-            .is_some()
-            .then_some("ranger"),
-        "yazi" => level_icon("YAZI_LEVEL", "\u{f00b}")
-            .is_some()
-            .then_some("yazi"),
-        "nnn" => level_icon("NNNLVL", "nnn").is_some().then_some("nnn"),
-        "lf" => level_icon("LF_LEVEL", "lf").is_some().then_some("lf"),
-        "nix_shell" => in_nix_shell().then_some("nix"),
-        "xplr" => env_var("XPLR_PID").is_some().then_some("xplr"),
-        "midnight_commander" => env_var("MC_TMPDIR").is_some().then_some("mc"),
-        "vim_shell" => env_var("VIMRUNTIME").is_some().then_some("vim"),
-        "direnv" => env_var("DIRENV_DIR").is_some().then_some("direnv"),
-        "chezmoi_shell" => env_var("CHEZMOI").is_some().then_some("chezmoi"),
         _ => None,
     }
 }
@@ -287,7 +206,15 @@ pub(super) fn resolve_icon(
             };
         }
     }
-    let key = segment_icon_key(name)?;
+    // The two special segments keep their icon keys here; every other segment reads the key
+    // from the registry row, so the icon and the text come from one place.
+    if name == "command_execution_time" {
+        return icon_str(config, "execution-time");
+    }
+    if name == "symfony2_tests" {
+        return icon_str(config, "test");
+    }
+    let key = super::registry::find(name)?.icon_key()?;
     icon_str(config, key)
 }
 
@@ -321,25 +248,6 @@ pub(super) fn dir_class_match<'a>(
         .dir_classes
         .iter()
         .find(|c| glob_match_path(&c.pattern, cwd, &home))
-}
-
-/// Segments whose icon is the content: the icon is drawn even with empty text (env
-/// indicators, os badges). For every other segment the icon is decoration, and empty text
-/// hides the whole segment.
-pub(super) fn icon_is_content(name: &str) -> bool {
-    matches!(
-        name,
-        "ssh"
-            | "xplr"
-            | "midnight_commander"
-            | "vim_shell"
-            | "direnv"
-            | "chezmoi_shell"
-            | "os"
-            | "os_icon"
-            // A verbose, successful status is its icon alone (p10k draws `✔` with no text).
-            | "status"
-    )
 }
 
 thread_local! {

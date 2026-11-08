@@ -16,15 +16,10 @@ mod glob;
 pub(crate) use self::glob::workdir_is_disabled;
 mod env;
 mod icons;
+mod registry;
 mod segments;
 mod style;
-pub(crate) use self::env::current_dir;
-use self::env::{
-    battery, context_text, detect_virt, disk_usage, env, env_has_proxy, env_var, host_text,
-    in_nix_shell, ip_text, level_icon, level_text, load, nix_shell_text, openfoam_text, proxy_text,
-    public_ip_text, ram, root_indicator_text, swap, user_name, vpn_ip_text, wifi_text,
-};
-use self::icons::{IconEntry, dir_class_match, icon, icon_is_content, icon_str, resolve_icon};
+use self::icons::{IconEntry, dir_class_match, icon, icon_str, resolve_icon};
 pub use self::segments::display_width_of;
 use self::segments::*;
 pub use self::style::CURRENT_VI_MODE;
@@ -183,6 +178,12 @@ fn render_row(
 
 /// Renders one segment. The returned `text` is already colored ANSI; `style` feeds
 /// inter-segment separators and block backgrounds.
+/// Whether the segment's icon is its content (drawn even with empty text).
+fn icon_is_content(name: &str) -> bool {
+    matches!(name, "os" | "os_icon" | "status")
+        || registry::find(name).is_some_and(|spec| spec.icon_is_content())
+}
+
 fn render_segment(
     config: &Config,
     name: &str,
@@ -202,185 +203,88 @@ fn render_segment(
     // right-column separators misread as "different background" and draw arrows. The
     // `effective_style` inheritance already does this layer; the bg here is the result.
     let has_real_bg = style.bg != Color::Default;
-    let text = match name {
-        "dir" => dir_seg_text(config, info, seg, &style, dir_budget),
-        "vcs" => {
-            let branch = icon_str(config, "branch").unwrap_or_default();
-            let commit = icon_str(config, "commit").unwrap_or_default();
-            if seg.content.is_some() {
-                paint(&value_of(seg.content.as_deref(), String::new()), &style)
-            } else {
-                vcs_text(vcs, &branch, &commit, seg, &style)
-            }
-        }
-        "status" => status_text(info, seg, &style),
-        "prompt_char" => {
-            let state = prompt_state(config, Some(info));
-            style = seg.effective_style(state, &config.defaults);
-            paint(seg.char_for(state, "❯"), &style)
-        }
-        "time" => paint(&time_text(seg), &style),
-        "command_execution_time" => {
-            let threshold = match seg.prop("threshold-seconds") {
-                Some(crate::config::Prop::Int(n)) => (*n as f64).max(0.0),
-                _ => 3.0,
-            };
-            if info.exec_seconds >= threshold {
-                // p10k's PRECISION defaults to 2 decimals and FORMAT to multi-level (with
-                // spaces).
-                let precision = match seg.prop("precision") {
-                    Some(crate::config::Prop::Int(n)) => (*n).clamp(0, 6) as usize,
-                    _ => 2,
-                };
-                let hms = matches!(
-                    seg.prop("format"),
-                    Some(crate::config::Prop::Str(s)) if s == "H:M:S"
-                );
-                paint(&format_duration(info.exec_seconds, precision, hms), &style)
-            } else {
-                paint("", &style)
-            }
-        }
-        "background_jobs" => {
-            if info.jobs > 0 {
-                paint(&info.jobs.to_string(), &style)
-            } else {
-                paint("", &style)
-            }
-        }
-        "context" => paint(&context_text(), &style),
-        "user" => paint(&user_name(), &style),
-        "host" => paint(&host_text(), &style),
-        "root_indicator" => paint(&root_indicator_text(), &style),
-        "date" => paint(&date_text(seg), &style),
-        "symfony2_version" => paint(&symfony2_version_text(&info.cwd), &style),
-        // p10k symfony2_tests: the test ratio selects the GOOD/AVG/BAD state
-        // (p10k's internal default colors cyan/yellow/red = 6/3/1).
-        "symfony2_tests" => {
-            let text = symfony2_tests_text(&info.cwd);
-            if text.is_empty() {
-                paint("", &style)
-            } else {
-                let pct: f64 = text
-                    .trim_start_matches("SF2: ")
-                    .trim_end_matches('%')
-                    .parse()
-                    .unwrap_or(0.0);
-                let (state, default_fg) = if pct >= 75.0 {
-                    ("GOOD", 6u8)
-                } else if pct >= 50.0 {
-                    ("AVG", 3)
+    let text = if let Some(spec) = registry::find(name) {
+        paint(&spec.plain_text(info, seg), &style)
+    } else {
+        match name {
+            "dir" => dir_seg_text(config, info, seg, &style, dir_budget),
+            "vcs" => {
+                let branch = icon_str(config, "branch").unwrap_or_default();
+                let commit = icon_str(config, "commit").unwrap_or_default();
+                if seg.content.is_some() {
+                    paint(&value_of(seg.content.as_deref(), String::new()), &style)
                 } else {
-                    ("BAD", 1)
-                };
-                let st = if seg.states.contains_key(state) {
-                    seg.effective_style(Some(state), &config.defaults)
-                } else {
-                    Style {
-                        fg: Color::Xterm(default_fg),
-                        ..style.clone()
-                    }
-                };
-                paint(&text, &st)
+                    vcs_text(vcs, &branch, &commit, seg, &style)
+                }
             }
-        }
-        // Toolchain version segments: run `cmd --version` and parse the version; shown only
-        // when the command exists.
-        "go_version" => paint(&go_version(), &style),
-        "rust_version" => paint(&rust_version(), &style),
-        "node_version" => paint(&node_version(), &style),
-        "php_version" => paint(&php_version(), &style),
-        "java_version" => paint(&java_version(), &style),
-        "dotnet_version" => paint(&dotnet_version(), &style),
-        "swift_version" => paint(&swift_version(), &style),
-        "terraform_version" => paint(&terraform_version(), &style),
-        "cpu_arch" => paint(&cpu_arch(), &style),
-        // Environment managers and the *env family: read env vars or ancestor version files;
-        // shown only when active.
-        "virtualenv" => paint(&virtualenv_text(&info.cwd), &style),
-        "anaconda" => paint(&anaconda_text(&info.cwd), &style),
-        "pyenv" => paint(&pyenv_text(&info.cwd), &style),
-        "nodeenv" => paint(&nodeenv_text(&info.cwd), &style),
-        "nodenv" => paint(&nodenv_text(&info.cwd), &style),
-        "nvm" => paint(&nvm_text(&info.cwd), &style),
-        "rbenv" => paint(&rbenv_text(&info.cwd), &style),
-        "chruby" => paint(&chruby_text(&info.cwd), &style),
-        "rvm" => paint(&rvm_text(&info.cwd), &style),
-        "goenv" => paint(&goenv_text(&info.cwd), &style),
-        "jenv" => paint(&jenv_text(&info.cwd), &style),
-        "phpenv" => paint(&phpenv_text(&info.cwd), &style),
-        "luaenv" => paint(&luaenv_text(&info.cwd), &style),
-        "plenv" => paint(&plenv_text(&info.cwd), &style),
-        "scalaenv" => paint(&scalaenv_text(&info.cwd), &style),
-        "perlbrew" => paint(&perlbrew_text(&info.cwd), &style),
-        // System resource segments: read /proc, /sys or df; hidden when the data source is
-        // missing.
-        "load" => paint(&load(), &style),
-        "ram" => paint(&ram(), &style),
-        "swap" => paint(&swap(), &style),
-        "disk_usage" => paint(&disk_usage(&info.cwd), &style),
-        "battery" => paint(&battery(), &style),
-        // Cloud/k8s segments: read cloud config or env vars; hidden when the config is
-        // missing.
-        "aws" => paint(&aws_text(), &style),
-        "azure" => paint(&azure_text(), &style),
-        "gcloud" => paint(&gcloud_text(), &style),
-        "kubecontext" => paint(&kubecontext_text(&info.cwd), &style),
-        "terraform" => paint(&terraform_text(&info.cwd), &style),
-        // Network segments: local IP/VPN/WiFi (synchronous), public IP (async query cache).
-        "ip" => paint(&ip_text(), &style),
-        "vpn_ip" => paint(&vpn_ip_text(), &style),
-        "wifi" => paint(&wifi_text(), &style),
-        "public_ip" => paint(&public_ip_text(), &style),
-        // Remaining: virtualization / container / dir permissions / history scope / language
-        // stacks / package managers.
-        "detect_virt" => paint(&detect_virt(), &style),
-        "toolbox" => paint(&toolbox_text(), &style),
-        "dir_writable" => paint(&dir_writable_text(&info.cwd), &style),
-        "per_directory_history" => paint(&per_directory_history_text(), &style),
-        "haskell_stack" => paint(&haskell_stack_text(), &style),
-        "package" => paint(&package_text(&info.cwd), &style),
-        "asdf" => paint(&asdf_text(&info.cwd), &style),
-        "fvm" => paint(&fvm_text(&info.cwd), &style),
-        // Cloud sub-segments / frameworks / todos: shown only when the command exists or a
-        // file matches.
-        "google_app_cred" => paint(&google_app_cred_text(), &style),
-        "aws_eb_env" => paint(&aws_eb_env_text(), &style),
-        "laravel_version" => paint(&laravel_version_text(&info.cwd), &style),
-        "rspec_stats" => paint(&rspec_stats_text(&info.cwd), &style),
-        "todo" => paint(&todo_text(), &style),
-        "taskwarrior" => paint(&taskwarrior_text(), &style),
-        "dropbox" => paint(&dropbox_text(), &style),
-        // Environment indicator segments: content comes from env vars; an unmet condition →
-        // empty text + no icon (the default is given per condition) and the whole segment is
-        // hidden.
-        "ssh" | "xplr" | "midnight_commander" | "vim_shell" | "direnv" | "chezmoi_shell" => {
-            paint("", &style)
-        }
-        "proxy" => paint(&proxy_text(), &style),
-        "docker_machine" => paint(&env_var("DOCKER_MACHINE_NAME").unwrap_or_default(), &style),
-        "openfoam" => paint(&openfoam_text(), &style),
-        "ranger" => paint(&level_text("RANGER_LEVEL"), &style),
-        "yazi" => paint(&level_text("YAZI_LEVEL"), &style),
-        "nnn" => paint(&level_text("NNNLVL"), &style),
-        "lf" => paint(&level_text("LF_LEVEL"), &style),
-        "nix_shell" => paint(&nix_shell_text(), &style),
-        "history" => paint(&info.history.to_string(), &style),
-        "vi_mode" => paint(&vi_mode_text(seg), &style),
-        // p10k looks up `prompt_<name>` and has no fallback: an unknown segment renders
-        // nothing, so its configured content is ignored too. The icon-only segments (`os`,
-        // `os_icon`) have no match arm and no text; keep the empty text so that the icon logic
-        // below draws their visual identifier.
-        _ => {
-            if icon_is_content(name) {
-                paint("", &style)
-            } else {
-                return SegmentText {
-                    text: String::new(),
-                    style,
-                    padded: false,
-                    joined_left,
+            "status" => status_text(info, seg, &style),
+            "prompt_char" => {
+                let state = prompt_state(config, Some(info));
+                style = seg.effective_style(state, &config.defaults);
+                paint(seg.char_for(state, "❯"), &style)
+            }
+            "command_execution_time" => {
+                let threshold = match seg.prop("threshold-seconds") {
+                    Some(crate::config::Prop::Int(n)) => (*n as f64).max(0.0),
+                    _ => 3.0,
                 };
+                if info.exec_seconds >= threshold {
+                    // p10k's PRECISION defaults to 2 decimals and FORMAT to multi-level (with
+                    // spaces).
+                    let precision = match seg.prop("precision") {
+                        Some(crate::config::Prop::Int(n)) => (*n).clamp(0, 6) as usize,
+                        _ => 2,
+                    };
+                    let hms = matches!(
+                        seg.prop("format"),
+                        Some(crate::config::Prop::Str(s)) if s == "H:M:S"
+                    );
+                    paint(&format_duration(info.exec_seconds, precision, hms), &style)
+                } else {
+                    paint("", &style)
+                }
+            }
+            "symfony2_tests" => {
+                let text = symfony2_tests_text(&info.cwd);
+                if text.is_empty() {
+                    paint("", &style)
+                } else {
+                    let pct: f64 = text
+                        .trim_start_matches("SF2: ")
+                        .trim_end_matches('%')
+                        .parse()
+                        .unwrap_or(0.0);
+                    let (state, default_fg) = if pct >= 75.0 {
+                        ("GOOD", 6u8)
+                    } else if pct >= 50.0 {
+                        ("AVG", 3)
+                    } else {
+                        ("BAD", 1)
+                    };
+                    let st = if seg.states.contains_key(state) {
+                        seg.effective_style(Some(state), &config.defaults)
+                    } else {
+                        Style {
+                            fg: Color::Xterm(default_fg),
+                            ..style.clone()
+                        }
+                    };
+                    paint(&text, &st)
+                }
+            }
+            // Toolchain version segments: run `cmd --version` and parse the version; shown only
+            // when the command exists.
+            _ => {
+                if icon_is_content(name) {
+                    paint("", &style)
+                } else {
+                    return SegmentText {
+                        text: String::new(),
+                        style,
+                        padded: false,
+                        joined_left,
+                    };
+                }
             }
         }
     };
