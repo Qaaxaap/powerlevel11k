@@ -193,3 +193,81 @@ fn a_closed_stdout_exits_quietly() {
         "a closed response pipe means the shell exited"
     );
 }
+
+// ---- Boundary cases: malformed messages, half messages, options, non-repos ----
+
+/// A malformed request is caught and logged; the daemon keeps serving the next request.
+#[test]
+fn malformed_request_keeps_the_daemon_serving() {
+    let (mut child, mut stdin, mut stdout) = spawn(&[]);
+    // Missing dir field: parse_request panics (the original's VERIFY) and the panic is caught.
+    stdin.write_all(b"garbage\x1e").unwrap();
+    // Too many fields: a second malformed shape.
+    stdin.write_all(b"bad\x1f\x1f1\x1fextra\x1e").unwrap();
+    // A valid non-repo request after the bad ones must still get an answer.
+    stdin.write_all(b"ok\x1f\x1e").unwrap();
+    stdin.flush().unwrap();
+    let resp = read_exact(&mut stdout, 5);
+    assert_eq!(
+        resp, b"ok\x1f0\x1e",
+        "the daemon must keep serving after a panic"
+    );
+    drop(stdin);
+    let status = child.wait().unwrap();
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "EOF after bad requests still exits 0"
+    );
+}
+
+/// Half a message followed by EOF is a shell that went away: exit 0 without a panic.
+#[test]
+fn half_message_then_eof_exits_zero() {
+    let (mut child, mut stdin, _stdout) = spawn(&[]);
+    stdin.write_all(b"id\x1f/tmp").unwrap();
+    stdin.flush().unwrap();
+    drop(stdin);
+    let status = wait_or_kill(&mut child, Duration::from_secs(5));
+    assert_eq!(status.code(), Some(0));
+}
+
+/// A request for a directory that does not exist is a non-repo answer, like an empty dir.
+#[test]
+fn nonexistent_dir_returns_non_repo() {
+    let (mut child, mut stdin, mut stdout) = spawn(&[]);
+    stdin.write_all(b"id\x1f/nonexistent-p11k-dir\x1e").unwrap();
+    stdin.flush().unwrap();
+    let resp = read_exact(&mut stdout, 5);
+    assert_eq!(resp, b"id\x1f0\x1e");
+    drop(stdin);
+    child.wait().unwrap();
+}
+
+/// Option values: invalid values are exit 10; valid ones start the daemon and EOF exits 0.
+#[test]
+fn option_values_are_validated() {
+    for bad in [["-t", "0"], ["-l", "notanint"], ["-r", "notanint"]] {
+        let status = Command::new(env!("CARGO_BIN_EXE_p11k-d"))
+            .args(bad)
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(10), "bad option {bad:?} must exit 10");
+    }
+    for good in [vec!["-t", "4"], vec!["-r", "-1"], vec!["-l", "3"]] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_p11k-d"))
+            .args(&good)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        drop(child.stdin.take());
+        let status = wait_or_kill(&mut child, Duration::from_secs(5));
+        assert_eq!(
+            status.code(),
+            Some(0),
+            "valid option {good:?} must exit 0 on EOF"
+        );
+    }
+}

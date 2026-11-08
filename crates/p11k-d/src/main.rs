@@ -14,7 +14,7 @@
 //! | Code | Meaning |
 //! |---|---|
 //! | 0 | Normal (EOF / liveness failed), or the shell closed the response pipe |
-//! | 1 | A request panicked, or a response could not be written |
+//! | 1 | A response could not be written (a request panic is caught, logged and skipped) |
 //! | 10 | Bad arguments |
 //! | 11 | `-G` version mismatch |
 

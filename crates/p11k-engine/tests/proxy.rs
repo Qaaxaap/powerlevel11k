@@ -241,6 +241,36 @@ impl Drop for Tmux {
     }
 }
 
+/// Wait until two consecutive pane captures are equal. A repaint that is still in flight when a
+/// case starts asserting would land between the setup and the capture; a fixed sleep guesses how
+/// long it takes. The timeout bounds the wait, and a still-changing screen returns the last frame.
+fn screen_settled(master: &Tmux, timeout: Duration) -> String {
+    let start = Instant::now();
+    let mut prev = master.screen();
+    loop {
+        std::thread::sleep(Duration::from_millis(20));
+        let cur = master.screen();
+        if cur == prev || start.elapsed() >= timeout {
+            return cur;
+        }
+        prev = cur;
+    }
+}
+
+/// Wait until the terminal of `pid` reports raw mode. A resize takes effect asynchronously; a
+/// fixed sleep races it. The loop returns the last observed termios at the timeout.
+fn wait_for_raw_terminal(pid: u32, timeout: Duration) -> libc::termios {
+    let start = Instant::now();
+    loop {
+        let termios = engine_termios(pid);
+        let flags = termios.c_lflag & (libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN);
+        if flags == 0 || start.elapsed() >= timeout {
+            return termios;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// No line on the pane may be nothing but underscores: that is the old placeholder marker, and a
 /// line of it would mean a regression to a protocol the engine no longer covers.
 fn assert_no_bare_placeholder(screen: &str) {
@@ -824,13 +854,15 @@ fn bash_enter_inside_the_completion_pager_is_covered() {
     read_until(&eng.master, "possibilities", Duration::from_secs(5));
     eng.writer.write_all(b"y").unwrap();
     eng.writer.flush().unwrap();
-    std::thread::sleep(Duration::from_millis(300));
+    // The pager takes over after the answer; wait for its frame to settle.
+    let _ = screen_settled(&eng.master, Duration::from_secs(3));
     // One enter inside the pager, then page to the end with spaces.
     eng.writer.write_all(b"\r").unwrap();
     eng.writer.flush().unwrap();
     for _ in 0..40 {
         eng.writer.write_all(b" ").unwrap();
         eng.writer.flush().unwrap();
+        // Page keys arrive at a human pace on purpose: this case covers the pager, not timing.
         std::thread::sleep(Duration::from_millis(20));
     }
     let mut out = read_until(&eng.master, "c899", Duration::from_secs(5));
@@ -1139,8 +1171,7 @@ fn same_dir_mode_folds_in_the_same_directory_and_keeps_a_changed_one() {
     eng.writer.flush().unwrap();
     read_until(&eng.master, "P11K-TWO", SHELL_READY);
     read_until(&eng.master, "HDRMARK|", SHELL_READY);
-    std::thread::sleep(Duration::from_millis(150));
-    let screen = eng.master.screen();
+    let screen = screen_settled(&eng.master, Duration::from_secs(3));
     assert_eq!(
         screen.matches("HDRMARK|").count(),
         3,
@@ -1164,8 +1195,7 @@ fn same_dir_mode_folds_in_the_same_directory_and_keeps_a_changed_one() {
     eng.writer.flush().unwrap();
     read_until(&eng.master, "P11K-FOUR", SHELL_READY);
     read_until(&eng.master, "HDRMARK|", SHELL_READY);
-    std::thread::sleep(Duration::from_millis(150));
-    let screen = eng.master.screen();
+    let screen = screen_settled(&eng.master, Duration::from_secs(3));
     assert_eq!(
         screen.matches("HDRMARK|").count(),
         4,
@@ -1183,13 +1213,13 @@ fn resize_while_a_command_runs_keeps_the_next_prompt_clean() {
         .write_all(b"sleep 1; printf 'P11K-%s\\n' LATE\n")
         .unwrap();
     eng.writer.flush().unwrap();
-    // Let the command start before the resize lands under it.
-    std::thread::sleep(Duration::from_millis(200));
+    // Let the command start before the resize lands under it: the echo of the submitted line is
+    // the point where the shell has taken it.
+    let _ = eng.master.screen_until("sleep 1; printf", 1, SHELL_READY);
     eng.master.resize(60, 20);
     read_until(&eng.master, "P11K-LATE", SHELL_READY);
     read_until(&eng.master, "HDRMARK|", SHELL_READY);
-    std::thread::sleep(Duration::from_millis(150));
-    let screen = eng.master.screen();
+    let screen = screen_settled(&eng.master, Duration::from_secs(3));
     assert_eq!(
         screen.matches("HDRMARK|").count(),
         2,
@@ -1217,8 +1247,7 @@ fn show_ruler_with_a_multi_line_header_keeps_the_output() {
     eng.writer.flush().unwrap();
     read_until(&eng.master, "P11K-multi-OUTPUT", SHELL_READY);
     read_until(&eng.master, "HDRMARK|", SHELL_READY);
-    std::thread::sleep(Duration::from_millis(150));
-    let screen = eng.master.screen();
+    let screen = screen_settled(&eng.master, Duration::from_secs(3));
     assert!(
         screen.contains("P11K-multi-OUTPUT"),
         "the next prompt must not cover the previous output, got {screen:?}"
@@ -1276,7 +1305,7 @@ fn bash_ctrl_l_rebuilds_the_prompt() {
     eng.writer.write_all(b"\n").unwrap();
     eng.writer.flush().unwrap();
     read_until(&eng.master, "❯", Duration::from_secs(5));
-    std::thread::sleep(Duration::from_millis(300));
+    let _ = screen_settled(&eng.master, Duration::from_secs(3));
     // The background git result repaints the header, and that repaint can still be in flight.
     // Drop it here, or the next read stops at its prompt and the clear sequence never makes it
     // into the buffer this case inspects.
@@ -1443,7 +1472,7 @@ fn ctrl_c_interrupts_running_command() {
 
     eng.writer.write_all(b"sleep 5\n").unwrap();
     eng.writer.flush().unwrap();
-    std::thread::sleep(Duration::from_millis(300));
+    let _ = eng.master.screen_until("sleep 5", 1, SHELL_READY);
     eng.writer.write_all(b"\x03").unwrap();
     eng.writer.flush().unwrap();
     let out = read_until(&eng.master, "❯", Duration::from_secs(5));
@@ -1694,6 +1723,6 @@ fn zsh_resize_keeps_the_terminal_in_raw_mode() {
     let pid = engine.master.pane_pid();
     assert_raw_terminal(&engine_termios(pid), "before the resize");
     engine.master.resize(80, 20);
-    std::thread::sleep(Duration::from_millis(300));
-    assert_raw_terminal(&engine_termios(pid), "after the resize");
+    let termios = wait_for_raw_terminal(pid, Duration::from_secs(3));
+    assert_raw_terminal(&termios, "after the resize");
 }
