@@ -264,8 +264,20 @@ settle() {
 }
 
 if [ -n "$TYPE_TEXT" ] && [ "$SETTLE_BEFORE_TYPE" = "1" ]; then
-  # The shell may still draw its first prompt. A stable frame here means the first keys cannot
-  # arrive while the shell initializes.
+  # The shell may still draw its first prompt. A stable blank frame is not "ready": with the
+  # instant prompt off the window shows an empty screen until the shell prints the first prompt.
+  # Capture the current frame, wait for it to change, then settle. If it does not change within
+  # 3 seconds the shell drew its prompt before the capture, and settle is enough.
+  grim -o "$OUTPUT" "$WORK/type-baseline.png" 2>/dev/null || true
+  _type_baseline=$(sha256sum "$WORK/type-baseline.png" 2>/dev/null | cut -d' ' -f1)
+  for _ in $(seq 1 60); do
+    grim -o "$OUTPUT" "$WORK/type-now.png" 2>/dev/null || true
+    _type_now=$(sha256sum "$WORK/type-now.png" 2>/dev/null | cut -d' ' -f1)
+    if [ -n "$_type_now" ] && [ "$_type_now" != "$_type_baseline" ]; then
+      break
+    fi
+    sleep 0.05
+  done
   settle
 fi
 
