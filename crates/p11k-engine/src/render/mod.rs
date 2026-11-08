@@ -34,6 +34,7 @@ use unicode_width::UnicodeWidthChar;
 /// Renders the header as per-line content (each line = left segments + right-aligned right
 /// segments, without cursor/clear/newline). The theme layer draws it line by line as
 /// `\r\e[K` + content + `\r\n`.
+#[derive(Clone)]
 struct SegmentText {
     text: String,
     style: Style,
@@ -71,13 +72,13 @@ pub fn render_header_lines(
     out.extend(
         (0..lines)
             .map(|i| {
+                let left_row = left.get(i).map(Vec::as_slice);
+                let right_row = right.get(i).map(Vec::as_slice);
                 let render_side = |budget: Option<usize>| {
-                    let l = left
-                        .get(i)
+                    let l = left_row
                         .map(|seg| render_row(config, seg, info, vcs, false, budget))
                         .unwrap_or_default();
-                    let r = right
-                        .get(i)
+                    let r = right_row
                         .map(|seg| render_row(config, seg, info, vcs, true, budget))
                         .unwrap_or_default();
                     (l, r)
@@ -116,9 +117,25 @@ pub fn render_header_lines(
                     assemble_row(&l0, &r0, body_budget, seps, indent)
                 } else {
                     // Pass 2: shorten dir by the number of overflowing columns (narrow
-                    // terminals shorten, wide terminals do not).
+                    // terminals shorten, wide terminals do not). Only `dir` depends on the
+                    // budget, so the other segments reuse the first pass result.
                     let overflow = (lw0 + rw0 + indent + 1).saturating_sub(body_budget);
-                    let (l1, r1) = render_side(Some(overflow));
+                    let shorten = |row: Option<&[Element]>, parts: &[SegmentText], right: bool| {
+                        row.map(|elements| {
+                            shorten_row(
+                                config,
+                                elements,
+                                info,
+                                vcs,
+                                right,
+                                parts.to_vec(),
+                                overflow,
+                            )
+                        })
+                        .unwrap_or_default()
+                    };
+                    let l1 = shorten(left_row, &l0, false);
+                    let r1 = shorten(right_row, &r0, true);
                     let (lw1, rw1) = (left_w(&l1), right_w(&r1));
                     if fits(lw1, rw1) {
                         assemble_row(&l1, &r1, body_budget, seps, indent)
@@ -127,7 +144,12 @@ pub fn render_header_lines(
                         // column (gap included). p10k omits the right column when the width is
                         // insufficient instead of letting it overflow. The left column is
                         // shortened again by its overflow over the unshortened width.
-                        let (l2, _) = render_side(Some(lw0.saturating_sub(body_budget)));
+                        let budget = lw0.saturating_sub(body_budget);
+                        let l2 = left_row
+                            .map(|elements| {
+                                shorten_row(config, elements, info, vcs, false, l0, budget)
+                            })
+                            .unwrap_or_default();
                         assemble_row(&l2, &[], body_budget, seps, indent)
                     }
                 };
@@ -140,6 +162,31 @@ pub fn render_header_lines(
             .collect::<Vec<String>>(),
     );
     out
+}
+
+/// Re-render only the `dir` segments with a shortening budget. Every other segment's text does
+/// not depend on the budget, so passes 2 and 3 reuse the first pass result instead of rendering
+/// the whole row again.
+fn shorten_row(
+    config: &Config,
+    elements: &[Element],
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+    right: bool,
+    mut parts: Vec<SegmentText>,
+    dir_budget: usize,
+) -> Vec<SegmentText> {
+    for (el, part) in elements.iter().zip(parts.iter_mut()) {
+        let (name, joined) = match el {
+            Element::Seg(name) => (name.as_str(), false),
+            Element::Joined(name) => (name.as_str(), true),
+            Element::Text(_) => continue,
+        };
+        if name == "dir" {
+            *part = render_segment(config, name, info, vcs, right, Some(dir_budget), joined);
+        }
+    }
+    parts
 }
 
 fn render_row(
