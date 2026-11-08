@@ -71,7 +71,6 @@ _p11k_precmd() {
   done
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
-    print -rn -- $'\e['${_ack[1]:-0}'A'
   fi
   PROMPT="$_lead$_p11k_signal${_ack[2]:-$P11K_PREFIX_OK}"
 }
@@ -97,6 +96,11 @@ _p11k_line_init() {
 }
 
 # ===== user config =====
+# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
+# on the current line; without this break, the rc output would be written after the typed text.
+if [[ -n "${P11K_INSTANT:-}" ]]; then
+  print -rn -- $'\r\n'
+fi
 # Prefer $P11K_USER_ZSHRC, otherwise default to $HOME/.zshrc.
 if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
   source "$P11K_USER_ZSHRC"
@@ -259,21 +263,19 @@ _p11k_prompt_command() {
   # The prefix belongs in PS1: readline draws the buffer right after it, and painting it later
   # would overwrite the first characters on a completion redraw.
   #
-  # The first prompt prints no blank rows: the engine already drew the instant header and
-  # overwrites it in place when the signal arrives. Printing rows here would push that header up
-  # and leave it on screen.
+  # Every prompt prints its own header rows. On the first prompt the instant header stays above
+  # as history instead of being overwritten.
   # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
   # newline, so the capture would always come back empty and the shell would print no blank rows
   # at all — the header would then be backfilled over the command output above it.
   local _lead=''
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
-  else
-    local _i
-    for (( _i = 0; _i < ${_ack[0]:-0}; _i++ )); do
-      _lead+=$'\n'
-    done
   fi
+  local _i
+  for (( _i = 0; _i < ${_ack[0]:-0}; _i++ )); do
+    _lead+=$'\n'
+  done
   # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
   # before the shell starts, and without this readline would append the prompt after it.
   PS1='\r'"$_lead\[$_p11k_signal\]${_ack[1]:-$P11K_PREFIX_OK}"
@@ -293,6 +295,11 @@ _p11k_winch() {
 trap '_p11k_winch' WINCH
 
 # ===== user config =====
+# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
+# on the current line; without this break, the rc output would be written after the typed text.
+if [[ -n "${P11K_INSTANT:-}" ]]; then
+  printf '\r\n'
+fi
 if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
   source "$P11K_USER_ZSHRC"
 elif [[ -r "$HOME/.bashrc" ]]; then
@@ -326,12 +333,10 @@ function fish_prompt
     set -l _st $status
     # Capture $pipestatus right away: any command below resets it.
     set -l _pipes "$pipestatus"
-    # The first prompt prints no blank rows: the engine already drew the instant header and
-    # overwrites it in place when the signal arrives.
+    # Every prompt prints its own header rows. On the first prompt the instant header stays
+    # above as history instead of being overwritten.
     set -l _lead ''
-    set -l _instant ''
     if test -n "$P11K_INSTANT"
-        set _instant 1
         set -e P11K_INSTANT
     end
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
@@ -339,12 +344,10 @@ function fish_prompt
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
         printf '\r'
-        if test -z "$_instant"
-            # Print the blank header rows directly: `string collect` drops the final newline,
-            # so a single row would become an empty string and the engine would cover one row
-            # too many. The resize reflow above the header is cleared by the engine.
-            printf '\n%.0s' (seq 1 $_p11k_rows)
-        end
+        # Print the blank header rows directly: `string collect` drops the final newline, so a
+        # single row would become an empty string and the engine would cover one row too many.
+        # The resize reflow above the header is cleared by the engine.
+        printf '\n%.0s' (seq 1 $_p11k_rows)
         printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
         return
     end
@@ -366,18 +369,19 @@ function fish_prompt
     rm -f $P11K_ACK
     set -g _p11k_rows $_ack[1]
     set -g _p11k_prefix $_ack[2]
-    if test -z "$_instant"
-        # Print the blank header rows directly: `string collect` drops the final newline, so a
-        # single row would become an empty string and the engine would cover one row too many.
-        printf '\r'
-        printf '\n%.0s' (seq 1 $_p11k_rows)
-    else
-        printf '\r'
-    end
+    # Print the blank header rows directly: `string collect` drops the final newline, so a
+    # single row would become an empty string and the engine would cover one row too many.
+    printf '\r'
+    printf '\n%.0s' (seq 1 $_p11k_rows)
     printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
 end
 
 # ===== user config =====
+# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
+# on the current line; without this break, the rc output would be written after the typed text.
+if test -n "$P11K_INSTANT"
+    printf '\r\n'
+end
 if test -n "$P11K_USER_ZSHRC"; and test -r "$P11K_USER_ZSHRC"
     source "$P11K_USER_ZSHRC"
 else if test -r "$HOME/.config/fish/config.fish"
@@ -397,12 +401,10 @@ function fish_prompt
     set -l _st $status
     # Capture $pipestatus right away: any command below resets it.
     set -l _pipes "$pipestatus"
-    # The first prompt prints no blank rows: the engine already drew the instant header and
-    # overwrites it in place when the signal arrives.
+    # Every prompt prints its own header rows. On the first prompt the instant header stays
+    # above as history instead of being overwritten.
     set -l _lead ''
-    set -l _instant ''
     if test -n "$P11K_INSTANT"
-        set _instant 1
         set -e P11K_INSTANT
     end
     if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
@@ -410,12 +412,10 @@ function fish_prompt
         set -g _p11k_last_rows $LINES
         printf 'r\n' >> $P11K_ANNOUNCE
         printf '\r'
-        if test -z "$_instant"
-            # Print the blank header rows directly: `string collect` drops the final newline,
-            # so a single row would become an empty string and the engine would cover one row
-            # too many. The resize reflow above the header is cleared by the engine.
-            printf '\n%.0s' (seq 1 $_p11k_rows)
-        end
+        # Print the blank header rows directly: `string collect` drops the final newline, so a
+        # single row would become an empty string and the engine would cover one row too many.
+        # The resize reflow above the header is cleared by the engine.
+        printf '\n%.0s' (seq 1 $_p11k_rows)
         printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
         return
     end
@@ -436,14 +436,10 @@ function fish_prompt
     rm -f $P11K_ACK
     set -g _p11k_rows $_ack[1]
     set -g _p11k_prefix $_ack[2]
-    if test -z "$_instant"
-        # Print the blank header rows directly: `string collect` drops the final newline, so a
-        # single row would become an empty string and the engine would cover one row too many.
-        printf '\r'
-        printf '\n%.0s' (seq 1 $_p11k_rows)
-    else
-        printf '\r'
-    end
+    # Print the blank header rows directly: `string collect` drops the final newline, so a
+    # single row would become an empty string and the engine would cover one row too many.
+    printf '\r'
+    printf '\n%.0s' (seq 1 $_p11k_rows)
     printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
 end
 "#;
@@ -500,20 +496,23 @@ function global:P11kEnginePrompt {
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
     # The prefix belongs in the prompt string: PSReadLine draws the buffer right after it.
-    # The first prompt prints no blank rows: the engine already drew the instant header and
-    # overwrites it in place when the signal arrives.
-    $P11kLead = ''
+    # Every prompt prints its own header rows. On the first prompt the instant header stays
+    # above as history instead of being overwritten.
     if ($env:P11K_INSTANT) {
         Remove-Item Env:P11K_INSTANT -ErrorAction SilentlyContinue
-    } else {
-        $P11kLead = "`n" * $P11kHeaderRows
     }
+    $P11kLead = "`n" * $P11kHeaderRows
     "$P11kLead`e]1337;p11k;p`a$P11kPrefix"
 }
 
 function global:prompt { P11kEnginePrompt }
 
 # ===== user config =====
+# Start the user profile on a fresh line. During the instant phase the prefix and the typed text
+# are on the current line; without this break, the profile output would follow the typed text.
+if ($env:P11K_INSTANT) {
+    [Console]::Out.Write("`r`n")
+}
 $P11kUserProfile = if ($env:P11K_USER_PROFILE) { $env:P11K_USER_PROFILE } else { $PROFILE }
 if ($P11kUserProfile -and (Test-Path -LiteralPath $P11kUserProfile)) {
     # A failed dot-source must not break the later protocol invariants that re-declare prompt.
@@ -628,15 +627,15 @@ mod tests {
         }
     }
 
-    /// The first prompt has to own the rows the instant header was drawn on. The shell steps the
-    /// cursor back over them before zle prints the prompt, so zle's prompt area covers the header
-    /// and the transient fold clears it. Without the step the header sits above the prompt area
-    /// and survives the fold.
+    /// Every prompt, including the first, prints its own header rows. The instant header and
+    /// the input line below it stay above as history. No template steps the cursor back over
+    /// them: that step raced with a shell that printed extra prompt rows during the instant
+    /// phase, and the capture showed a stale header without a prompt line.
     #[test]
-    fn zsh_first_prompt_steps_back_over_the_instant_header() {
+    fn the_first_prompt_keeps_the_instant_header_as_history() {
         assert!(
-            ZSHRC_TEMPLATE.contains(r#"print -rn -- $'\e['${_ack[1]:-0}'A'"#),
-            "the first prompt must move the cursor back over the instant header rows"
+            !ZSHRC_TEMPLATE.contains(r#"print -rn -- $'\e['${_ack[1]:-0}'A'"#),
+            "zsh must not step back over the instant header"
         );
     }
 }

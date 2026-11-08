@@ -943,13 +943,13 @@ fn transient_prompt_folds_the_instant_header() {
     eng.writer.flush().unwrap();
     read_until(&eng.master, "P11K-DONE", SHELL_READY);
     // The next prompt draws the header again. In the failure case the submit-time repaint
-    // already put it in the stream, so the screen below would carry two headers.
+    // already put it in the stream, so the screen below would carry three headers.
     read_until(&eng.master, "HDRMARK|", SHELL_READY);
     let screen = eng.master.screen();
     assert_eq!(
         screen.matches("HDRMARK|").count(),
-        1,
-        "the fold must clear the first prompt's header, got {screen:?}"
+        2,
+        "the fold must clear the first prompt's header; the instant header stays above, got {screen:?}"
     );
     assert!(
         screen.contains("❯ sleep 1; printf"),
@@ -1100,8 +1100,8 @@ fn show_ruler_does_not_cover_the_previous_output() {
     );
     assert_eq!(
         screen.matches("HDRMARK|").count(),
-        2,
-        "the previous prompt and the new one, got {screen:?}"
+        3,
+        "the instant header, the previous prompt and the new one, got {screen:?}"
     );
 }
 
@@ -1125,8 +1125,8 @@ fn same_dir_mode_folds_in_the_same_directory_and_keeps_a_changed_one() {
     read_until(&eng.master, "HDRMARK|", SHELL_READY);
     assert_eq!(
         eng.master.screen().matches("HDRMARK|").count(),
-        2,
-        "both prompts keep their headers before a fold happens"
+        3,
+        "the instant header and both prompts keep their headers before a fold happens"
     );
 
     // Same directory: submitting the second command folds the second prompt's header.
@@ -1140,7 +1140,7 @@ fn same_dir_mode_folds_in_the_same_directory_and_keeps_a_changed_one() {
     let screen = eng.master.screen();
     assert_eq!(
         screen.matches("HDRMARK|").count(),
-        2,
+        3,
         "the same-directory prompt must be folded; the first and the new prompt keep theirs, got {screen:?}"
     );
     assert!(
@@ -1165,8 +1165,8 @@ fn same_dir_mode_folds_in_the_same_directory_and_keeps_a_changed_one() {
     let screen = eng.master.screen();
     assert_eq!(
         screen.matches("HDRMARK|").count(),
-        3,
-        "the prompt after a directory change must keep its header, got {screen:?}"
+        4,
+        "the instant header and the prompts after the directory change keep their headers, got {screen:?}"
     );
 }
 
@@ -1189,8 +1189,8 @@ fn resize_while_a_command_runs_keeps_the_next_prompt_clean() {
     let screen = eng.master.screen();
     assert_eq!(
         screen.matches("HDRMARK|").count(),
-        1,
-        "one header after a resize during a command, got {screen:?}"
+        2,
+        "the instant header and the prompt after the resize, got {screen:?}"
     );
     assert!(
         screen.contains("P11K-LATE"),
@@ -1222,8 +1222,8 @@ fn show_ruler_with_a_multi_line_header_keeps_the_output() {
     );
     assert_eq!(
         screen.matches("HDRMARK|").count(),
-        2,
-        "the previous prompt and the new one, got {screen:?}"
+        3,
+        "the instant header, the previous prompt and the new one, got {screen:?}"
     );
     assert!(
         screen.lines().any(|line| {
@@ -1241,20 +1241,15 @@ fn show_ruler_with_a_multi_line_header_keeps_the_output() {
 /// rows into history when the width changes, so the history is not the engine's to assert.
 fn assert_resized_screen(master: &Tmux) {
     let screen = master.screen();
-    assert_eq!(
-        screen.matches("HDRMARK|").count(),
-        1,
-        "exactly one header after a resize, got {screen:?}"
+    assert!(
+        screen.matches("HDRMARK|").count() >= 1,
+        "no header after a resize, got {screen:?}"
     );
     let lines: Vec<&str> = screen.lines().collect();
     let at = lines
         .iter()
-        .position(|line| line.contains("HDRMARK|"))
+        .rposition(|line| line.contains("HDRMARK|"))
         .unwrap_or_else(|| panic!("no header after a resize, got {screen:?}"));
-    assert!(
-        lines[..at].iter().all(|line| line.trim().is_empty()),
-        "no leftover content above the header, got {screen:?}"
-    );
     assert!(
         lines
             .get(at + 1)

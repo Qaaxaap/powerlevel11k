@@ -82,6 +82,11 @@ The key of `icon {}` is an icon name. Most segments reference an icon name ident
 
 The `os` badge is dynamic per distro (arch, ubuntu…), and it is not routed through `icon {}`.
 
+## Instant prompt
+
+- `instant-prompt #false` stops the engine from drawing the provisional header while the shell loads its config (p10k `POWERLEVEL9K_INSTANT_PROMPT` off). The default is `#true`.
+- The shell gets `P11K_INSTANT=1` only when the option is on. The shell uses this value to print the first prompt in the instant layout and to start the user rc on a fresh line.
+
 ## Layout
 
 - `layout { left { … } right { … } }`. Under `left` / `right`, each row is declared as a `line { … }` node.

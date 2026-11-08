@@ -136,9 +136,12 @@ pub fn run() -> anyhow::Result<()> {
     }
     cmd.env("P11K_ANNOUNCE", &state.announce);
     cmd.env("P11K_ACK", &state.ack);
-    // Set while the instant header is on screen: the first prompt must not print blank rows for
-    // the header, the engine overwrites the instant header in place instead.
-    cmd.env("P11K_INSTANT", "1");
+    // Set while the instant header is on screen. The first prompt prints its own header rows;
+    // this flag keeps the instant-phase resize path and the relaxed-layout blank rows separate
+    // from the first prompt.
+    if config.instant_prompt {
+        cmd.env("P11K_INSTANT", "1");
+    }
     // Both states of the input-line prefix. zle/readline draw the user's buffer immediately after
     // the prompt string, so the prefix has to be part of it — painting it afterwards would
     // overwrite the front of the buffer on every completion redraw.
@@ -297,14 +300,18 @@ pub fn run() -> anyhow::Result<()> {
     // the pty when drawing (a fresh window whose size has not synced yet), content wraps and
     // erasing must convert to actual rows using the column width of that moment, otherwise
     // half a header is left behind.
-    theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
-    // Draw the instant prefix without the save/restore-cursor dance: the shell has not started
-    // yet, so restoring the cursor would put it back at column 0 and the user's typing would
-    // overwrite the prefix. With a plain `\r` the cursor ends up right after it.
-    write!(stdout, "\r{}", prefix.text)?;
-    write!(stdout, "\x1b]133;B\x07")?;
-    stdout.flush()?;
-    let mut instant_drawn = true;
+    let mut instant_drawn = false;
+    if config.instant_prompt {
+        theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
+        // Draw the instant prefix without the save/restore-cursor dance: the shell has not
+        // started yet, so restoring the cursor would put it back at column 0 and the user's
+        // typing would overwrite the prefix. With a plain `\r` the cursor ends up right after
+        // it.
+        write!(stdout, "\r{}", prefix.text)?;
+        write!(stdout, "\x1b]133;B\x07")?;
+        stdout.flush()?;
+        instant_drawn = true;
+    }
     // What the inner shell passed through during the instant phase. A newline means the rc
     // really printed something; after that the rows we drew have been pushed down.
     let mut instant_newlines = 0usize;
@@ -704,14 +711,9 @@ pub fn run() -> anyhow::Result<()> {
                             write!(stdout, "\x1b8")?;
                             resize_extra_rows = 0;
                         }
-                        // The instant header sits above the input line, and the real header has to
-                        // replace it in place. bash and fish repaint the prompt over the row the
-                        // engine drew its instant prefix on, so stepping up over the header lands
-                        // on the instant header. zsh and pwsh open a fresh row instead, so the
-                        // prompt sits one row lower and the step has to start one row higher.
-                        if instant_drawn && shell.prompt_starts_on_a_new_row() {
-                            write!(stdout, "\x1b[1A")?;
-                        }
+                        // The first prompt prints its own header rows. The real header goes on
+                        // those rows; the instant header and the input line below it stay above
+                        // as history.
                         // The shell just reprinted the prompt, so the header rows are blank
                         // again: clear the cache and let this paint fill them.
                         last_header = None;
