@@ -156,15 +156,12 @@ fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) ->
     let anchor_tail = shortenlen.min(n);
     let delim_len = opts.delimiter.chars().count();
     let mut saved = 0usize;
-    let mut out: Vec<DirPart> = Vec::with_capacity(n);
+    let mut slots: Vec<Slot> = Vec::with_capacity(n);
     for (i, part) in parts.iter().enumerate() {
         let abs = join(base, &parts[..=i]);
         let is_anchor = i >= n - anchor_tail || has_marker_in(&abs, opts);
         if is_anchor {
-            out.push(DirPart {
-                text: part.clone(),
-                class: Class::Anchor,
-            });
+            slots.push(Slot::part(i, Class::Anchor));
             continue;
         }
         let text = match opts.budget {
@@ -188,38 +185,89 @@ fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) ->
         } else {
             Class::Normal
         };
-        out.push(DirPart { text, class });
+        slots.push(Slot::edited(i, class, text));
     }
-    out
+    materialize(parts, "", slots)
+}
+
+/// One output slot: a kept path part or the ellipsis. The strategies choose slots; the
+/// materialisation below turns them into rendered parts in one place.
+enum Slot {
+    /// The ellipsis, classed as shortened.
+    Ellipsis,
+    /// A kept part. `text` replaces the original when the strategy edits the part.
+    Part {
+        index: usize,
+        class: Class,
+        text: Option<String>,
+    },
+}
+
+impl Slot {
+    fn part(index: usize, class: Class) -> Slot {
+        Slot::Part {
+            index,
+            class,
+            text: None,
+        }
+    }
+
+    fn edited(index: usize, class: Class, text: String) -> Slot {
+        Slot::Part {
+            index,
+            class,
+            text: Some(text),
+        }
+    }
+}
+
+/// Turn slots into parts. The ellipsis takes the configured delimiter.
+fn materialize(parts: &[String], delim: &str, slots: Vec<Slot>) -> Vec<DirPart> {
+    slots
+        .into_iter()
+        .map(|slot| match slot {
+            Slot::Ellipsis => DirPart {
+                text: delim.to_string(),
+                class: Class::Shortened,
+            },
+            Slot::Part { index, class, text } => DirPart {
+                text: text.unwrap_or_else(|| parts[index].clone()),
+                class,
+            },
+        })
+        .collect()
+}
+
+/// Slots for a kept range of parts.
+fn range_slots(parts_len: usize, range: std::ops::Range<usize>) -> Vec<Slot> {
+    range
+        .map(|i| Slot::part(i, class_for(i, parts_len)))
+        .collect()
 }
 
 /// `truncate_middle` / `truncate_from_right`: the first and last parts are kept, interior levels are truncated.
 fn fold_truncate(parts: &[String], len: usize, delim: &str, middle: bool) -> Vec<DirPart> {
     let d = delim.chars().count();
     let n = parts.len();
-    parts
-        .iter()
-        .enumerate()
-        .map(|(i, part)| {
-            // p10k handles only the 2nd through 2nd-to-last parts (first and last as is).
-            let interior = i > 0 && i + 1 < n;
-            let chars: Vec<char> = part.chars().collect();
-            let suf = if middle { len } else { 0 };
-            if interior && chars.len() > len + suf + d {
-                let head: String = chars[..len].iter().collect();
-                let tail: String = chars[chars.len() - suf..].iter().collect();
-                DirPart {
-                    text: format!("{head}{delim}{tail}"),
-                    class: Class::Shortened,
-                }
-            } else {
-                DirPart {
-                    text: part.clone(),
-                    class: class_for(i, n),
-                }
-            }
-        })
-        .collect()
+    let mut slots = Vec::with_capacity(n);
+    for (i, part) in parts.iter().enumerate() {
+        // p10k handles only the 2nd through 2nd-to-last parts (first and last as is).
+        let interior = i > 0 && i + 1 < n;
+        let chars: Vec<char> = part.chars().collect();
+        let suf = if middle { len } else { 0 };
+        if interior && chars.len() > len + suf + d {
+            let head: String = chars[..len].iter().collect();
+            let tail: String = chars[chars.len() - suf..].iter().collect();
+            slots.push(Slot::edited(
+                i,
+                Class::Shortened,
+                format!("{head}{delim}{tail}"),
+            ));
+        } else {
+            slots.push(Slot::part(i, class_for(i, n)));
+        }
+    }
+    materialize(parts, "", slots)
 }
 
 /// `truncate_to_last`: keep only the last `len` levels, dropping the rest into a single ellipsis.
@@ -228,20 +276,12 @@ fn fold_to_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     if n <= len {
         return plain(parts);
     }
-    let mut out = Vec::new();
+    let mut slots = Vec::new();
     if !delim.is_empty() {
-        out.push(DirPart {
-            text: delim.to_string(),
-            class: Class::Shortened,
-        });
+        slots.push(Slot::Ellipsis);
     }
-    for (i, part) in parts.iter().enumerate().skip(n - len) {
-        out.push(DirPart {
-            text: part.clone(),
-            class: class_for(i, n),
-        });
-    }
-    out
+    slots.extend(range_slots(n, n - len..n));
+    materialize(parts, delim, slots)
 }
 
 /// `truncate_to_first_and_last`: first `len` + last `len`, with one ellipsis in between.
@@ -250,31 +290,23 @@ fn fold_first_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     if n <= len * 2 {
         return plain(parts);
     }
-    let mut out: Vec<DirPart> = Vec::new();
-    for (i, part) in parts.iter().enumerate() {
-        if i < len {
-            out.push(DirPart {
-                text: part.clone(),
-                class: Class::Anchor,
-            });
-        } else if i == len {
-            out.push(DirPart {
-                text: delim.to_string(),
-                class: Class::Shortened,
-            });
-        } else if i >= n - len {
-            out.push(DirPart {
-                text: part.clone(),
-                class: Class::Anchor,
-            });
-        }
+    let mut slots = Vec::with_capacity(len * 2 + 1);
+    for i in 0..len {
+        slots.push(Slot::part(i, Class::Anchor));
     }
-    out
+    if !delim.is_empty() {
+        slots.push(Slot::Ellipsis);
+    }
+    for i in n - len..n {
+        slots.push(Slot::part(i, Class::Anchor));
+    }
+    materialize(parts, delim, slots)
 }
 
 /// `truncate_absolute(_chars)`: truncate the whole path by character count, keeping the tail.
 fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
-    // Accumulate parts back from the end until len is exceeded; the overflowing level keeps only its tail characters.
+    // Accumulate parts back from the end until len is exceeded; the overflowing level keeps only
+    // its tail characters.
     let mut acc = 0usize;
     let mut start = 0usize;
     for i in (0..parts.len()).rev() {
@@ -285,9 +317,9 @@ fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
         }
         acc += l;
     }
-    let mut out: Vec<DirPart> = Vec::new();
+    let n = parts.len();
+    let mut slots = Vec::with_capacity(n - start);
     if start > 0 {
-        // The overflowing level loses its head and everything before it is dropped.
         let part = &parts[start];
         let keep = len.saturating_sub(acc);
         let chars: Vec<char> = part.chars().collect();
@@ -300,18 +332,12 @@ fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
         } else {
             part.clone()
         };
-        out.push(DirPart {
-            text,
-            class: Class::Shortened,
-        });
+        slots.push(Slot::edited(start, Class::Shortened, text));
+        slots.extend(range_slots(n, start + 1..n));
+    } else {
+        slots.extend(range_slots(n, start..n));
     }
-    for (i, part) in parts.iter().enumerate().skip(start) {
-        out.push(DirPart {
-            text: part.clone(),
-            class: class_for(i, parts.len()),
-        });
-    }
-    out
+    materialize(parts, "", slots)
 }
 
 /// `truncate_with_folder_marker`: gaps between marker files fold into the ellipsis.
@@ -336,25 +362,19 @@ fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -
             }
         }
     }
-    let mut out: Vec<DirPart> = Vec::new();
+    let mut slots = Vec::with_capacity(n);
     let mut elided = false;
-    for (i, part) in parts.iter().enumerate() {
+    for (i, _) in parts.iter().enumerate() {
         if hidden[i] {
             if !elided && !delim.is_empty() {
-                out.push(DirPart {
-                    text: delim.to_string(),
-                    class: Class::Shortened,
-                });
+                slots.push(Slot::Ellipsis);
                 elided = true;
             }
             continue;
         }
-        out.push(DirPart {
-            text: part.clone(),
-            class: class_for(i, n),
-        });
+        slots.push(Slot::part(i, class_for(i, n)));
     }
-    out
+    materialize(parts, delim, slots)
 }
 
 /// Default branch for an empty strategy: keep the last `len` levels, prefixed by one ellipsis.
@@ -363,30 +383,17 @@ fn fold_keep_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     if n <= len {
         return plain(parts);
     }
-    let mut out = vec![DirPart {
-        text: delim.to_string(),
-        class: Class::Shortened,
-    }];
-    for (i, part) in parts.iter().enumerate().skip(n - len) {
-        out.push(DirPart {
-            text: part.clone(),
-            class: class_for(i, n),
-        });
+    let mut slots = Vec::with_capacity(len + 1);
+    if !delim.is_empty() {
+        slots.push(Slot::Ellipsis);
     }
-    out
+    slots.extend(range_slots(n, n - len..n));
+    materialize(parts, delim, slots)
 }
 
 /// Keep everything (when the strategy needs no folding).
 fn plain(parts: &[String]) -> Vec<DirPart> {
-    let n = parts.len();
-    parts
-        .iter()
-        .enumerate()
-        .map(|(i, p)| DirPart {
-            text: p.clone(),
-            class: class_for(i, n),
-        })
-        .collect()
+    materialize(parts, "", range_slots(parts.len(), 0..parts.len()))
 }
 
 /// Class for a non-folded part: the last part is the anchor (current directory), the rest are normal.
@@ -532,6 +539,22 @@ mod tests {
             let o = opts(s, 3, "…");
             assert_eq!(texts("/a/b", &o), vec!["a", "b"], "{s:?}");
         }
+    }
+
+    /// An empty delimiter must not leave an empty part: the slot stays out of the output.
+    #[test]
+    fn empty_delimiter_leaves_no_empty_part() {
+        let o = opts(Strategy::FoldToLast, 1, "");
+        assert_eq!(texts("/a/b/c", &o), vec!["c"]);
+        let o = opts(Strategy::TruncateToFirstAndLast, 1, "");
+        assert_eq!(texts("/a/b/c/d/e", &o), vec!["a", "e"]);
+    }
+
+    /// The overflowing level is kept once, in its shortened form, not repeated.
+    #[test]
+    fn absolute_keeps_the_overflowing_level_once() {
+        let o = opts(Strategy::TruncateAbsolute, 4, "\u{2026}");
+        assert_eq!(texts("/alpha/bravo/charlie", &o), vec!["\u{2026}rlie"]);
     }
 
     #[test]
