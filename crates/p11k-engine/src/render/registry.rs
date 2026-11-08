@@ -31,7 +31,6 @@ pub(super) enum TextSource {
 pub(super) enum IconSource {
     None,
     Key(&'static str),
-    Cond(fn() -> Option<&'static str>),
     /// The icon is the content: it draws even with empty text.
     ContentCond(fn() -> Option<&'static str>),
 }
@@ -73,7 +72,7 @@ impl SegmentSpec {
         match self.icon {
             IconSource::None => None,
             IconSource::Key(k) => Some(k),
-            IconSource::Cond(f) | IconSource::ContentCond(f) => f(),
+            IconSource::ContentCond(f) => f(),
         }
     }
 
@@ -275,30 +274,30 @@ pub(super) static SEGMENTS: &[SegmentSpec] = &[
     spec(
         "toolbox",
         TextSource::Plain(toolbox_text),
-        IconSource::Cond(icon_toolbox),
+        IconSource::Key("toolbox"),
     ),
     spec(
         "dir_writable",
         TextSource::Cwd(dir_writable_text),
-        IconSource::Cond(icon_dir_writable),
+        IconSource::Key("lock"),
     ),
     spec(
         "per_directory_history",
         TextSource::Plain(per_directory_history_text),
-        IconSource::Cond(icon_per_directory_history),
+        IconSource::Key("history"),
     ),
     spec(
         "haskell_stack",
         TextSource::Plain(haskell_stack_text),
-        IconSource::Cond(icon_haskell_stack),
+        IconSource::Key("haskell"),
     ),
     spec(
         "package",
         TextSource::Cwd(package_text),
-        IconSource::Cond(icon_package),
+        IconSource::Key("package"),
     ),
     spec("asdf", TextSource::Cwd(asdf_text), IconSource::None),
-    spec("fvm", TextSource::Cwd(fvm_text), IconSource::Cond(icon_fvm)),
+    spec("fvm", TextSource::Cwd(fvm_text), IconSource::Key("flutter")),
     spec(
         "google_app_cred",
         TextSource::Plain(google_app_cred_text),
@@ -307,37 +306,37 @@ pub(super) static SEGMENTS: &[SegmentSpec] = &[
     spec(
         "aws_eb_env",
         TextSource::Plain(aws_eb_env_text),
-        IconSource::Cond(icon_aws_eb_env),
+        IconSource::Key("aws-eb"),
     ),
     spec(
         "laravel_version",
         TextSource::Cwd(laravel_version_text),
-        IconSource::Cond(icon_laravel_version),
+        IconSource::Key("laravel"),
     ),
     spec(
         "rspec_stats",
         TextSource::Cwd(rspec_stats_text),
-        IconSource::Cond(icon_rspec_stats),
+        IconSource::Key("test"),
     ),
     spec(
         "todo",
         TextSource::Plain(todo_text),
-        IconSource::Cond(icon_todo),
+        IconSource::Key("todo"),
     ),
     spec(
         "taskwarrior",
         TextSource::Plain(taskwarrior_text),
-        IconSource::Cond(icon_taskwarrior),
+        IconSource::Key("taskwarrior"),
     ),
     spec(
         "dropbox",
         TextSource::Plain(dropbox_text),
-        IconSource::Cond(icon_dropbox),
+        IconSource::Key("dropbox"),
     ),
     spec(
         "proxy",
         TextSource::Plain(proxy_text),
-        IconSource::Cond(icon_proxy),
+        IconSource::Key("proxy"),
     ),
     spec(
         "openfoam",
@@ -367,7 +366,7 @@ pub(super) static SEGMENTS: &[SegmentSpec] = &[
     spec(
         "nix_shell",
         TextSource::Plain(nix_shell_text),
-        IconSource::Cond(icon_nix_shell),
+        IconSource::Key("nix"),
     ),
     spec(
         "vi_mode",
@@ -377,7 +376,7 @@ pub(super) static SEGMENTS: &[SegmentSpec] = &[
     spec(
         "docker_machine",
         TextSource::Env("DOCKER_MACHINE_NAME"),
-        IconSource::Cond(icon_docker_machine),
+        IconSource::Key("server"),
     ),
     spec("history", TextSource::History, IconSource::None),
     spec(
@@ -418,64 +417,8 @@ pub(super) fn find(name: &str) -> Option<&'static SegmentSpec> {
     SEGMENTS.iter().find(|s| s.name == name)
 }
 
-fn icon_toolbox() -> Option<&'static str> {
-    (!toolbox_text().is_empty()).then_some("toolbox")
-}
-
-fn icon_dir_writable() -> Option<&'static str> {
-    (!dir_writable_text(&current_dir()).is_empty()).then_some("lock")
-}
-
-fn icon_per_directory_history() -> Option<&'static str> {
-    (!per_directory_history_text().is_empty()).then_some("history")
-}
-
-fn icon_haskell_stack() -> Option<&'static str> {
-    (!haskell_stack_text().is_empty()).then_some("haskell")
-}
-
-fn icon_package() -> Option<&'static str> {
-    (!package_text(&current_dir()).is_empty()).then_some("package")
-}
-
-fn icon_fvm() -> Option<&'static str> {
-    (!fvm_text(&current_dir()).is_empty()).then_some("flutter")
-}
-
-fn icon_aws_eb_env() -> Option<&'static str> {
-    (!aws_eb_env_text().is_empty()).then_some("aws-eb")
-}
-
-fn icon_laravel_version() -> Option<&'static str> {
-    (!laravel_version_text(&current_dir()).is_empty()).then_some("laravel")
-}
-
-fn icon_rspec_stats() -> Option<&'static str> {
-    (!rspec_stats_text(&current_dir()).is_empty()).then_some("test")
-}
-
-fn icon_todo() -> Option<&'static str> {
-    (!todo_text().is_empty()).then_some("todo")
-}
-
-fn icon_taskwarrior() -> Option<&'static str> {
-    (!taskwarrior_text().is_empty()).then_some("taskwarrior")
-}
-
-fn icon_dropbox() -> Option<&'static str> {
-    (!dropbox_text().is_empty()).then_some("dropbox")
-}
-
 fn icon_ssh() -> Option<&'static str> {
     env().ssh.then_some("ssh")
-}
-
-fn icon_proxy() -> Option<&'static str> {
-    env_has_proxy().then_some("proxy")
-}
-
-fn icon_docker_machine() -> Option<&'static str> {
-    env_var("DOCKER_MACHINE_NAME").is_some().then_some("server")
 }
 
 fn icon_ranger() -> Option<&'static str> {
@@ -496,10 +439,6 @@ fn icon_nnn() -> Option<&'static str> {
 
 fn icon_lf() -> Option<&'static str> {
     level_icon("LF_LEVEL", "lf").is_some().then_some("lf")
-}
-
-fn icon_nix_shell() -> Option<&'static str> {
-    in_nix_shell().then_some("nix")
 }
 
 fn icon_xplr() -> Option<&'static str> {
