@@ -6,7 +6,7 @@
 //! ([`Delegated`]); segments that need the renderer state implement the trait directly.
 
 use crate::config::{Config, Segment};
-use crate::theme::{GitStatus, HeaderInfo};
+use crate::model::{GitStatus, HeaderInfo};
 
 use super::env::*;
 use super::style::paint;

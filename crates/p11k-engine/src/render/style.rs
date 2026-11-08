@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 
 use crate::config::{AttachText, Color, Config, Style};
-use crate::theme::HeaderInfo;
+use crate::model::HeaderInfo;
 
 /// Current zsh edit mode (reported by the zle hook, updated live by the engine); empty when
 /// not zsh or unreported.

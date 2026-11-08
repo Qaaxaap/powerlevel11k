@@ -53,9 +53,9 @@ impl PromptState {
         matches!(self, PromptState::Prompt | PromptState::Typing)
     }
 }
+use crate::model::{GitStatus, HeaderInfo};
 use crate::state::{RawTerminal, StateDir, tty_size};
 use crate::theme;
-use crate::theme::{GitStatus, HeaderInfo};
 use crate::window::paint_prompt;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 

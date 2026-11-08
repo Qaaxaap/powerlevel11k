@@ -8,8 +8,8 @@
 
 use crate::config::{Color, Config, Element, Frame, IconMode, Prop, Segment, Separators};
 use crate::i18n::{msgid, t};
+use crate::model::HeaderInfo;
 use crate::presets::{self, PresetKind};
-use crate::theme::HeaderInfo;
 use std::io::{self, Write};
 
 enum Step<T> {
@@ -278,8 +278,8 @@ fn header_on(cfg: &Config) -> bool {
 }
 
 /// Sample git status: makes the preview's vcs segment look like a real prompt (p10k's wizard uses fake data too).
-fn sample_vcs() -> crate::theme::GitStatus {
-    crate::theme::GitStatus {
+fn sample_vcs() -> crate::model::GitStatus {
+    crate::model::GitStatus {
         branch: "main".into(),
         commit: "0123456789abcdef0123456789abcdef01234567".into(),
         staged: 0,
