@@ -1198,6 +1198,95 @@ pub(super) fn value_of(content: Option<&str>, default: impl Into<String>) -> Str
 
 /// Assembles one line as ANSI: left segments (joined by `sub`/`segment`, closed by `end`) +
 /// right-aligned right segments.
+/// Which end of the row a column is: the caps and the separators differ per side.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
+/// Emit one column: start cap, the segments with their separators, end cap. The two sides share
+/// the loop; the caps, the separator chars and the fallback spacing differ per side.
+fn emit_side(parts: &[&SegmentText], seps: &crate::config::Separators, side: Side) -> String {
+    let (start_cap, end_cap, sep, sub, sub_fg) = match side {
+        Side::Left => (
+            &seps.left_tail,
+            &seps.end,
+            &seps.segment,
+            &seps.sub,
+            &seps.sub_foreground,
+        ),
+        Side::Right => (
+            &seps.right_start,
+            &seps.right_tail,
+            &seps.right_segment,
+            &seps.right_sub,
+            &seps.right_sub_foreground,
+        ),
+    };
+    let mut out = String::new();
+    if !start_cap.is_empty()
+        && let Some(first) = parts.first()
+        && first.style.bg != Color::Default
+    {
+        out.push_str(&arrow(start_cap, first.style.bg.clone(), Color::Default));
+    }
+    let mut prev: Option<&SegmentText> = None;
+    for s in parts {
+        match prev {
+            None => {
+                // A joined first segment has no left neighbor, so its leading space stays.
+                if s.joined_left && (side == Side::Right || s.style.bg != Color::Default) {
+                    out.push_str(&paint(" ", &s.style));
+                }
+            }
+            Some(p) if !s.joined_left => {
+                let prev_has = p.style.bg != Color::Default;
+                if prev_has {
+                    let same = s.style.bg != Color::Default && s.style.bg == p.style.bg;
+                    if same {
+                        if !sub.is_empty() {
+                            let st = match sub_fg {
+                                Some(fg) => Style {
+                                    fg: fg.clone(),
+                                    ..s.style.clone()
+                                },
+                                None => s.style.clone(),
+                            };
+                            out.push_str(&paint(sub, &st));
+                        } else if side == Side::Left && !p.padded {
+                            out.push(' ');
+                        }
+                    } else if !sep.is_empty() {
+                        // Left: the arrow fg is the previous bg (pointing to the current bg).
+                        // Right: the arrow fg is the current bg (the triangle points left at
+                        // the previous bg).
+                        let (fg, bg) = match side {
+                            Side::Left => (p.style.bg.clone(), s.style.bg.clone()),
+                            Side::Right => (s.style.bg.clone(), p.style.bg.clone()),
+                        };
+                        out.push_str(&arrow(sep, fg, bg));
+                    } else if side == Side::Left && !p.padded {
+                        out.push(' ');
+                    }
+                } else if side == Side::Left && !p.padded {
+                    out.push(' ');
+                }
+            }
+            Some(_) => {}
+        }
+        out.push_str(&s.text); // text is already colored, do not recolor
+        prev = Some(s);
+    }
+    if !end_cap.is_empty()
+        && let Some(last) = parts.last()
+        && last.style.bg != Color::Default
+    {
+        out.push_str(&arrow(end_cap, last.style.bg.clone(), Color::Default));
+    }
+    out
+}
+
 pub(super) fn assemble_row(
     left: &[SegmentText],
     right: &[SegmentText],
@@ -1205,133 +1294,11 @@ pub(super) fn assemble_row(
     seps: &crate::config::Separators,
     right_indent: usize,
 ) -> String {
-    let mut out = String::new();
-    // Start cap of the left column's first segment (left triangle, drawn before the leftmost
-    // segment).
-    if !seps.left_tail.is_empty()
-        && let Some(first) = left.iter().find(|s| !s.text.is_empty())
-        && first.style.bg != Color::Default
-    {
-        out.push_str(&arrow(
-            &seps.left_tail,
-            first.style.bg.clone(),
-            Color::Default,
-        ));
-    }
-    let mut prev_bg = Color::Default;
-    let mut prev_padded = false;
-    let mut has_left = false;
-    for s in left {
-        if s.text.is_empty() {
-            continue;
-        }
-        // Inter-segment separation (p10k's rule): previous segment has a background → draw a
-        // separator (same bg → sub, different color / current has none → segment); previous
-        // has none → a space. Segments carry their trailing padding (see render_segment), so no
-        // extra space is added, avoiding doubles (p10k uses one space between them).
-        // A `_joined` first segment has no left neighbor: the suffix does nothing, so it keeps
-        // the normal leading space of a line-start segment (docs/config-language.md). The
-        // space carries the segment background, like every other segment padding.
-        if !has_left && s.joined_left && s.style.bg != Color::Default {
-            out.push_str(&paint(" ", &s.style));
-        }
-        if has_left && !s.joined_left {
-            let prev_has = prev_bg != Color::Default;
-            if prev_has {
-                let same = s.style.bg != Color::Default && s.style.bg == prev_bg;
-                let ch = if same { &seps.sub } else { &seps.segment };
-                if !ch.is_empty() {
-                    if same {
-                        // Same-background fine line: use `sub-foreground` when set (p10k's
-                        // sep_color, a uniform gray), otherwise the next segment's foreground.
-                        let st = match &seps.sub_foreground {
-                            Some(fg) => Style {
-                                fg: fg.clone(),
-                                ..s.style.clone()
-                            },
-                            None => s.style.clone(),
-                        };
-                        out.push_str(&paint(ch, &st));
-                    } else {
-                        out.push_str(&arrow(ch, prev_bg.clone(), s.style.bg.clone()));
-                    }
-                } else if !prev_padded {
-                    out.push(' ');
-                }
-            } else if !prev_padded {
-                out.push(' ');
-            }
-        }
-        out.push_str(&s.text); // text is already colored, do not recolor
-        prev_bg = s.style.bg.clone();
-        prev_padded = s.padded;
-        has_left = true;
-    }
-    // End cap of the left column (after the last segment, its own background pointing to the
-    // line end).
-    if has_left && !seps.end.is_empty() && prev_bg != Color::Default {
-        out.push_str(&arrow(&seps.end, prev_bg.clone(), Color::Default));
-    }
-    let mut right_str = String::new();
-    let parts: Vec<&SegmentText> = right.iter().filter(|s| !s.text.is_empty()).collect();
-    if !parts.is_empty() {
-        // Start cap of the right column (left triangle ): foreground = the right segment's **background** color (pointing at it); drawn over the gap.
-        if !seps.right_start.is_empty() {
-            right_str.push_str(&arrow(
-                &seps.right_start,
-                parts[0].style.bg.clone(),
-                Color::Default,
-            ));
-        }
-        for (i, s) in parts.iter().enumerate() {
-            // A joined first segment has no left neighbor: keep the normal leading space,
-            // painted with the segment background.
-            if i == 0 && s.joined_left {
-                right_str.push_str(&paint(" ", &s.style));
-            }
-            if i > 0 && !s.joined_left {
-                // Inter-segment separation on the right: same color → right_sub (the segment
-                // foreground drawn on the segment background), different → right_segment
-                // (left triangle, foreground (the triangle block) = the current (right)
-                // segment's bg, background = the previous (left) segment's bg;
-                // mirroring the left segment `` (fg = previous bg, bg = current bg)).
-                let prev_bg = parts[i - 1].style.bg.clone();
-                if prev_bg != Color::Default {
-                    let same = s.style.bg != Color::Default && s.style.bg == prev_bg;
-                    if same {
-                        if !seps.right_sub.is_empty() {
-                            let st = match &seps.right_sub_foreground {
-                                Some(fg) => Style {
-                                    fg: fg.clone(),
-                                    ..s.style.clone()
-                                },
-                                None => s.style.clone(),
-                            };
-                            right_str.push_str(&paint(&seps.right_sub, &st));
-                        }
-                    } else if !seps.right_segment.is_empty() {
-                        right_str.push_str(&arrow(
-                            &seps.right_segment,
-                            s.style.bg.clone(),
-                            prev_bg,
-                        ));
-                    }
-                }
-            }
-            right_str.push_str(&s.text);
-        }
-        // Closing cap of the right column's last segment (right triangle, drawn after the
-        // rightmost segment).
-        if !seps.right_tail.is_empty()
-            && let Some(last) = parts.last()
-            && last.style.bg != Color::Default
-        {
-            right_str.push_str(&arrow(
-                &seps.right_tail,
-                last.style.bg.clone(),
-                Color::Default,
-            ));
-        }
+    let left_parts: Vec<&SegmentText> = left.iter().filter(|s| !s.text.is_empty()).collect();
+    let right_parts: Vec<&SegmentText> = right.iter().filter(|s| !s.text.is_empty()).collect();
+    let mut out = emit_side(&left_parts, seps, Side::Left);
+    if !right_parts.is_empty() {
+        let right_str = emit_side(&right_parts, seps, Side::Right);
         let lw = display_width(&out);
         let rw = display_width(&right_str);
         // Right alignment: gap chars fill the span from the left segments to the right
