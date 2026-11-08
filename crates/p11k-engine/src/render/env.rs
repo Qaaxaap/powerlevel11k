@@ -97,13 +97,6 @@ pub(super) fn level_icon(name: &str, icon: &str) -> Option<String> {
     env_var(name).filter(|v| v != "0").map(|_| icon.into())
 }
 
-pub(super) fn env_has_proxy() -> bool {
-    ["all_proxy", "http_proxy", "https_proxy", "ftp_proxy"]
-        .iter()
-        .chain(["ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY"].iter())
-        .any(|k| env_var(k).is_some())
-}
-
 /// proxy segment: host:port of the first non-empty proxy (scheme/user@/path stripped).
 pub(super) fn proxy_text() -> String {
     for key in ["all_proxy", "http_proxy", "https_proxy", "ftp_proxy"]
@@ -133,10 +126,6 @@ pub(super) fn nix_shell_text() -> String {
     env_var("IN_NIX_SHELL")
         .filter(|v| v == "pure" || v == "impure")
         .unwrap_or_default()
-}
-
-pub(super) fn in_nix_shell() -> bool {
-    env_var("IN_NIX_SHELL").is_some_and(|v| v == "pure" || v == "impure")
 }
 
 // System resource segments: read /proc and /sys (battery), or run `df`; hidden when the data
@@ -231,12 +220,6 @@ pub(super) fn battery() -> String {
 
 pub(crate) fn home() -> String {
     std::env::var("HOME").unwrap_or_default()
-}
-
-pub(crate) fn current_dir() -> String {
-    std::env::current_dir()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default()
 }
 
 pub(super) fn detect_virt() -> String {

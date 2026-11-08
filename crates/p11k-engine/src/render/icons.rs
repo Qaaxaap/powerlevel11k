@@ -8,8 +8,8 @@ use crate::config::Config;
 use crate::theme::GitStatus;
 use std::cell::RefCell;
 
+use super::dir_writable_state;
 use super::glob::glob_match_path;
-use super::{detect_os_icon, dir_writable_state};
 
 pub(super) fn icon_by_mode(e: &IconEntry, mode: &crate::config::IconMode) -> String {
     match mode {
@@ -258,6 +258,58 @@ pub(super) fn dir_class_match<'a>(
 
 thread_local! {
     static OS_ICON: RefCell<Option<IconEntry>> = const { RefCell::new(None) };
+}
+
+fn detect_os_icon() -> IconEntry {
+    let uname = std::env::consts::OS;
+    if uname != "linux" {
+        return match uname {
+            "macos" => icon("\u{f179}", "OSX", "mac"),   // 
+            "windows" => icon("\u{f17a}", "WIN", "win"), // 
+            _ => icon("\u{f17c}", "Lx", "linux"),        // default linux icon
+        };
+    }
+    // Linux: read the ID from /etc/os-release (substring match, matching p10k case *arch*
+    // etc.).
+    let id = std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|s| {
+            s.lines().find(|l| l.starts_with("ID=")).map(|l| {
+                l.trim_start_matches("ID=")
+                    .trim()
+                    .trim_matches('"')
+                    .to_string()
+            })
+        })
+        .unwrap_or_default();
+    // The three-tier text abbreviations match p10k's compatible/ascii branches.
+    if id.contains("arch") {
+        icon("\u{f303}", "Arc", "arch")
+    } else if id.contains("ubuntu") {
+        icon("\u{f31b}", "Ubu", "ubuntu")
+    } else if id.contains("debian") {
+        icon("\u{f306}", "Deb", "debian")
+    } else if id.contains("fedora") {
+        icon("\u{f30a}", "Fed", "fedora")
+    } else if id.contains("gentoo") {
+        icon("\u{f30d}", "Gen", "gentoo")
+    } else if id.contains("nixos") {
+        icon("\u{f313}", "Nix", "nixos")
+    } else if id.contains("manjaro") {
+        icon("\u{f312}", "Man", "manjaro")
+    } else if id.contains("mint") {
+        icon("\u{f30e}", "LMi", "mint")
+    } else if id.contains("alpine") {
+        icon("\u{f300}", "Alp", "alpine")
+    } else if id.contains("void") {
+        icon("\u{f32e}", "Vo", "void")
+    } else if id.contains("artix") {
+        icon("\u{f31f}", "Art", "artix")
+    } else if id.contains("opensuse") || id.contains("suse") {
+        icon("\u{f314}", "OSu", "suse")
+    } else {
+        icon("\u{f17c}", "Lx", "linux")
+    }
 }
 
 /// os icon: uname family + /etc/os-release ID to match the distro (matching p10k

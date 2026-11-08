@@ -20,7 +20,7 @@ mod icons;
 mod registry;
 mod segments;
 mod style;
-use self::icons::{IconEntry, dir_class_match, icon, icon_str, resolve_icon};
+use self::icons::{dir_class_match, icon_str, resolve_icon};
 pub use self::segments::display_width_of;
 use self::segments::*;
 pub use self::style::CURRENT_VI_MODE;
@@ -30,7 +30,6 @@ pub use self::style::{
 };
 use self::style::{named_256, paint, paint_attach};
 use std::collections::HashMap;
-use unicode_width::UnicodeWidthChar;
 
 /// Renders the header as per-line content (each line = left segments + right-aligned right
 /// segments, without cursor/clear/newline). The theme layer draws it line by line as
@@ -320,8 +319,8 @@ fn render_segment(
                     paint(&text, &st)
                 }
             }
-            // Toolchain version segments: run `cmd --version` and parse the version; shown only
-            // when the command exists.
+            // Unknown segments and the icon-only `os`/`os_icon` badges: no text, so the icon
+            // decides whether anything is drawn.
             _ => {
                 if icon_is_content(name) {
                     paint("", &style)
@@ -467,58 +466,6 @@ fn render_segment(
         style,
         padded: true,
         joined_left,
-    }
-}
-
-fn detect_os_icon() -> IconEntry {
-    let uname = std::env::consts::OS;
-    if uname != "linux" {
-        return match uname {
-            "macos" => icon("\u{f179}", "OSX", "mac"),   // 
-            "windows" => icon("\u{f17a}", "WIN", "win"), // 
-            _ => icon("\u{f17c}", "Lx", "linux"),        // default linux icon
-        };
-    }
-    // Linux: read the ID from /etc/os-release (substring match, matching p10k case *arch*
-    // etc.).
-    let id = std::fs::read_to_string("/etc/os-release")
-        .ok()
-        .and_then(|s| {
-            s.lines().find(|l| l.starts_with("ID=")).map(|l| {
-                l.trim_start_matches("ID=")
-                    .trim()
-                    .trim_matches('"')
-                    .to_string()
-            })
-        })
-        .unwrap_or_default();
-    // The three-tier text abbreviations match p10k's compatible/ascii branches.
-    if id.contains("arch") {
-        icon("\u{f303}", "Arc", "arch")
-    } else if id.contains("ubuntu") {
-        icon("\u{f31b}", "Ubu", "ubuntu")
-    } else if id.contains("debian") {
-        icon("\u{f306}", "Deb", "debian")
-    } else if id.contains("fedora") {
-        icon("\u{f30a}", "Fed", "fedora")
-    } else if id.contains("gentoo") {
-        icon("\u{f30d}", "Gen", "gentoo")
-    } else if id.contains("nixos") {
-        icon("\u{f313}", "Nix", "nixos")
-    } else if id.contains("manjaro") {
-        icon("\u{f312}", "Man", "manjaro")
-    } else if id.contains("mint") {
-        icon("\u{f30e}", "LMi", "mint")
-    } else if id.contains("alpine") {
-        icon("\u{f300}", "Alp", "alpine")
-    } else if id.contains("void") {
-        icon("\u{f32e}", "Vo", "void")
-    } else if id.contains("artix") {
-        icon("\u{f31f}", "Art", "artix")
-    } else if id.contains("opensuse") || id.contains("suse") {
-        icon("\u{f314}", "OSu", "suse")
-    } else {
-        icon("\u{f17c}", "Lx", "linux")
     }
 }
 
@@ -2456,6 +2403,45 @@ mod tests {
                 (cols, lines)
             })
             .collect()
+    }
+
+    /// The registry is the single source for delegating segments: names are unique and every
+    /// fixed icon key resolves. The special segments must not be listed, or two paths would
+    /// define the same segment.
+    #[test]
+    fn registry_is_complete_and_unique() {
+        use std::collections::HashSet;
+        let names: HashSet<&str> = registry::SEGMENTS.iter().map(|s| s.name).collect();
+        assert_eq!(
+            names.len(),
+            registry::SEGMENTS.len(),
+            "duplicate segment name"
+        );
+        let cfg = Config::default_lean().unwrap();
+        for spec in registry::SEGMENTS {
+            if let Some(key) = spec.icon_key() {
+                assert!(
+                    icon_str(&cfg, key).is_some(),
+                    "icon key {key:?} of segment {:?} does not resolve",
+                    spec.name
+                );
+            }
+        }
+        for special in [
+            "dir",
+            "vcs",
+            "status",
+            "prompt_char",
+            "command_execution_time",
+            "symfony2_tests",
+            "os",
+            "os_icon",
+        ] {
+            assert!(
+                !names.contains(special),
+                "special segment {special:?} must keep its dispatcher branch"
+            );
+        }
     }
 
     /// The dir_writable icon is a fixed key now: the text decides whether the segment shows.
