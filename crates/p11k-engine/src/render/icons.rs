@@ -5,17 +5,16 @@
 //! the current directory. This module keeps the tables and the resolution order together.
 
 use crate::config::Config;
-use std::cell::RefCell;
 use crate::theme::GitStatus;
+use std::cell::RefCell;
 
 use super::glob::glob_match_path;
 use super::{
-    aws_eb_env_text, current_dir, detect_os_icon, dir_writable_state, dir_writable_text, dropbox_text,
-    env, env_has_proxy, env_var, fvm_text, haskell_stack_text, in_nix_shell, laravel_version_text,
-    level_icon, package_text, per_directory_history_text, rspec_stats_text, taskwarrior_text,
-    todo_text, toolbox_text,
+    aws_eb_env_text, current_dir, detect_os_icon, dir_writable_state, dir_writable_text,
+    dropbox_text, env, env_has_proxy, env_var, fvm_text, haskell_stack_text, in_nix_shell,
+    laravel_version_text, level_icon, package_text, per_directory_history_text, rspec_stats_text,
+    taskwarrior_text, todo_text, toolbox_text,
 };
-
 
 pub(super) fn icon_by_mode(e: &IconEntry, mode: &crate::config::IconMode) -> String {
     match mode {
@@ -245,7 +244,12 @@ pub(super) fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
 
 /// Default icon resolution for segment rendering: os is dynamic, vcs remote takes priority,
 /// the rest go segment → icon name → table lookup.
-pub(super) fn resolve_icon(config: &Config, name: &str, vcs: Option<&GitStatus>, cwd: &str) -> Option<String> {
+pub(super) fn resolve_icon(
+    config: &Config,
+    name: &str,
+    vcs: Option<&GitStatus>,
+    cwd: &str,
+) -> Option<String> {
     if name == "os" || name == "os_icon" {
         return Some(os_icon(&config.mode));
     }
@@ -308,7 +312,10 @@ pub(super) fn default_dir_icon_key(cwd: &str) -> &'static str {
 }
 
 /// Matches cwd against `dir-classes` in order and returns the first hit (p10k `DIR_CLASSES`).
-pub(super) fn dir_class_match<'a>(config: &'a Config, cwd: &str) -> Option<&'a crate::config::DirClass> {
+pub(super) fn dir_class_match<'a>(
+    config: &'a Config,
+    cwd: &str,
+) -> Option<&'a crate::config::DirClass> {
     let home = std::env::var("HOME").unwrap_or_default();
     config
         .dir_classes

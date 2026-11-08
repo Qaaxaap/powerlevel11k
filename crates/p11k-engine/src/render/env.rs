@@ -4,8 +4,21 @@
 //! The lookups are cached where p10k caches them. `meminfo_kb` reads `/proc/meminfo` once per
 //! call; the callers read the same file for related fields.
 
-use super::{run_cmd, EnvInfo, ENV};
+use std::cell::RefCell;
 
+use super::run_cmd;
+
+#[derive(Clone)]
+pub(super) struct EnvInfo {
+    pub(super) user: String,
+    pub(super) host: String,
+    pub(super) ssh: bool,
+    pub(super) root: bool,
+}
+
+thread_local! {
+    static ENV: RefCell<Option<EnvInfo>> = const { RefCell::new(None) };
+}
 
 pub(super) fn env() -> EnvInfo {
     ENV.with(|c| {
