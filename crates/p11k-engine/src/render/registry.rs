@@ -1,12 +1,10 @@
-//! Segment registry: one table for every segment that only delegates to a text function.
+//! Segment registry: one table for every built-in segment.
 //!
-//! Each entry holds the text source and the icon source together. A delegating segment is one
-//! table row. The segments that need the renderer state (`dir`, `vcs`, `status`, `prompt_char`,
-//! `command_execution_time`, `symfony2_tests`) keep their branch in the dispatcher until the
-//! registry carries a trait object.
-//!
-//! The icon is rendered from the same row: the visible identifier is the icon key for the mode,
-//! and the renderer asks for it once per segment.
+//! Each row is a name and a [`SegmentRender`] implementation. Delegating segments share
+//! [`Delegated`]; the segments that need the renderer state (`dir`, `vcs`, `status`,
+//! `prompt_char`, `command_execution_time`, `symfony2_tests`) implement the trait directly.
+//! The renderer asks the row for its [`SegmentValue`]: text and icon decision come from one
+//! evaluation, and no dispatcher branches on the segment name.
 
 use super::env::*;
 use super::segment::{Delegated, IconSource, SegmentRender, TextSource};

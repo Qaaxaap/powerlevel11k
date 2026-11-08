@@ -9,7 +9,7 @@
 //!
 //! Input: config plus the current state. Output: the header ANSI string.
 
-use crate::config::{Color, Config, Element, Style};
+use crate::config::{Color, Config, Element, Segment, Style};
 use crate::theme::{GitStatus, HeaderInfo};
 use std::cell::RefCell;
 mod ansi;
@@ -23,7 +23,7 @@ mod registry;
 mod segments;
 mod style;
 use self::icons::{icon_str, resolve_icon_choice};
-use self::segment::{Ctx, IconStyle};
+use self::segment::{Ctx, IconStyle, SegmentValue};
 pub use self::segments::display_width_of;
 use self::segments::*;
 pub use self::style::CURRENT_VI_MODE;
@@ -50,217 +50,359 @@ struct SegmentText {
     joined_left: bool,
 }
 
-pub fn render_header_lines(
-    config: &Config,
-    info: &HeaderInfo,
-    vcs: Option<&GitStatus>,
+/// The renderer for one prompt. It holds the config, the prompt state and the terminal width;
+/// one instance renders one header. [`render_header_lines`] is the free-function entry point.
+struct Renderer<'a> {
+    config: &'a Config,
+    info: &'a HeaderInfo,
+    vcs: Option<&'a GitStatus>,
     cols: usize,
-) -> Vec<String> {
-    let layout = &config.layout;
-    let left = &layout.left;
-    let right = &layout.right;
-    let lines = left.len().max(right.len());
-    let frame = &config.frame;
-    let mut out: Vec<String> = Vec::with_capacity(lines + 1);
-    // p10k `SHOW_RULER`: lay a full row of ruler chars above the header.
-    if layout.show_ruler {
-        let ch = icon_str(config, "ruler").unwrap_or_else(|| "\u{2500}".to_string());
-        let style = config
-            .segment("ruler")
-            .effective_style(None, &config.defaults);
-        let width = display_width(&ch).max(1);
-        let n = cols / width;
-        out.push(paint(&ch.repeat(n), &style));
+}
+
+impl<'a> Renderer<'a> {
+    fn new(
+        config: &'a Config,
+        info: &'a HeaderInfo,
+        vcs: Option<&'a GitStatus>,
+        cols: usize,
+    ) -> Self {
+        Renderer {
+            config,
+            info,
+            vcs,
+            cols,
+        }
     }
-    out.extend(
-        (0..lines)
-            .map(|i| {
-                let left_row = left.get(i).map(Vec::as_slice);
-                let right_row = right.get(i).map(Vec::as_slice);
-                let render_side = |budget: Option<usize>| {
-                    let l = left_row
-                        .map(|seg| render_row(config, seg, info, vcs, false, budget))
-                        .unwrap_or_default();
-                    let r = right_row
-                        .map(|seg| render_row(config, seg, info, vcs, true, budget))
-                        .unwrap_or_default();
-                    (l, r)
-                };
-                let (prefix, suffix) = if i == 0 {
-                    (&frame.first_prefix, &frame.first_suffix)
-                } else {
-                    (&frame.newline_prefix, &frame.newline_suffix)
-                };
-                let pre_w = display_width(&prefix.text);
-                let suf_w = display_width(&suffix.text);
-                let mut row = String::new();
-                if !prefix.text.is_empty() {
-                    row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
-                }
-                // Right-align budget = cols - prefix width - suffix width, or the frame widens
-                // the row and pushes the suffix to the next line.
-                let body_budget = cols.saturating_sub(pre_w + suf_w);
-                let seps = &config.separators;
-                let indent = config.layout.right_indent;
-                // Width of each column (the right one including its start separator), used to
-                // decide whether the whole row fits. p10k's test is stricter than "just
-                // fits": content + indent + 1 must fit (measured: the same content is hidden
-                // at 33 cols and shown at 34, while the content is only 32 cols wide).
-                // Passing cols 0 for the right column alone skips the gap calculation.
-                let left_w =
-                    |l: &[SegmentText]| display_width(&assemble_row(l, &[], body_budget, seps, 0));
-                let right_w = |r: &[SegmentText]| display_width(&assemble_row(&[], r, 0, seps, 0));
-                let fits = |lw: usize, rw: usize| lw + rw + indent < body_budget;
-                // Pass 1: no shortening at all (p10k leaves it as-is when it fits). Shortening
-                // budgets always use the **unshortened** width, otherwise shortening from an
-                // already shortened width would shorten less than needed.
-                let (l0, r0) = render_side(None);
-                let (lw0, rw0) = (left_w(&l0), right_w(&r0));
-                let body = if fits(lw0, rw0) {
-                    assemble_row(&l0, &r0, body_budget, seps, indent)
-                } else {
-                    // Pass 2: shorten dir by the number of overflowing columns (narrow
-                    // terminals shorten, wide terminals do not). Only `dir` depends on the
-                    // budget, so the other segments reuse the first pass result.
-                    let overflow = (lw0 + rw0 + indent + 1).saturating_sub(body_budget);
-                    let shorten = |row: Option<&[Element]>, parts: &[SegmentText], right: bool| {
-                        row.map(|elements| {
-                            shorten_row(
-                                config,
-                                elements,
-                                info,
-                                vcs,
-                                right,
-                                parts.to_vec(),
-                                overflow,
-                            )
-                        })
-                        .unwrap_or_default()
-                    };
-                    let l1 = shorten(left_row, &l0, false);
-                    let r1 = shorten(right_row, &r0, true);
-                    let (lw1, rw1) = (left_w(&l1), right_w(&r1));
-                    if fits(lw1, rw1) {
-                        assemble_row(&l1, &r1, body_budget, seps, indent)
-                    } else {
-                        // Pass 3: still does not fit after shortening → drop the whole right
-                        // column (gap included). p10k omits the right column when the width is
-                        // insufficient instead of letting it overflow. The left column is
-                        // shortened again by its overflow over the unshortened width.
-                        let budget = lw0.saturating_sub(body_budget);
-                        let l2 = left_row
-                            .map(|elements| {
-                                shorten_row(config, elements, info, vcs, false, l0, budget)
-                            })
+
+    fn header_lines(&self) -> Vec<String> {
+        let config = self.config;
+        let cols = self.cols;
+        let layout = &config.layout;
+        let left = &layout.left;
+        let right = &layout.right;
+        let lines = left.len().max(right.len());
+        let frame = &config.frame;
+        let mut out: Vec<String> = Vec::with_capacity(lines + 1);
+        // p10k `SHOW_RULER`: lay a full row of ruler chars above the header.
+        if layout.show_ruler {
+            let ch = icon_str(config, "ruler").unwrap_or_else(|| "\u{2500}".to_string());
+            let style = config
+                .segment("ruler")
+                .effective_style(None, &config.defaults);
+            let width = display_width(&ch).max(1);
+            let n = cols / width;
+            out.push(paint(&ch.repeat(n), &style));
+        }
+        out.extend(
+            (0..lines)
+                .map(|i| {
+                    let left_row = left.get(i).map(Vec::as_slice);
+                    let right_row = right.get(i).map(Vec::as_slice);
+                    let render_side = |budget: Option<usize>| {
+                        let l = left_row
+                            .map(|seg| self.row(seg, false, budget))
                             .unwrap_or_default();
-                        assemble_row(&l2, &[], body_budget, seps, indent)
+                        let r = right_row
+                            .map(|seg| self.row(seg, true, budget))
+                            .unwrap_or_default();
+                        (l, r)
+                    };
+                    let (prefix, suffix) = if i == 0 {
+                        (&frame.first_prefix, &frame.first_suffix)
+                    } else {
+                        (&frame.newline_prefix, &frame.newline_suffix)
+                    };
+                    let pre_w = display_width(&prefix.text);
+                    let suf_w = display_width(&suffix.text);
+                    let mut row = String::new();
+                    if !prefix.text.is_empty() {
+                        row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
                     }
-                };
-                row.push_str(&body);
-                if !suffix.text.is_empty() {
-                    row.push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
-                }
-                row
-            })
-            .collect::<Vec<String>>(),
-    );
-    out
-}
+                    // Right-align budget = cols - prefix width - suffix width, or the frame
+                    // widens the row and pushes the suffix to the next line.
+                    let body_budget = cols.saturating_sub(pre_w + suf_w);
+                    let seps = &config.separators;
+                    let indent = config.layout.right_indent;
+                    // Width of each column (the right one including its start separator), used
+                    // to decide whether the whole row fits. p10k's test is stricter than "just
+                    // fits": content + indent + 1 must fit (measured: the same content is
+                    // hidden at 33 cols and shown at 34, while the content is only 32 cols
+                    // wide). Passing cols 0 for the right column alone skips the gap
+                    // calculation.
+                    let left_w = |l: &[SegmentText]| {
+                        display_width(&assemble_row(l, &[], body_budget, seps, 0))
+                    };
+                    let right_w =
+                        |r: &[SegmentText]| display_width(&assemble_row(&[], r, 0, seps, 0));
+                    let fits = |lw: usize, rw: usize| lw + rw + indent < body_budget;
+                    // Pass 1: no shortening at all (p10k leaves it as-is when it fits).
+                    // Shortening budgets always use the **unshortened** width, otherwise
+                    // shortening from an already shortened width would shorten less than
+                    // needed.
+                    let (l0, r0) = render_side(None);
+                    let (lw0, rw0) = (left_w(&l0), right_w(&r0));
+                    let body = if fits(lw0, rw0) {
+                        assemble_row(&l0, &r0, body_budget, seps, indent)
+                    } else {
+                        // Pass 2: shorten dir by the number of overflowing columns (narrow
+                        // terminals shorten, wide terminals do not). Only `dir` depends on the
+                        // budget, so the other segments reuse the first pass result.
+                        let overflow = (lw0 + rw0 + indent + 1).saturating_sub(body_budget);
+                        let shorten =
+                            |row: Option<&[Element]>, parts: &[SegmentText], right: bool| {
+                                row.map(|elements| {
+                                    self.shorten_row(elements, right, parts.to_vec(), overflow)
+                                })
+                                .unwrap_or_default()
+                            };
+                        let l1 = shorten(left_row, &l0, false);
+                        let r1 = shorten(right_row, &r0, true);
+                        let (lw1, rw1) = (left_w(&l1), right_w(&r1));
+                        if fits(lw1, rw1) {
+                            assemble_row(&l1, &r1, body_budget, seps, indent)
+                        } else {
+                            // Pass 3: still does not fit after shortening → drop the whole
+                            // right column (gap included). p10k omits the right column when the
+                            // width is insufficient instead of letting it overflow. The left
+                            // column is shortened again by its overflow over the unshortened
+                            // width.
+                            let budget = lw0.saturating_sub(body_budget);
+                            let l2 = left_row
+                                .map(|elements| self.shorten_row(elements, false, l0, budget))
+                                .unwrap_or_default();
+                            assemble_row(&l2, &[], body_budget, seps, indent)
+                        }
+                    };
+                    row.push_str(&body);
+                    if !suffix.text.is_empty() {
+                        row.push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
+                    }
+                    row
+                })
+                .collect::<Vec<String>>(),
+        );
+        out
+    }
 
-/// Re-render only the `dir` segments with a shortening budget. Every other segment's text does
-/// not depend on the budget, so passes 2 and 3 reuse the first pass result instead of rendering
-/// the whole row again.
-fn shorten_row(
-    config: &Config,
-    elements: &[Element],
-    info: &HeaderInfo,
-    vcs: Option<&GitStatus>,
-    right: bool,
-    mut parts: Vec<SegmentText>,
-    dir_budget: usize,
-) -> Vec<SegmentText> {
-    for (el, part) in elements.iter().zip(parts.iter_mut()) {
-        let (name, joined) = match el {
-            Element::Seg(name) => (name.as_str(), false),
-            Element::Joined(name) => (name.as_str(), true),
-            Element::Text(_) => continue,
-        };
-        if registry::find(name).is_some_and(|meta| meta.render.width_dependent()) {
-            *part = render_segment(config, name, info, vcs, right, Some(dir_budget), joined);
+    /// Render one row (one side of one header line).
+    fn row(
+        &self,
+        elements: &[Element],
+        right: bool,
+        dir_budget: Option<usize>,
+    ) -> Vec<SegmentText> {
+        let config = self.config;
+        elements
+            .iter()
+            .map(|el| match el {
+                Element::Seg(name) => self.segment(name, right, dir_budget, false),
+                Element::Joined(name) => self.segment(name, right, dir_budget, true),
+                Element::Text(t) => {
+                    let text = config.segment("text");
+                    let mut style = text.effective_style(None, &config.defaults);
+                    // `text` inherits fg and bold from defaults, never the background: the
+                    // terminal's own background shows through unless the `text` segment sets a
+                    // bg.
+                    if text.style.bg == Color::Default {
+                        style.bg = Color::Default;
+                    }
+                    SegmentText {
+                        text: paint(&expand_env(t), &style),
+                        style,
+                        padded: false,
+                        joined_left: false,
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// Re-render only the segments that depend on the shortening budget (`dir`). Every other
+    /// segment's text is independent of the budget, so the shortening passes reuse the first
+    /// pass result instead of rendering the whole row again.
+    fn shorten_row(
+        &self,
+        elements: &[Element],
+        right: bool,
+        mut parts: Vec<SegmentText>,
+        dir_budget: usize,
+    ) -> Vec<SegmentText> {
+        for (el, part) in elements.iter().zip(parts.iter_mut()) {
+            let (name, joined) = match el {
+                Element::Seg(name) => (name.as_str(), false),
+                Element::Joined(name) => (name.as_str(), true),
+                Element::Text(_) => continue,
+            };
+            if registry::find(name).is_some_and(|meta| meta.render.width_dependent()) {
+                *part = self.segment(name, right, Some(dir_budget), joined);
+            }
+        }
+        parts
+    }
+
+    /// Render one segment: evaluate the segment value, then compose it into the row part.
+    fn segment(
+        &self,
+        name: &str,
+        right: bool,
+        dir_budget: Option<usize>,
+        joined_left: bool,
+    ) -> SegmentText {
+        let seg = self.config.segment(name);
+        match self.evaluate(name, seg, dir_budget) {
+            Some(value) => self.compose(seg, value, right, joined_left),
+            None => SegmentText {
+                text: String::new(),
+                style: seg.effective_style(None, &self.config.defaults),
+                padded: false,
+                joined_left,
+            },
         }
     }
-    parts
-}
 
-fn render_row(
-    config: &Config,
-    elements: &[Element],
-    info: &HeaderInfo,
-    vcs: Option<&GitStatus>,
-    right: bool,
-    dir_budget: Option<usize>,
-) -> Vec<SegmentText> {
-    elements
-        .iter()
-        .map(|el| match el {
-            Element::Seg(name) => render_segment(config, name, info, vcs, right, dir_budget, false),
-            Element::Joined(name) => {
-                render_segment(config, name, info, vcs, right, dir_budget, true)
-            }
-            Element::Text(t) => {
-                let text = config.segment("text");
-                let mut style = text.effective_style(None, &config.defaults);
-                // `text` inherits fg and bold from defaults, never the background: the
-                // terminal's own background shows through unless the `text` segment sets a bg.
-                if text.style.bg == Color::Default {
-                    style.bg = Color::Default;
-                }
-                SegmentText {
-                    text: paint(&expand_env(t), &style),
-                    style,
-                    padded: false,
-                    joined_left: false,
-                }
-            }
-        })
-        .collect()
-}
+    /// The segment's contribution: painted text and the icon decision.
+    fn evaluate(
+        &self,
+        name: &str,
+        seg: &'a Segment,
+        dir_budget: Option<usize>,
+    ) -> Option<SegmentValue> {
+        let meta = registry::find(name)?;
+        let ctx = Ctx {
+            config: self.config,
+            segment: seg,
+            info: self.info,
+            vcs: self.vcs,
+            dir_budget,
+        };
+        Some(meta.render.render(&ctx))
+    }
 
-/// Renders one segment. The returned `text` is already colored ANSI; `style` feeds
-/// inter-segment separators and block backgrounds.
-fn render_segment(
-    config: &Config,
-    name: &str,
-    info: &HeaderInfo,
-    vcs: Option<&GitStatus>,
-    right: bool,
-    dir_budget: Option<usize>,
-    joined_left: bool,
-) -> SegmentText {
-    let seg = config.segment(name);
-    let style = seg.effective_style(None, &config.defaults);
-    // Leading space is added when the effective background is non-transparent (inheritance
-    // chain below); transparent segments get none—matching p10k lean, no space at line start.
-    // Effective segment background: the segment's own → global `defaults.bg` (p10k's
-    // `POWERLEVEL9K_BACKGROUND`) → transparent when neither (the terminal's own color).
-    // A forced black background used to draw black blocks on non-black terminals and made the
-    // right-column separators misread as "different background" and draw arrows. The
-    // `effective_style` inheritance already does this layer; the bg here is the result.
-    let has_real_bg = style.bg != Color::Default;
-    let value = match registry::find(name) {
-        Some(meta) => {
-            let ctx = Ctx {
-                config,
-                segment: seg,
-                info,
-                vcs,
-                dir_budget,
-            };
-            meta.render.render(&ctx)
+    /// Compose the value into the row part: icon, attach slots, prefix/suffix, padding and the
+    /// leading space.
+    fn compose(
+        &self,
+        seg: &'a Segment,
+        value: SegmentValue,
+        right: bool,
+        joined_left: bool,
+    ) -> SegmentText {
+        let config = self.config;
+        let info = self.info;
+        let vcs = self.vcs;
+        let style = seg.effective_style(None, &config.defaults);
+        // Leading space is added when the effective background is non-transparent (inheritance
+        // chain below); transparent segments get none—matching p10k lean, no space at line
+        // start. Effective segment background: the segment's own → global `defaults.bg`
+        // (p10k's `POWERLEVEL9K_BACKGROUND`) → transparent when neither (the terminal's own
+        // color). The `effective_style` inheritance already does this layer; the bg here is the
+        // result.
+        let has_real_bg = style.bg != Color::Default;
+        let text = value.text;
+        // Segment icon: config `icon` (auto-overrides the applicable mode by char class) →
+        // otherwise the built-in default table.
+        // The space after the icon (p10k `LEFT_MIDDLE_WHITESPACE`) is added only when the
+        // segment has both an icon and content—an icon-only segment (e.g. os_icon) gets none,
+        // or it would stack with the trailing padding into two spaces.
+        // Segments with empty text: only "icon is content" segments (env indicators, os badges)
+        // draw the icon; the rest hide entirely—matching p10k: no vcs icon outside a git repo,
+        // no gear when jobs=0.
+        // Icon: the segment decides (key, vcs remote, dir class, os badge); the renderer
+        // resolves the glyph for the mode.
+        let icon = resolve_icon_choice(config, &value.icon, info, vcs);
+        // Icon color: `visual-identifier-color` (p10k `SEG_VISUAL_IDENTIFIER_COLOR`) wins; the
+        // vcs segment falls back to `clean-foreground` when unset—the icon indicates the repo
+        // and p10k also defaults it to green (icons do not inherit the segment default, or the
+        // default theme would render them in the terminal default color). `status` falls back
+        // to the foreground of its state.
+        let icon_style = if seg.prop("visual-identifier-color").is_some() {
+            prop_style(seg, &style, "visual-identifier-color")
+        } else {
+            match value.icon_style {
+                IconStyle::Segment => style.clone(),
+                IconStyle::VcsClean => prop_style(seg, &style, "clean-foreground"),
+                IconStyle::Status => prop_style(seg, &style, status_foreground(info)),
+            }
+        };
+        // Icon placement: the column decides by default (left column puts the icon first, the
+        // right column puts it last, so both read outward from the line).
+        // `icon-before-content` overrides that per segment, which is p10k's
+        // `POWERLEVEL9K_<SEG>_ICON_BEFORE_CONTENT`.
+        let icon_first = match seg.prop("icon-before-content") {
+            Some(crate::config::Prop::Bool(b)) => *b,
+            _ => !right,
+        };
+        let icon_text = match icon {
+            Some(ic) if text.is_empty() => {
+                if value.icon.is_content() {
+                    paint(&ic, &icon_style)
+                } else {
+                    String::new()
+                }
+            }
+            // The space between icon and content (p10k `LEFT_MIDDLE_WHITESPACE` /
+            // `RIGHT_MIDDLE_WHITESPACE`) sits between them. Its width comes from
+            // `icon-padding` (p10k `POWERLEVEL9K_ICON_PADDING`): one space by default, two with
+            // `moderate`. It goes on the content side, so the icon stays flush against the
+            // segment's outer edge.
+            Some(ic) => {
+                let pad = config.icon_padding.spaces();
+                if icon_first {
+                    paint(&format!("{ic}{pad}"), &icon_style)
+                } else {
+                    // The icon comes after the content: the middle whitespace stays one space
+                    // before the icon, and the extra `moderate` space goes to the outer side.
+                    let extra = if pad.len() > 1 { " " } else { "" };
+                    paint(&format!(" {ic}{extra}"), &icon_style)
+                }
+            }
+            None => String::new(),
+        };
+        // Attach text slots: left (before the icon) / middle (between icon and content,
+        // requires both) / right (after the content). Concatenated only, never separate
+        // blocks; fg defaults to the segment style. text-middle always sits right between icon
+        // and content: with the left column's icon first → middle after the icon; with the
+        // right column's icon last → middle between content and icon.
+        // Segment prefix/suffix (p10k `SEG_PREFIX`/`SEG_SUFFIX`, e.g. vcs `on `, exec `took `):
+        // drawn at the very start/end of the segment, colored with the segment style.
+        // p10k segment whitespace (`LEFT_LEFT_WHITESPACE` / `LEFT_RIGHT_WHITESPACE`, one space
+        // each by default): a space around the segment content so both sides of a separator
+        // (subsep/arrow) have whitespace instead of touching. Segments without a background get
+        // no leading space—matching p10k lean, nothing at line start.
+        // The segment body (without the surrounding whitespace).
+        let mut body = String::new();
+        if let Some(p) = &seg.prefix {
+            body.push_str(&paint(p, &style));
         }
-        None => {
-            // An unknown segment renders nothing; a configured content is not used (p10k looks
-            // up `prompt_<name>` and has no fallback).
+        if let Some(l) = &seg.text_left {
+            body.push_str(&paint_attach(&style, l));
+        }
+        let middle = if !icon_text.is_empty() && !text.is_empty() {
+            seg.text_middle
+                .as_ref()
+                .map(|m| paint_attach(&style, m))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if icon_first {
+            body.push_str(&icon_text);
+            body.push_str(&middle);
+            body.push_str(&text);
+        } else {
+            body.push_str(&text);
+            body.push_str(&middle);
+            body.push_str(&icon_text);
+        }
+        if let Some(r) = &seg.text_right {
+            body.push_str(&paint_attach(&style, r));
+        }
+        if let Some(s) = &seg.suffix {
+            body.push_str(&paint(s, &style));
+        }
+        // A conditional segment with an unmet condition has nothing to show → hide it
+        // entirely, leaving no side whitespace.
+        if body.is_empty() {
             return SegmentText {
                 text: String::new(),
                 style,
@@ -268,135 +410,33 @@ fn render_segment(
                 joined_left,
             };
         }
-    };
-    let text = value.text;
-    // Segment icon: config `icon` (auto-overrides the applicable mode by char class) →
-    // otherwise the built-in default table.
-    // The space after the icon (p10k `LEFT_MIDDLE_WHITESPACE`) is added only when the segment
-    // has both an icon and content—an icon-only segment (e.g. os_icon) gets none, or it would
-    // stack with the trailing padding into two spaces.
-    // Segments with empty text: only "icon is content" segments (env indicators, os badges)
-    // draw the icon; the rest hide entirely—matching p10k: no vcs icon outside a git repo, no
-    // gear when jobs=0.
-    // Icon: the segment decides (key, vcs remote, dir class, os badge); the renderer resolves
-    // the glyph for the mode.
-    let icon = resolve_icon_choice(config, &value.icon, info, vcs);
-    // Icon color: `visual-identifier-color` (p10k `SEG_VISUAL_IDENTIFIER_COLOR`) wins; the vcs
-    // segment falls back to `clean-foreground` when unset—the icon indicates the repo and p10k
-    // also defaults it to green (icons do not inherit the segment default, or the default
-    // theme would render them in the terminal default color). `status` falls back to the
-    // foreground of its state.
-    let icon_style = if seg.prop("visual-identifier-color").is_some() {
-        prop_style(seg, &style, "visual-identifier-color")
-    } else {
-        match value.icon_style {
-            IconStyle::Segment => style.clone(),
-            IconStyle::VcsClean => prop_style(seg, &style, "clean-foreground"),
-            IconStyle::Status => prop_style(seg, &style, status_foreground(info)),
+        let mut out = String::new();
+        // Leading space: always for segments with a background; unconditional for right-column
+        // segments, which are always preceded by a separator, and p10k's separator is followed
+        // by a left_space. Transparent segments at the start of the left column get none. A
+        // joined segment gets none: p10k emits no left_space for it, and the previous segment's
+        // trailing space is the only gap.
+        if (has_real_bg || right) && !joined_left {
+            out.push_str(&paint(" ", &style));
         }
-    };
-    // Icon placement: the column decides by default (left column puts the icon first, the right
-    // column puts it last, so both read outward from the line). `icon-before-content` overrides
-    // that per segment, which is p10k's `POWERLEVEL9K_<SEG>_ICON_BEFORE_CONTENT`.
-    let icon_first = match seg.prop("icon-before-content") {
-        Some(crate::config::Prop::Bool(b)) => *b,
-        _ => !right,
-    };
-    let icon_text = match icon {
-        Some(ic) if text.is_empty() => {
-            if value.icon.is_content() {
-                paint(&ic, &icon_style)
-            } else {
-                String::new()
-            }
-        }
-        // The space between icon and content (p10k `LEFT_MIDDLE_WHITESPACE` /
-        // `RIGHT_MIDDLE_WHITESPACE`) sits between them. Its width comes from
-        // `icon-padding` (p10k `POWERLEVEL9K_ICON_PADDING`): one space by default, two with
-        // `moderate`. It goes on the content side, so the icon stays flush against the
-        // segment's outer edge.
-        Some(ic) => {
-            let pad = config.icon_padding.spaces();
-            if icon_first {
-                paint(&format!("{ic}{pad}"), &icon_style)
-            } else {
-                // The icon comes after the content: the middle whitespace stays one space
-                // before the icon, and the extra `moderate` space goes to the outer side.
-                let extra = if pad.len() > 1 { " " } else { "" };
-                paint(&format!(" {ic}{extra}"), &icon_style)
-            }
-        }
-        None => String::new(),
-    };
-    // Attach text slots: left (before the icon) / middle (between icon and content, requires
-    // both) / right (after the content). Concatenated only, never separate blocks; fg defaults
-    // to the segment style. text-middle always sits right between icon and content: with the
-    // left column's icon first → middle after the icon; with the right column's icon last →
-    // middle between content and icon.
-    // Segment prefix/suffix (p10k `SEG_PREFIX`/`SEG_SUFFIX`, e.g. vcs `on `, exec `took `):
-    // drawn at the very start/end of the segment, colored with the segment style.
-    // p10k segment whitespace (`LEFT_LEFT_WHITESPACE` / `LEFT_RIGHT_WHITESPACE`, one space each
-    // by default): a space around the segment content so both sides of a separator
-    // (subsep/arrow) have whitespace instead of touching. Segments without a background get no
-    // leading space—matching p10k lean, nothing at line start.
-    // The segment body (without the surrounding whitespace).
-    let mut body = String::new();
-    if let Some(p) = &seg.prefix {
-        body.push_str(&paint(p, &style));
-    }
-    if let Some(l) = &seg.text_left {
-        body.push_str(&paint_attach(&style, l));
-    }
-    let middle = if !icon_text.is_empty() && !text.is_empty() {
-        seg.text_middle
-            .as_ref()
-            .map(|m| paint_attach(&style, m))
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
-    if icon_first {
-        body.push_str(&icon_text);
-        body.push_str(&middle);
-        body.push_str(&text);
-    } else {
-        body.push_str(&text);
-        body.push_str(&middle);
-        body.push_str(&icon_text);
-    }
-    if let Some(r) = &seg.text_right {
-        body.push_str(&paint_attach(&style, r));
-    }
-    if let Some(s) = &seg.suffix {
-        body.push_str(&paint(s, &style));
-    }
-    // A conditional segment with an unmet condition has nothing to show → hide it entirely,
-    // leaving no side whitespace.
-    if body.is_empty() {
-        return SegmentText {
-            text: String::new(),
-            style,
-            padded: false,
-            joined_left,
-        };
-    }
-    let mut out = String::new();
-    // Leading space: always for segments with a background; unconditional for right-column
-    // segments, which are always preceded by a separator, and p10k's separator is followed by
-    // a left_space. Transparent segments at the start of the left column get none. A joined
-    // segment gets none: p10k emits no left_space for it, and the previous segment's trailing
-    // space is the only gap.
-    if (has_real_bg || right) && !joined_left {
+        out.push_str(&body);
         out.push_str(&paint(" ", &style));
+        SegmentText {
+            text: out,
+            style,
+            padded: true,
+            joined_left,
+        }
     }
-    out.push_str(&body);
-    out.push_str(&paint(" ", &style));
-    SegmentText {
-        text: out,
-        style,
-        padded: true,
-        joined_left,
-    }
+}
+
+pub fn render_header_lines(
+    config: &Config,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+    cols: usize,
+) -> Vec<String> {
+    Renderer::new(config, info, vcs, cols).header_lines()
 }
 
 #[cfg(test)]
@@ -498,8 +538,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        let plain = render_segment(&cfg, "vcs", &info("/tmp", None), None, true, None, false);
-        let joined = render_segment(&cfg, "vcs", &info("/tmp", None), None, true, None, true);
+        let plain =
+            Renderer::new(&cfg, &info("/tmp", None), None, 0).segment("vcs", true, None, false);
+        let joined =
+            Renderer::new(&cfg, &info("/tmp", None), None, 0).segment("vcs", true, None, true);
         let p = strip_sgr(&plain.text);
         let j = strip_sgr(&joined.text);
         assert!(
@@ -572,7 +614,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        let seg = render_segment(&cfg, "vcs", &info("/tmp", None), None, false, None, true);
+        let seg =
+            Renderer::new(&cfg, &info("/tmp", None), None, 0).segment("vcs", false, None, true);
         let text = strip_sgr(&seg.text);
         assert!(
             text.starts_with("on L"),
@@ -1275,11 +1318,8 @@ mod tests {
     #[test]
     fn text_elements_do_not_inherit_the_defaults_background() {
         let cfg = Config::parse("defaults fg=200 bg=236\nlayout {}").unwrap();
-        let row = render_row(
-            &cfg,
+        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0).row(
             &[Element::Text("hi".into())],
-            &info("/tmp", None),
-            None,
             false,
             None,
         );
@@ -1291,11 +1331,8 @@ mod tests {
         assert_eq!(row[0].style.fg, Color::Xterm(200));
 
         let cfg = Config::parse("defaults bg=236\nsegments { text bg=31 }\nlayout {}").unwrap();
-        let row = render_row(
-            &cfg,
+        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0).row(
             &[Element::Text("hi".into())],
-            &info("/tmp", None),
-            None,
             false,
             None,
         );
@@ -1310,11 +1347,8 @@ mod tests {
     #[test]
     fn text_elements_stay_transparent_without_defaults_bg() {
         let cfg = Config::parse("layout {}").unwrap();
-        let row = render_row(
-            &cfg,
+        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0).row(
             &[Element::Text("hi".into())],
-            &info("/tmp", None),
-            None,
             false,
             None,
         );
