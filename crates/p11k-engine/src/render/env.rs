@@ -20,6 +20,59 @@ thread_local! {
     static ENV: RefCell<Option<EnvInfo>> = const { RefCell::new(None) };
 }
 
+/// Environment access: the process environment in production, an injected map in tests.
+pub(super) trait Env: Sync {
+    fn var(&self, name: &str) -> Option<String>;
+}
+
+/// The process environment.
+pub(super) struct ProcessEnv;
+
+impl Env for ProcessEnv {
+    fn var(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static INJECTED: RefCell<Option<Box<dyn Env>>> = const { RefCell::new(None) };
+}
+
+/// Reads one variable through the current environment access.
+fn var(name: &str) -> Option<String> {
+    #[cfg(test)]
+    if let Some(value) = INJECTED.with(|env| env.borrow().as_ref().map(|env| env.var(name))) {
+        return value;
+    }
+    ProcessEnv.var(name)
+}
+
+/// Runs `f` with the given environment: the injected map replaces the process environment, so a
+/// test does not depend on the variables the machine ships. Also clears the memoised
+/// [`EnvInfo`] before and after.
+#[cfg(test)]
+pub(super) fn with_env<R>(vars: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+    struct MapEnv(std::collections::BTreeMap<String, String>);
+
+    impl Env for MapEnv {
+        fn var(&self, name: &str) -> Option<String> {
+            self.0.get(name).cloned()
+        }
+    }
+
+    let map = vars
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    INJECTED.with(|env| *env.borrow_mut() = Some(Box::new(MapEnv(map))));
+    ENV.with(|c| *c.borrow_mut() = None);
+    let out = f();
+    INJECTED.with(|env| *env.borrow_mut() = None);
+    ENV.with(|c| *c.borrow_mut() = None);
+    out
+}
+
 pub(super) fn env() -> EnvInfo {
     ENV.with(|c| {
         if c.borrow().is_none() {
@@ -30,17 +83,11 @@ pub(super) fn env() -> EnvInfo {
 }
 
 pub(super) fn detect_env() -> EnvInfo {
-    let user = std::env::var("USER")
-        .ok()
-        .or_else(|| std::env::var("LOGNAME").ok())
-        .unwrap_or_default();
-    let host = std::env::var("HOSTNAME")
-        .ok()
-        .or_else(|| std::env::var("HOST").ok())
-        .unwrap_or_default();
+    let user = var("USER").or_else(|| var("LOGNAME")).unwrap_or_default();
+    let host = var("HOSTNAME").or_else(|| var("HOST")).unwrap_or_default();
     let ssh = ["SSH_CONNECTION", "SSH_TTY", "SSH_CLIENT"]
         .iter()
-        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()));
+        .any(|k| var(k).is_some_and(|v| !v.is_empty()));
     let root = unsafe { libc::geteuid() } == 0;
     EnvInfo {
         user,
@@ -85,7 +132,7 @@ pub(super) fn root_indicator_text() -> String {
 
 /// Reads an env var; missing or empty → None.
 pub(super) fn env_var(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|v| !v.is_empty())
+    var(name).filter(|v| !v.is_empty())
 }
 
 /// Level segments (ranger/nnf/lf/yazi): value 0 or empty → empty (not inside that program).
@@ -219,7 +266,7 @@ pub(super) fn battery() -> String {
 }
 
 pub(crate) fn home() -> String {
-    std::env::var("HOME").unwrap_or_default()
+    var("HOME").unwrap_or_default()
 }
 
 pub(super) fn detect_virt() -> String {
