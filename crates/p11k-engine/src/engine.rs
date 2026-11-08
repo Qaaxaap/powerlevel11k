@@ -262,7 +262,7 @@ pub fn run() -> anyhow::Result<()> {
     // Lines the last header paint wrote. An async git result that changes nothing would paint
     // the same bytes over the same rows, so `redraw_header_cfg` compares against this and skips.
     // Paths that repaint over cleared rows set it to None first.
-    let mut last_header: Option<Vec<String>> = None;
+    let mut last_header: Option<Vec<crate::render::PaintedLine>> = None;
     // Defer the prompt repaint after a resize: wait for zle's repainted prompt and buffer to
     // pass through (~60ms) before painting the header, so it is not painted before zle has
     // moved the input line into place.
@@ -807,7 +807,7 @@ fn open_fifo(path: &std::path::Path, flags: libc::c_int) -> io::Result<i32> {
 /// Rows the terminal reflow adds when `lines` (the previous header) are rendered at `cols`:
 /// everything above one row per header line. The engine cannot move those rows by "up N rows"
 /// after a reflow; the signal repaint clears them instead.
-fn reflow_extra_rows(lines: Option<&[String]>, cols: usize) -> usize {
+fn reflow_extra_rows(lines: Option<&[crate::render::PaintedLine]>, cols: usize) -> usize {
     let Some(lines) = lines else {
         return 0;
     };
@@ -815,8 +815,11 @@ fn reflow_extra_rows(lines: Option<&[String]>, cols: usize) -> usize {
     let rows: usize = lines
         .iter()
         .map(|line| {
-            let width = crate::render::display_width_of(line);
-            if width == 0 { 1 } else { width.div_ceil(cols) }
+            if line.width == 0 {
+                1
+            } else {
+                line.width.div_ceil(cols)
+            }
         })
         .sum();
     rows.saturating_sub(lines.len())

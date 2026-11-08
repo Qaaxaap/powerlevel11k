@@ -84,13 +84,16 @@ pub fn prompt_start(out: &mut dyn Write) -> io::Result<()> {
 /// each line's **display width**. When content is wider than the terminal the terminal wraps it,
 /// and the caller converts that width into the actual number of rows occupied (the instant
 /// header must move up by it to erase).
-fn header_body(out: &mut dyn Write, lines: &[String]) -> io::Result<Vec<usize>> {
+fn header_body(
+    out: &mut dyn Write,
+    lines: &[crate::render::PaintedLine],
+) -> io::Result<Vec<usize>> {
     let mut widths = Vec::with_capacity(lines.len());
     for line in lines {
         write!(out, "\r\x1b[K")?;
-        out.write_all(line.as_bytes())?;
+        out.write_all(line.text.as_bytes())?;
         write!(out, "\r\n")?;
-        widths.push(crate::render::display_width_of(line));
+        widths.push(line.width);
     }
     Ok(widths)
 }
@@ -107,7 +110,7 @@ pub fn render_header_cfg(
     vcs: Option<&GitStatus>,
 ) -> io::Result<Vec<usize>> {
     prompt_start(out)?;
-    let lines = crate::render::render_header_lines(config, info, vcs, cols);
+    let lines = crate::render::render_header_lines_with_widths(config, info, vcs, cols);
     header_body(out, &lines)
 }
 
@@ -133,9 +136,9 @@ pub fn redraw_header_cfg(
     config: &crate::config::Config,
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
-    last: &mut Option<Vec<String>>,
+    last: &mut Option<Vec<crate::render::PaintedLine>>,
 ) -> io::Result<()> {
-    let lines = crate::render::render_header_lines(config, info, vcs, cols);
+    let lines = crate::render::render_header_lines_with_widths(config, info, vcs, cols);
     if last.as_ref() == Some(&lines) {
         return Ok(());
     }

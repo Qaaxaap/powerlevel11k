@@ -22,7 +22,7 @@ pub fn paint_prompt(
     current: Option<&HeaderInfo>,
     instant: &HeaderInfo,
     last_vcs: Option<&(String, Option<GitStatus>)>,
-    last: &mut Option<Vec<String>>,
+    last: &mut Option<Vec<crate::render::PaintedLine>>,
 ) -> io::Result<()> {
     let info = current.unwrap_or(instant);
     let vcs = last_vcs
