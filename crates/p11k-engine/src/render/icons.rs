@@ -10,7 +10,7 @@ use crate::theme::GitStatus;
 
 use super::glob::glob_match_path;
 use super::{
-    IconEntry, aws_eb_env_text, current_dir, detect_os_icon, dir_writable_state, dir_writable_text, dropbox_text,
+    aws_eb_env_text, current_dir, detect_os_icon, dir_writable_state, dir_writable_text, dropbox_text,
     env, env_has_proxy, env_var, fvm_text, haskell_stack_text, in_nix_shell, laravel_version_text,
     level_icon, package_text, per_directory_history_text, rspec_stats_text, taskwarrior_text,
     todo_text, toolbox_text,
@@ -26,6 +26,18 @@ pub(super) fn icon_by_mode(e: &IconEntry, mode: &crate::config::IconMode) -> Str
         crate::config::IconMode::Ascii => e.ascii,
     }
     .to_string()
+}
+
+/// The built-in icon chars of a segment across the three font tiers.
+/// `nerdfont-complete` and `nerdfont-fontconfig` are the same case branch with identical
+/// glyphs in p10k's source (`internal/icons.zsh`), so they merge into one `nerdfont` tier;
+/// `compatible` uses standard Unicode + Powerline fonts and `ascii` is plain ASCII.
+/// The icon data lives in the single [`icon_default`] table.
+#[derive(Clone, Copy)]
+pub(super) struct IconEntry {
+    nerdfont: &'static str,
+    compatible: &'static str,
+    ascii: &'static str,
 }
 
 /// Icon table construction helper: three-tier chars → [`IconEntry`].
