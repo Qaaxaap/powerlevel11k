@@ -114,23 +114,7 @@ pub fn prefix_text(config: &Config, state: Option<&str>) -> String {
 /// The visible text of a string that may carry SGR sequences. Used where the same text has to be
 /// matched after a terminal layer stripped the colours, such as PSReadLine repainting the prompt.
 pub fn strip_ansi(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                for d in chars.by_ref() {
-                    if d.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
+    super::ansi::strip(s)
 }
 
 /// Input-line prefix in zsh's prompt syntax: `%F{...}` is zero width for zle, so the prefix can

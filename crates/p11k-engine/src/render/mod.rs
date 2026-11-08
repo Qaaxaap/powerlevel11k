@@ -12,6 +12,7 @@
 use crate::config::{Color, Config, Element, Style};
 use crate::theme::{GitStatus, HeaderInfo};
 use std::cell::RefCell;
+mod ansi;
 mod glob;
 pub(crate) use self::glob::workdir_is_disabled;
 mod env;
@@ -2459,6 +2460,19 @@ mod tests {
 
     /// The dir_writable icon is a fixed key now: the text decides whether the segment shows.
     /// The old conditional helper read the engine process directory instead of the shell's.
+    /// A hyperlink wraps the dir text in OSC 8; the URL is not visible text, and the width must
+    /// not count it (nor stop at an `m` inside the path).
+    #[test]
+    fn hyperlink_does_not_change_the_visible_width() {
+        let cfg = Config::parse(
+            "mode \"ascii\"\nsegments { dir hyperlink=#true }\nlayout { left { line { dir } } }",
+        )
+        .unwrap();
+        let line = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("");
+        assert!(line.contains("\x1b]8;;"), "no hyperlink: {line:?}");
+        assert_eq!(display_width(&line), 5, "got {line:?}");
+    }
+
     /// In the ascii tier the dir icon is empty. An empty icon is no icon: the row must not gain
     /// the icon padding.
     #[test]
