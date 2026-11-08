@@ -1208,7 +1208,12 @@ enum Side {
 
 /// Emit one column: start cap, the segments with their separators, end cap. The two sides share
 /// the loop; the caps, the separator chars and the fallback spacing differ per side.
-fn emit_side(parts: &[&SegmentText], seps: &crate::config::Separators, side: Side) -> String {
+fn emit_side(
+    parts: &[&SegmentText],
+    seps: &crate::config::Separators,
+    side: Side,
+) -> super::PaintedLine {
+    use super::ansi::width;
     let (start_cap, end_cap, sep, sub, sub_fg) = match side {
         Side::Left => (
             &seps.left_tail,
@@ -1226,11 +1231,13 @@ fn emit_side(parts: &[&SegmentText], seps: &crate::config::Separators, side: Sid
         ),
     };
     let mut out = String::new();
+    let mut line_width = 0usize;
     if !start_cap.is_empty()
         && let Some(first) = parts.first()
         && first.style.bg != Color::Default
     {
         out.push_str(&arrow(start_cap, first.style.bg.clone(), Color::Default));
+        line_width += width(start_cap);
     }
     let mut prev: Option<&SegmentText> = None;
     for s in parts {
@@ -1239,6 +1246,7 @@ fn emit_side(parts: &[&SegmentText], seps: &crate::config::Separators, side: Sid
                 // A joined first segment has no left neighbor, so its leading space stays.
                 if s.joined_left && (side == Side::Right || s.style.bg != Color::Default) {
                     out.push_str(&paint(" ", &s.style));
+                    line_width += 1;
                 }
             }
             Some(p) if !s.joined_left => {
@@ -1255,8 +1263,10 @@ fn emit_side(parts: &[&SegmentText], seps: &crate::config::Separators, side: Sid
                                 None => s.style.clone(),
                             };
                             out.push_str(&paint(sub, &st));
+                            line_width += width(sub);
                         } else if side == Side::Left && !p.padded {
                             out.push(' ');
+                            line_width += 1;
                         }
                     } else if !sep.is_empty() {
                         // Left: the arrow fg is the previous bg (pointing to the current bg).
@@ -1267,16 +1277,20 @@ fn emit_side(parts: &[&SegmentText], seps: &crate::config::Separators, side: Sid
                             Side::Right => (s.style.bg.clone(), p.style.bg.clone()),
                         };
                         out.push_str(&arrow(sep, fg, bg));
+                        line_width += width(sep);
                     } else if side == Side::Left && !p.padded {
                         out.push(' ');
+                        line_width += 1;
                     }
                 } else if side == Side::Left && !p.padded {
                     out.push(' ');
+                    line_width += 1;
                 }
             }
             Some(_) => {}
         }
         out.push_str(&s.text); // text is already colored, do not recolor
+        line_width += s.width;
         prev = Some(s);
     }
     if !end_cap.is_empty()
@@ -1284,8 +1298,12 @@ fn emit_side(parts: &[&SegmentText], seps: &crate::config::Separators, side: Sid
         && last.style.bg != Color::Default
     {
         out.push_str(&arrow(end_cap, last.style.bg.clone(), Color::Default));
+        line_width += width(end_cap);
     }
-    out
+    super::PaintedLine {
+        text: out,
+        width: line_width,
+    }
 }
 
 pub(super) fn assemble_row(
@@ -1294,25 +1312,27 @@ pub(super) fn assemble_row(
     cols: usize,
     seps: &crate::config::Separators,
     right_indent: usize,
-) -> String {
+) -> super::PaintedLine {
+    use super::ansi::width;
     let left_parts: Vec<&SegmentText> = left.iter().filter(|s| !s.text.is_empty()).collect();
     let right_parts: Vec<&SegmentText> = right.iter().filter(|s| !s.text.is_empty()).collect();
-    let mut out = emit_side(&left_parts, seps, Side::Left);
+    let left_line = emit_side(&left_parts, seps, Side::Left);
+    let mut out = left_line.text;
+    let mut line_width = left_line.width;
     if !right_parts.is_empty() {
-        let right_str = emit_side(&right_parts, seps, Side::Right);
-        let lw = display_width(&out);
-        let rw = display_width(&right_str);
+        let right_line = emit_side(&right_parts, seps, Side::Right);
         // Right alignment: gap chars fill the span from the left segments to the right
         // column's start. The right column keeps `right_indent` columns from the right edge—
         // zsh's `ZLE_RPROMPT_INDENT` defaults to 1, so p10k's right column always has one cell
         // before the window border; drawing flush would make it "fit" one column earlier than
         // p10k and reach the last cell (many terminals wrap there).
         let edge = cols.saturating_sub(right_indent);
-        if edge > rw {
-            let start = edge - rw; // right column start (0-based)
-            if start > lw {
+        if edge > right_line.width {
+            let start = edge - right_line.width; // right column start (0-based)
+            if start > line_width {
                 let gap_char = if seps.gap.is_empty() { " " } else { &seps.gap };
-                let gap_str = gap_char.repeat(start - lw);
+                let gap_str = gap_char.repeat(start - line_width);
+                line_width += width(&gap_str);
                 // gap foreground (p10k MULTILINE_FIRST_PROMPT_GAP_FOREGROUND);
                 // unset → emitted as-is (terminal default color).
                 match &seps.gap_foreground {
@@ -1327,9 +1347,13 @@ pub(super) fn assemble_row(
                 }
             }
         }
-        out.push_str(&right_str);
+        out.push_str(&right_line.text);
+        line_width += right_line.width;
     }
-    out
+    super::PaintedLine {
+        text: out,
+        width: line_width,
+    }
 }
 
 /// Draws a separator arrow: `fg` is its foreground (joining the previous background), `bg` the
@@ -1351,13 +1375,6 @@ pub(super) fn arrow(ch: &str, fg: Color, bg: Color) -> String {
     s.push_str(ch);
     s.push_str("\x1b[0m");
     s
-}
-
-/// Display width (ANSI stripped, per Unicode width: emoji/CJK wide chars count 2, combining/
-/// zero-width count 0). Used by theme to compute how many rows the terminal wraps content
-/// wider than cols into.
-pub fn display_width_of(s: &str) -> usize {
-    display_width(s)
 }
 
 pub(crate) fn display_width(s: &str) -> usize {

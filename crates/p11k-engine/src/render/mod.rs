@@ -24,7 +24,6 @@ mod segments;
 mod style;
 use self::icons::{icon_str, resolve_icon_choice};
 use self::segment::{Ctx, IconStyle, SegmentValue};
-pub use self::segments::display_width_of;
 use self::segments::*;
 pub use self::style::CURRENT_VI_MODE;
 pub use self::style::{
@@ -37,9 +36,19 @@ use std::collections::HashMap;
 /// Renders the header as per-line content (each line = left segments + right-aligned right
 /// segments, without cursor/clear/newline). The theme layer draws it line by line as
 /// `\r\e[K` + content + `\r\n`.
+/// One rendered header line: the ANSI text and its visible width. The width comes from the
+/// segments and the separators when the row is assembled, so no consumer re-scans the string.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PaintedLine {
+    pub text: String,
+    pub width: usize,
+}
+
 #[derive(Clone)]
 struct SegmentText {
     text: String,
+    /// Visible width of `text`, recorded when the segment is composed.
+    width: usize,
     style: Style,
     /// Whether the text already carries the segment's trailing padding; segments without a
     /// background get no extra space between them.
@@ -74,7 +83,7 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    fn header_lines(&self) -> Vec<String> {
+    fn header_lines(&self) -> Vec<PaintedLine> {
         let config = self.config;
         let cols = self.cols;
         let layout = &config.layout;
@@ -82,7 +91,7 @@ impl<'a> Renderer<'a> {
         let right = &layout.right;
         let lines = left.len().max(right.len());
         let frame = &config.frame;
-        let mut out: Vec<String> = Vec::with_capacity(lines + 1);
+        let mut out: Vec<PaintedLine> = Vec::with_capacity(lines + 1);
         // p10k `SHOW_RULER`: lay a full row of ruler chars above the header.
         if layout.show_ruler {
             let ch = icon_str(config, "ruler").unwrap_or_else(|| "\u{2500}".to_string());
@@ -91,7 +100,10 @@ impl<'a> Renderer<'a> {
                 .effective_style(None, &config.defaults);
             let width = display_width(&ch).max(1);
             let n = cols / width;
-            out.push(paint(&ch.repeat(n), &style));
+            out.push(PaintedLine {
+                text: paint(&ch.repeat(n), &style),
+                width: width * n,
+            });
         }
         out.extend(
             (0..lines)
@@ -114,9 +126,14 @@ impl<'a> Renderer<'a> {
                     };
                     let pre_w = display_width(&prefix.text);
                     let suf_w = display_width(&suffix.text);
-                    let mut row = String::new();
+                    let mut row = PaintedLine {
+                        text: String::new(),
+                        width: 0,
+                    };
                     if !prefix.text.is_empty() {
-                        row.push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
+                        row.text
+                            .push_str(&paint(&prefix.text, &config.frame_piece_style(prefix)));
+                        row.width += pre_w;
                     }
                     // Right-align budget = cols - prefix width - suffix width, or the frame
                     // widens the row and pushes the suffix to the next line.
@@ -129,11 +146,9 @@ impl<'a> Renderer<'a> {
                     // hidden at 33 cols and shown at 34, while the content is only 32 cols
                     // wide). Passing cols 0 for the right column alone skips the gap
                     // calculation.
-                    let left_w = |l: &[SegmentText]| {
-                        display_width(&assemble_row(l, &[], body_budget, seps, 0))
-                    };
-                    let right_w =
-                        |r: &[SegmentText]| display_width(&assemble_row(&[], r, 0, seps, 0));
+                    let left_w =
+                        |l: &[SegmentText]| assemble_row(l, &[], body_budget, seps, 0).width;
+                    let right_w = |r: &[SegmentText]| assemble_row(&[], r, 0, seps, 0).width;
                     let fits = |lw: usize, rw: usize| lw + rw + indent < body_budget;
                     // Pass 1: no shortening at all (p10k leaves it as-is when it fits).
                     // Shortening budgets always use the **unshortened** width, otherwise
@@ -173,13 +188,16 @@ impl<'a> Renderer<'a> {
                             assemble_row(&l2, &[], body_budget, seps, indent)
                         }
                     };
-                    row.push_str(&body);
+                    row.text.push_str(&body.text);
+                    row.width += body.width;
                     if !suffix.text.is_empty() {
-                        row.push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
+                        row.text
+                            .push_str(&paint(&suffix.text, &config.frame_piece_style(suffix)));
+                        row.width += suf_w;
                     }
                     row
                 })
-                .collect::<Vec<String>>(),
+                .collect::<Vec<PaintedLine>>(),
         );
         out
     }
@@ -206,8 +224,11 @@ impl<'a> Renderer<'a> {
                     if text.style.bg == Color::Default {
                         style.bg = Color::Default;
                     }
+                    let text = paint(&expand_env(t), &style);
+                    let width = display_width(&text);
                     SegmentText {
-                        text: paint(&expand_env(t), &style),
+                        text,
+                        width,
                         style,
                         padded: false,
                         joined_left: false,
@@ -253,6 +274,7 @@ impl<'a> Renderer<'a> {
             Some(value) => self.compose(seg, value, right, joined_left),
             None => SegmentText {
                 text: String::new(),
+                width: 0,
                 style: seg.effective_style(None, &self.config.defaults),
                 padded: false,
                 joined_left,
@@ -405,6 +427,7 @@ impl<'a> Renderer<'a> {
         if body.is_empty() {
             return SegmentText {
                 text: String::new(),
+                width: 0,
                 style,
                 padded: false,
                 joined_left,
@@ -421,8 +444,10 @@ impl<'a> Renderer<'a> {
         }
         out.push_str(&body);
         out.push_str(&paint(" ", &style));
+        let width = display_width(&out);
         SegmentText {
             text: out,
+            width,
             style,
             padded: true,
             joined_left,
@@ -430,13 +455,28 @@ impl<'a> Renderer<'a> {
     }
 }
 
+/// Render the header as text plus visible width per line.
+pub fn render_header_lines_with_widths(
+    config: &Config,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+    cols: usize,
+) -> Vec<PaintedLine> {
+    Renderer::new(config, info, vcs, cols).header_lines()
+}
+
+/// Render the header; the text-only view of [`render_header_lines_with_widths`].
 pub fn render_header_lines(
     config: &Config,
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
     cols: usize,
 ) -> Vec<String> {
-    Renderer::new(config, info, vcs, cols).header_lines()
+    Renderer::new(config, info, vcs, cols)
+        .header_lines()
+        .into_iter()
+        .map(|line| line.text)
+        .collect()
 }
 
 #[cfg(test)]
@@ -500,6 +540,7 @@ mod tests {
         };
         let seg = |text: &str, bg: u8, joined_left: bool| SegmentText {
             text: text.to_string(),
+            width: text.chars().count(),
             style: Style {
                 bg: Color::Xterm(bg),
                 ..Default::default()
@@ -510,17 +551,17 @@ mod tests {
 
         let plain = assemble_row(&[seg("A", 1, false), seg("B", 2, false)], &[], 0, &seps, 0);
         assert!(
-            plain.contains('>'),
+            plain.text.contains('>'),
             "different backgrounds without `_joined` should draw the segment arrow, got {plain:?}"
         );
 
         let joined = assemble_row(&[seg("A", 1, false), seg("B", 2, true)], &[], 0, &seps, 0);
         assert!(
-            !joined.contains('>'),
+            !joined.text.contains('>'),
             "`_joined` should suppress the segment arrow, got {joined:?}"
         );
         assert!(
-            !joined.contains('|'),
+            !joined.text.contains('|'),
             "`_joined` should suppress the sub line too, got {joined:?}"
         );
     }
@@ -568,6 +609,7 @@ mod tests {
         };
         let seg = |text: &str, bg: u8, joined_left: bool| SegmentText {
             text: text.to_string(),
+            width: text.chars().count(),
             style: Style {
                 bg: Color::Xterm(bg),
                 ..Default::default()
@@ -576,14 +618,14 @@ mod tests {
             joined_left,
         };
         let out = assemble_row(&[seg("A", 1, true), seg("B", 2, false)], &[], 0, &seps, 0);
-        let visible = strip_sgr(&out);
+        let visible = strip_sgr(&out.text);
         let leading = visible.chars().take_while(|&c| c == ' ').count();
         assert_eq!(
             leading, 1,
             "the first joined segment should keep one leading space, got {visible:?}"
         );
         assert!(
-            out.contains("\x1b[48;5;1m "),
+            out.text.contains("\x1b[48;5;1m "),
             "the leading space should carry the segment background, got {out:?}"
         );
     }
@@ -2448,6 +2490,22 @@ mod tests {
 
     /// The dir_writable icon is a fixed key now: the text decides whether the segment shows.
     /// The old conditional helper read the engine process directory instead of the shell's.
+    /// The recorded line width matches the visible width; the renderer records it while
+    /// assembling instead of re-scanning the line later.
+    #[test]
+    fn painted_line_width_matches_the_visible_width() {
+        let cfg = Config::default_lean().unwrap();
+        let lines = render_header_lines_with_widths(&cfg, &info("/tmp", Some(0)), None, 80);
+        for line in lines {
+            assert_eq!(
+                line.width,
+                display_width(&line.text),
+                "width mismatch for {:?}",
+                line.text
+            );
+        }
+    }
+
     /// A hyperlink wraps the dir text in OSC 8; the URL is not visible text, and the width must
     /// not count it (nor stop at an `m` inside the path).
     #[test]
