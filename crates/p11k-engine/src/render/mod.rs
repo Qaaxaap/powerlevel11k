@@ -2457,6 +2457,24 @@ mod tests {
             .collect()
     }
 
+    /// The dir_writable icon is a fixed key now: the text decides whether the segment shows.
+    /// The old conditional helper read the engine process directory instead of the shell's.
+    #[test]
+    fn dir_writable_icon_uses_the_prompt_directory() {
+        let mut cfg = Config::default_lean().unwrap();
+        cfg.layout.left = vec![vec![Element::Seg("dir_writable".into())]];
+        let lock = icon_str(&cfg, "lock").unwrap();
+        let line = render_header_lines(&cfg, &info("/proc", Some(0)), None, 80).join("");
+        assert!(
+            line.contains('!'),
+            "the not-writable mark must show, got {line:?}"
+        );
+        assert!(
+            line.contains(&lock),
+            "the lock icon must show for the prompt directory, got {line:?}"
+        );
+    }
+
     #[test]
     fn golden_lean() {
         insta::assert_debug_snapshot!(golden_lines(crate::presets::PresetKind::Lean));
