@@ -14,13 +14,16 @@ use crate::theme::{GitStatus, HeaderInfo};
 use std::cell::RefCell;
 mod ansi;
 mod glob;
+mod segment;
+mod special;
 pub(crate) use self::glob::workdir_is_disabled;
 mod env;
 mod icons;
 mod registry;
 mod segments;
 mod style;
-use self::icons::{dir_class_match, icon_str, resolve_icon};
+use self::icons::{icon_str, resolve_icon_choice};
+use self::segment::{Ctx, IconStyle};
 pub use self::segments::display_width_of;
 use self::segments::*;
 pub use self::style::CURRENT_VI_MODE;
@@ -182,7 +185,7 @@ fn shorten_row(
             Element::Joined(name) => (name.as_str(), true),
             Element::Text(_) => continue,
         };
-        if name == "dir" {
+        if registry::find(name).is_some_and(|meta| meta.render.width_dependent()) {
             *part = render_segment(config, name, info, vcs, right, Some(dir_budget), joined);
         }
     }
@@ -225,12 +228,6 @@ fn render_row(
 
 /// Renders one segment. The returned `text` is already colored ANSI; `style` feeds
 /// inter-segment separators and block backgrounds.
-/// Whether the segment's icon is its content (drawn even with empty text).
-fn icon_is_content(name: &str) -> bool {
-    matches!(name, "os" | "os_icon" | "status")
-        || registry::find(name).is_some_and(|spec| spec.icon_is_content())
-}
-
 fn render_segment(
     config: &Config,
     name: &str,
@@ -241,7 +238,7 @@ fn render_segment(
     joined_left: bool,
 ) -> SegmentText {
     let seg = config.segment(name);
-    let mut style = seg.effective_style(None, &config.defaults);
+    let style = seg.effective_style(None, &config.defaults);
     // Leading space is added when the effective background is non-transparent (inheritance
     // chain below); transparent segments get none—matching p10k lean, no space at line start.
     // Effective segment background: the segment's own → global `defaults.bg` (p10k's
@@ -250,91 +247,29 @@ fn render_segment(
     // right-column separators misread as "different background" and draw arrows. The
     // `effective_style` inheritance already does this layer; the bg here is the result.
     let has_real_bg = style.bg != Color::Default;
-    let text = if let Some(spec) = registry::find(name) {
-        paint(&spec.plain_text(info, seg), &style)
-    } else {
-        match name {
-            "dir" => dir_seg_text(config, info, seg, &style, dir_budget),
-            "vcs" => {
-                let branch = icon_str(config, "branch").unwrap_or_default();
-                let commit = icon_str(config, "commit").unwrap_or_default();
-                if seg.content.is_some() {
-                    paint(&value_of(seg.content.as_deref(), String::new()), &style)
-                } else {
-                    vcs_text(vcs, &branch, &commit, seg, &style)
-                }
-            }
-            "status" => status_text(info, seg, &style),
-            "prompt_char" => {
-                let state = prompt_state(config, Some(info));
-                style = seg.effective_style(state, &config.defaults);
-                paint(seg.char_for(state, "❯"), &style)
-            }
-            "command_execution_time" => {
-                let threshold = match seg.prop("threshold-seconds") {
-                    Some(crate::config::Prop::Int(n)) => (*n as f64).max(0.0),
-                    _ => 3.0,
-                };
-                if info.exec_seconds >= threshold {
-                    // p10k's PRECISION defaults to 2 decimals and FORMAT to multi-level (with
-                    // spaces).
-                    let precision = match seg.prop("precision") {
-                        Some(crate::config::Prop::Int(n)) => (*n).clamp(0, 6) as usize,
-                        _ => 2,
-                    };
-                    let hms = matches!(
-                        seg.prop("format"),
-                        Some(crate::config::Prop::Str(s)) if s == "H:M:S"
-                    );
-                    paint(&format_duration(info.exec_seconds, precision, hms), &style)
-                } else {
-                    paint("", &style)
-                }
-            }
-            "symfony2_tests" => {
-                let text = symfony2_tests_text(&info.cwd);
-                if text.is_empty() {
-                    paint("", &style)
-                } else {
-                    let pct: f64 = text
-                        .trim_start_matches("SF2: ")
-                        .trim_end_matches('%')
-                        .parse()
-                        .unwrap_or(0.0);
-                    let (state, default_fg) = if pct >= 75.0 {
-                        ("GOOD", 6u8)
-                    } else if pct >= 50.0 {
-                        ("AVG", 3)
-                    } else {
-                        ("BAD", 1)
-                    };
-                    let st = if seg.states.contains_key(state) {
-                        seg.effective_style(Some(state), &config.defaults)
-                    } else {
-                        Style {
-                            fg: Color::Xterm(default_fg),
-                            ..style.clone()
-                        }
-                    };
-                    paint(&text, &st)
-                }
-            }
-            // Unknown segments and the icon-only `os`/`os_icon` badges: no text, so the icon
-            // decides whether anything is drawn.
-            _ => {
-                if icon_is_content(name) {
-                    paint("", &style)
-                } else {
-                    return SegmentText {
-                        text: String::new(),
-                        style,
-                        padded: false,
-                        joined_left,
-                    };
-                }
-            }
+    let value = match registry::find(name) {
+        Some(meta) => {
+            let ctx = Ctx {
+                config,
+                segment: seg,
+                info,
+                vcs,
+                dir_budget,
+            };
+            meta.render.render(&ctx)
+        }
+        None => {
+            // An unknown segment renders nothing; a configured content is not used (p10k looks
+            // up `prompt_<name>` and has no fallback).
+            return SegmentText {
+                text: String::new(),
+                style,
+                padded: false,
+                joined_left,
+            };
         }
     };
+    let text = value.text;
     // Segment icon: config `icon` (auto-overrides the applicable mode by char class) →
     // otherwise the built-in default table.
     // The space after the icon (p10k `LEFT_MIDDLE_WHITESPACE`) is added only when the segment
@@ -343,14 +278,9 @@ fn render_segment(
     // Segments with empty text: only "icon is content" segments (env indicators, os badges)
     // draw the icon; the rest hide entirely—matching p10k: no vcs icon outside a git repo, no
     // gear when jobs=0.
-    // Icon: p10k resolves a segment's visual identifier separately from its text, and for
-    // `status` the identifier is the state's icon (OK_ICON / FAIL_ICON) — that is what puts it
-    // after the content in the right column instead of before it.
-    let icon = if name == "status" {
-        status_icon_key(info, seg).and_then(|k| icon_str(config, k))
-    } else {
-        resolve_icon(config, name, vcs, &info.cwd)
-    };
+    // Icon: the segment decides (key, vcs remote, dir class, os badge); the renderer resolves
+    // the glyph for the mode.
+    let icon = resolve_icon_choice(config, &value.icon, info, vcs);
     // Icon color: `visual-identifier-color` (p10k `SEG_VISUAL_IDENTIFIER_COLOR`) wins; the vcs
     // segment falls back to `clean-foreground` when unset—the icon indicates the repo and p10k
     // also defaults it to green (icons do not inherit the segment default, or the default
@@ -358,12 +288,12 @@ fn render_segment(
     // foreground of its state.
     let icon_style = if seg.prop("visual-identifier-color").is_some() {
         prop_style(seg, &style, "visual-identifier-color")
-    } else if name == "vcs" {
-        prop_style(seg, &style, "clean-foreground")
-    } else if name == "status" {
-        prop_style(seg, &style, status_foreground(info))
     } else {
-        style.clone()
+        match value.icon_style {
+            IconStyle::Segment => style.clone(),
+            IconStyle::VcsClean => prop_style(seg, &style, "clean-foreground"),
+            IconStyle::Status => prop_style(seg, &style, status_foreground(info)),
+        }
     };
     // Icon placement: the column decides by default (left column puts the icon first, the right
     // column puts it last, so both read outward from the line). `icon-before-content` overrides
@@ -374,7 +304,7 @@ fn render_segment(
     };
     let icon_text = match icon {
         Some(ic) if text.is_empty() => {
-            if icon_is_content(name) {
+            if value.icon.is_content() {
                 paint(&ic, &icon_style)
             } else {
                 String::new()
@@ -473,6 +403,7 @@ fn render_segment(
 mod tests {
     use super::env::*;
     use super::icons::os_icon;
+    use super::segment::Icon;
     use super::*;
     use crate::config::Segment;
 
@@ -1288,7 +1219,7 @@ mod tests {
             h.contains("tmp"),
             "header should contain the dir, got: {h:?}"
         );
-        assert!(h.contains("\u{f00c}"));
+        assert!(h.contains("\u{f00c}"), "header: {h:?}");
         assert!(
             !h.contains('❯'),
             "input line prefix ❯ is drawn by render_prompt and should not be in the header"
@@ -2418,13 +2349,32 @@ mod tests {
             "duplicate segment name"
         );
         let cfg = Config::default_lean().unwrap();
+        let header = info("/tmp", Some(0));
         for spec in registry::SEGMENTS {
-            if let Some(key) = spec.icon_key() {
-                assert!(
+            let ctx = Ctx {
+                config: &cfg,
+                segment: cfg.segment(spec.name),
+                info: &header,
+                vcs: None,
+                dir_budget: None,
+            };
+            let value = spec.render.render(&ctx);
+            match &value.icon {
+                Icon::None => {}
+                Icon::Key(key) | Icon::Content(key) => assert!(
                     icon_str(&cfg, key).is_some(),
                     "icon key {key:?} of segment {:?} does not resolve",
                     spec.name
-                );
+                ),
+                other => {
+                    let glyph = resolve_icon_choice(&cfg, other, &header, None);
+                    assert!(
+                        glyph.is_some(),
+                        "{:?} of segment {:?} does not resolve",
+                        std::mem::discriminant(other),
+                        spec.name
+                    );
+                }
             }
         }
         for special in [
@@ -2438,8 +2388,26 @@ mod tests {
             "os_icon",
         ] {
             assert!(
-                !names.contains(special),
-                "special segment {special:?} must keep its dispatcher branch"
+                names.contains(special),
+                "special segment {special:?} must be in the registry"
+            );
+        }
+        assert!(
+            registry::find("dir").unwrap().render.width_dependent(),
+            "only dir depends on the shortening budget"
+        );
+        for content in ["status", "os", "os_icon"] {
+            let meta = registry::find(content).unwrap();
+            let ctx = Ctx {
+                config: &cfg,
+                segment: cfg.segment(meta.name),
+                info: &header,
+                vcs: None,
+                dir_budget: None,
+            };
+            assert!(
+                meta.render.render(&ctx).icon.is_content(),
+                "{content:?} draws its icon with empty text"
             );
         }
     }

@@ -167,61 +167,50 @@ pub(super) fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
     }
 }
 
-/// Default icon resolution for segment rendering: os is dynamic, vcs remote takes priority,
-/// the rest go segment → icon name → table lookup.
-pub(super) fn resolve_icon(
+/// Resolve the icon decision of a segment into the glyph for the current mode.
+pub(super) fn resolve_icon_choice(
     config: &Config,
-    name: &str,
+    icon: &super::segment::Icon,
+    info: &crate::theme::HeaderInfo,
     vcs: Option<&GitStatus>,
-    cwd: &str,
 ) -> Option<String> {
-    if name == "os" || name == "os_icon" {
-        return Some(os_icon(&config.mode));
-    }
-    if name == "vcs" {
-        if let Some(v) = vcs {
-            for (domain, ic) in &config.vcs_remote_icons {
-                if !domain.is_empty() && v.remote_url.contains(domain) {
-                    return Some(ic.clone());
+    use super::segment::Icon;
+    match icon {
+        Icon::None => None,
+        Icon::Key(k) | Icon::Content(k) => icon_str(config, k),
+        Icon::Os => Some(os_icon(&config.mode)),
+        Icon::VcsRemote => {
+            if let Some(v) = vcs {
+                for (domain, ic) in &config.vcs_remote_icons {
+                    if !domain.is_empty() && v.remote_url.contains(domain) {
+                        return Some(ic.clone());
+                    }
                 }
             }
+            icon_str(config, "git")
         }
-        return icon_str(config, "git");
-    }
-    // p10k `DIR_SHOW_WRITABLE`: when not writable (under v3 also non-existent) the dir icon
-    // becomes a lock.
-    if name == "dir" {
-        if dir_writable_state(config.segment("dir"), cwd).is_some() {
-            return icon_str(config, "lock");
-        }
-        // p10k ships four `DIR_CLASSES` of its own and uses them whenever the config declares
-        // none (`if (( $+_POWERLEVEL9K_DIR_CLASSES ))` ... else). Only the icon is resolved
-        // here: p10k's default class names would otherwise shadow ANCHOR/SHORTENED, which
-        // p11k derives from the shortened path instead.
-        if config.dir_classes.is_empty() {
-            return icon_str(config, default_dir_icon_key(cwd));
-        }
-        // p10k `DIR_CLASSES`: the matched rule's icon; an empty icon in p10k means no icon at
-        // all, not a fallback to the default folder icon (measured: with HOME's icon='', p10k
-        // draws nothing).
-        if let Some(c) = dir_class_match(config, cwd) {
-            return if c.icon.is_empty() {
-                None
-            } else {
-                Some(c.icon.clone())
-            };
+        Icon::Dir => {
+            if dir_writable_state(config.segment("dir"), &info.cwd).is_some() {
+                return icon_str(config, "lock");
+            }
+            // p10k ships four `DIR_CLASSES` of its own and uses them whenever the config
+            // declares none. Only the icon is resolved here: p10k's default class names would
+            // otherwise shadow ANCHOR/SHORTENED, which p11k derives from the shortened path.
+            if config.dir_classes.is_empty() {
+                return icon_str(config, default_dir_icon_key(&info.cwd));
+            }
+            // p10k `DIR_CLASSES`: the matched rule's icon; an empty icon means no icon at all,
+            // not a fallback to the default folder icon.
+            if let Some(c) = dir_class_match(config, &info.cwd) {
+                return if c.icon.is_empty() {
+                    None
+                } else {
+                    Some(c.icon.clone())
+                };
+            }
+            None
         }
     }
-    // The two special segments keep their icon keys here; every other segment reads the key
-    // from the registry row, so the icon and the text come from one place.
-    if name == "command_execution_time" {
-        return icon_str(config, "execution-time");
-    }
-    if name == "symfony2_tests" {
-        return icon_str(config, "test");
-    }
-    let key = super::registry::find(name)?.icon_key()?;
-    icon_str(config, key)
 }
 
 /// p10k's built-in `DIR_CLASSES`, in their order: `/etc|/etc/*`, `~`, `~/*`, and the

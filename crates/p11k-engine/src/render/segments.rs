@@ -10,6 +10,7 @@ use crate::config::{Config, Segment, Style};
 use crate::theme::HeaderInfo;
 
 use super::env::*;
+use super::icons::dir_class_match;
 use super::*;
 
 /// p10k `DIR_SHOW_WRITABLE` values: `#true`=1, `"v2"`=2, `"v3"`=3 (as in p10k only these are

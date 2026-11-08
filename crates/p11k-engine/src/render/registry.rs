@@ -8,412 +8,602 @@
 //! The icon is rendered from the same row: the visible identifier is the icon key for the mode,
 //! and the renderer asks for it once per segment.
 
-use crate::config::Segment;
-use crate::theme::HeaderInfo;
-
 use super::env::*;
+use super::segment::{Delegated, IconSource, SegmentRender, TextSource};
 use super::segments::*;
+use super::special::*;
 
-/// Where a segment's text comes from.
-pub(super) enum TextSource {
-    Plain(fn() -> String),
-    Cwd(fn(&str) -> String),
-    Segment(fn(&Segment) -> String),
-    Arg(fn(&str) -> String, &'static str),
-    Env(&'static str),
-    /// The number of background jobs.
-    Jobs,
-    History,
-    Empty,
+/// One entry in the registry: the name, the implementation and whether the icon is the content
+/// (a delegating segment with `IconSource::ContentCond`).
+pub(super) struct SegmentMeta {
+    pub name: &'static str,
+    pub render: &'static dyn SegmentRender,
 }
 
-/// How a segment's icon is chosen.
-pub(super) enum IconSource {
-    None,
-    Key(&'static str),
-    /// The icon is the content: it draws even with empty text.
-    ContentCond(fn() -> Option<&'static str>),
-}
-
-/// One segment row.
-pub(super) struct SegmentSpec {
-    pub(super) name: &'static str,
-    pub(super) text: TextSource,
-    pub(super) icon: IconSource,
-}
-
-const fn spec(name: &'static str, text: TextSource, icon: IconSource) -> SegmentSpec {
-    SegmentSpec { name, text, icon }
-}
-
-impl SegmentSpec {
-    /// The plain text of the segment (no colour, no padding).
-    pub(super) fn plain_text(&self, info: &HeaderInfo, seg: &Segment) -> String {
-        match self.text {
-            TextSource::Plain(f) => f(),
-            TextSource::Cwd(f) => f(&info.cwd),
-            TextSource::Segment(f) => f(seg),
-            TextSource::Arg(f, a) => f(a),
-            TextSource::Env(k) => env_var(k).unwrap_or_default(),
-            TextSource::Jobs => {
-                if info.jobs > 0 {
-                    info.jobs.to_string()
-                } else {
-                    String::new()
-                }
-            }
-            TextSource::History => info.history.to_string(),
-            TextSource::Empty => String::new(),
-        }
-    }
-
-    /// The icon key for the current state, if the segment has one.
-    pub(super) fn icon_key(&self) -> Option<&'static str> {
-        match self.icon {
-            IconSource::None => None,
-            IconSource::Key(k) => Some(k),
-            IconSource::ContentCond(f) => f(),
-        }
-    }
-
-    /// Whether the icon is the content, so an empty text still draws.
-    pub(super) fn icon_is_content(&self) -> bool {
-        matches!(self.icon, IconSource::ContentCond(_))
-    }
-}
-
-/// The registry: one row per delegating segment. `find` scans it.
-pub(super) static SEGMENTS: &[SegmentSpec] = &[
-    spec(
-        "time",
-        TextSource::Segment(time_text),
-        IconSource::Key("time"),
-    ),
-    spec("context", TextSource::Plain(context_text), IconSource::None),
-    spec("user", TextSource::Plain(user_name), IconSource::None),
-    spec("host", TextSource::Plain(host_text), IconSource::None),
-    spec(
-        "root_indicator",
-        TextSource::Plain(root_indicator_text),
-        IconSource::None,
-    ),
-    spec(
-        "date",
-        TextSource::Segment(date_text),
-        IconSource::Key("date"),
-    ),
-    spec(
-        "symfony2_version",
-        TextSource::Cwd(symfony2_version_text),
-        IconSource::Key("symfony"),
-    ),
-    spec(
-        "go_version",
-        TextSource::Plain(go_version),
-        IconSource::Key("go"),
-    ),
-    spec(
-        "rust_version",
-        TextSource::Plain(rust_version),
-        IconSource::Key("rust"),
-    ),
-    spec(
-        "node_version",
-        TextSource::Plain(node_version),
-        IconSource::Key("node"),
-    ),
-    spec(
-        "php_version",
-        TextSource::Plain(php_version),
-        IconSource::Key("php"),
-    ),
-    spec(
-        "java_version",
-        TextSource::Plain(java_version),
-        IconSource::Key("java"),
-    ),
-    spec(
-        "dotnet_version",
-        TextSource::Plain(dotnet_version),
-        IconSource::Key("dotnet"),
-    ),
-    spec(
-        "swift_version",
-        TextSource::Plain(swift_version),
-        IconSource::None,
-    ),
-    spec(
-        "terraform_version",
-        TextSource::Plain(terraform_version),
-        IconSource::Key("terraform"),
-    ),
-    spec(
-        "cpu_arch",
-        TextSource::Plain(cpu_arch),
-        IconSource::Key("cpu-arch"),
-    ),
-    spec(
-        "virtualenv",
-        TextSource::Cwd(virtualenv_text),
-        IconSource::Key("python"),
-    ),
-    spec(
-        "anaconda",
-        TextSource::Cwd(anaconda_text),
-        IconSource::Key("python"),
-    ),
-    spec(
-        "pyenv",
-        TextSource::Cwd(pyenv_text),
-        IconSource::Key("python"),
-    ),
-    spec(
-        "nodeenv",
-        TextSource::Cwd(nodeenv_text),
-        IconSource::Key("node"),
-    ),
-    spec(
-        "nodenv",
-        TextSource::Cwd(nodenv_text),
-        IconSource::Key("node"),
-    ),
-    spec("nvm", TextSource::Cwd(nvm_text), IconSource::Key("node")),
-    spec(
-        "rbenv",
-        TextSource::Cwd(rbenv_text),
-        IconSource::Key("ruby"),
-    ),
-    spec(
-        "chruby",
-        TextSource::Cwd(chruby_text),
-        IconSource::Key("ruby"),
-    ),
-    spec("rvm", TextSource::Cwd(rvm_text), IconSource::Key("ruby")),
-    spec("goenv", TextSource::Cwd(goenv_text), IconSource::Key("go")),
-    spec("jenv", TextSource::Cwd(jenv_text), IconSource::Key("java")),
-    spec(
-        "phpenv",
-        TextSource::Cwd(phpenv_text),
-        IconSource::Key("php"),
-    ),
-    spec(
-        "luaenv",
-        TextSource::Cwd(luaenv_text),
-        IconSource::Key("lua"),
-    ),
-    spec(
-        "plenv",
-        TextSource::Cwd(plenv_text),
-        IconSource::Key("perl"),
-    ),
-    spec(
-        "scalaenv",
-        TextSource::Cwd(scalaenv_text),
-        IconSource::Key("scala"),
-    ),
-    spec(
-        "perlbrew",
-        TextSource::Cwd(perlbrew_text),
-        IconSource::Key("perl"),
-    ),
-    spec("load", TextSource::Plain(load), IconSource::Key("load")),
-    spec("ram", TextSource::Plain(ram), IconSource::Key("ram")),
-    spec("swap", TextSource::Plain(swap), IconSource::Key("swap")),
-    spec(
-        "disk_usage",
-        TextSource::Cwd(disk_usage),
-        IconSource::Key("disk"),
-    ),
-    spec(
-        "battery",
-        TextSource::Plain(battery),
-        IconSource::Key("battery"),
-    ),
-    spec("aws", TextSource::Plain(aws_text), IconSource::Key("aws")),
-    spec(
-        "azure",
-        TextSource::Plain(azure_text),
-        IconSource::Key("azure"),
-    ),
-    spec(
-        "gcloud",
-        TextSource::Plain(gcloud_text),
-        IconSource::Key("gcloud"),
-    ),
-    spec(
-        "kubecontext",
-        TextSource::Cwd(kubecontext_text),
-        IconSource::Key("kube"),
-    ),
-    spec(
-        "terraform",
-        TextSource::Cwd(terraform_text),
-        IconSource::Key("terraform"),
-    ),
-    spec("ip", TextSource::Plain(ip_text), IconSource::Key("network")),
-    spec(
-        "vpn_ip",
-        TextSource::Plain(vpn_ip_text),
-        IconSource::Key("vpn"),
-    ),
-    spec(
-        "wifi",
-        TextSource::Plain(wifi_text),
-        IconSource::Key("wifi"),
-    ),
-    spec(
-        "public_ip",
-        TextSource::Plain(public_ip_text),
-        IconSource::Key("public-ip"),
-    ),
-    spec(
-        "detect_virt",
-        TextSource::Plain(detect_virt),
-        IconSource::None,
-    ),
-    spec(
-        "toolbox",
-        TextSource::Plain(toolbox_text),
-        IconSource::Key("toolbox"),
-    ),
-    spec(
-        "dir_writable",
-        TextSource::Cwd(dir_writable_text),
-        IconSource::Key("lock"),
-    ),
-    spec(
-        "per_directory_history",
-        TextSource::Plain(per_directory_history_text),
-        IconSource::Key("history"),
-    ),
-    spec(
-        "haskell_stack",
-        TextSource::Plain(haskell_stack_text),
-        IconSource::Key("haskell"),
-    ),
-    spec(
-        "package",
-        TextSource::Cwd(package_text),
-        IconSource::Key("package"),
-    ),
-    spec("asdf", TextSource::Cwd(asdf_text), IconSource::None),
-    spec("fvm", TextSource::Cwd(fvm_text), IconSource::Key("flutter")),
-    spec(
-        "google_app_cred",
-        TextSource::Plain(google_app_cred_text),
-        IconSource::Key("gcloud"),
-    ),
-    spec(
-        "aws_eb_env",
-        TextSource::Plain(aws_eb_env_text),
-        IconSource::Key("aws-eb"),
-    ),
-    spec(
-        "laravel_version",
-        TextSource::Cwd(laravel_version_text),
-        IconSource::Key("laravel"),
-    ),
-    spec(
-        "rspec_stats",
-        TextSource::Cwd(rspec_stats_text),
-        IconSource::Key("test"),
-    ),
-    spec(
-        "todo",
-        TextSource::Plain(todo_text),
-        IconSource::Key("todo"),
-    ),
-    spec(
-        "taskwarrior",
-        TextSource::Plain(taskwarrior_text),
-        IconSource::Key("taskwarrior"),
-    ),
-    spec(
-        "dropbox",
-        TextSource::Plain(dropbox_text),
-        IconSource::Key("dropbox"),
-    ),
-    spec(
-        "proxy",
-        TextSource::Plain(proxy_text),
-        IconSource::Key("proxy"),
-    ),
-    spec(
-        "openfoam",
-        TextSource::Plain(openfoam_text),
-        IconSource::None,
-    ),
-    spec(
-        "ranger",
-        TextSource::Arg(level_text, "RANGER_LEVEL"),
-        IconSource::ContentCond(icon_ranger),
-    ),
-    spec(
-        "yazi",
-        TextSource::Arg(level_text, "YAZI_LEVEL"),
-        IconSource::ContentCond(icon_yazi),
-    ),
-    spec(
-        "nnn",
-        TextSource::Arg(level_text, "NNNLVL"),
-        IconSource::ContentCond(icon_nnn),
-    ),
-    spec(
-        "lf",
-        TextSource::Arg(level_text, "LF_LEVEL"),
-        IconSource::ContentCond(icon_lf),
-    ),
-    spec(
-        "nix_shell",
-        TextSource::Plain(nix_shell_text),
-        IconSource::Key("nix"),
-    ),
-    spec(
-        "vi_mode",
-        TextSource::Segment(vi_mode_text),
-        IconSource::None,
-    ),
-    spec(
-        "docker_machine",
-        TextSource::Env("DOCKER_MACHINE_NAME"),
-        IconSource::Key("server"),
-    ),
-    spec("history", TextSource::History, IconSource::None),
-    spec(
-        "background_jobs",
-        TextSource::Jobs,
-        IconSource::Key("background-jobs"),
-    ),
-    spec("ssh", TextSource::Empty, IconSource::ContentCond(icon_ssh)),
-    spec(
-        "xplr",
-        TextSource::Empty,
-        IconSource::ContentCond(icon_xplr),
-    ),
-    spec(
-        "midnight_commander",
-        TextSource::Empty,
-        IconSource::ContentCond(icon_midnight_commander),
-    ),
-    spec(
-        "vim_shell",
-        TextSource::Empty,
-        IconSource::ContentCond(icon_vim_shell),
-    ),
-    spec(
-        "direnv",
-        TextSource::Empty,
-        IconSource::ContentCond(icon_direnv),
-    ),
-    spec(
-        "chezmoi_shell",
-        TextSource::Empty,
-        IconSource::ContentCond(icon_chezmoi_shell),
-    ),
+/// The registry: one row per segment. `find` scans it.
+pub(super) static SEGMENTS: &[SegmentMeta] = &[
+    SegmentMeta {
+        name: "time",
+        render: &Delegated {
+            text: TextSource::Segment(time_text),
+            icon: IconSource::Key("time"),
+        },
+    },
+    SegmentMeta {
+        name: "context",
+        render: &Delegated {
+            text: TextSource::Plain(context_text),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "user",
+        render: &Delegated {
+            text: TextSource::Plain(user_name),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "host",
+        render: &Delegated {
+            text: TextSource::Plain(host_text),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "root_indicator",
+        render: &Delegated {
+            text: TextSource::Plain(root_indicator_text),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "date",
+        render: &Delegated {
+            text: TextSource::Segment(date_text),
+            icon: IconSource::Key("date"),
+        },
+    },
+    SegmentMeta {
+        name: "symfony2_version",
+        render: &Delegated {
+            text: TextSource::Cwd(symfony2_version_text),
+            icon: IconSource::Key("symfony"),
+        },
+    },
+    SegmentMeta {
+        name: "go_version",
+        render: &Delegated {
+            text: TextSource::Plain(go_version),
+            icon: IconSource::Key("go"),
+        },
+    },
+    SegmentMeta {
+        name: "rust_version",
+        render: &Delegated {
+            text: TextSource::Plain(rust_version),
+            icon: IconSource::Key("rust"),
+        },
+    },
+    SegmentMeta {
+        name: "node_version",
+        render: &Delegated {
+            text: TextSource::Plain(node_version),
+            icon: IconSource::Key("node"),
+        },
+    },
+    SegmentMeta {
+        name: "php_version",
+        render: &Delegated {
+            text: TextSource::Plain(php_version),
+            icon: IconSource::Key("php"),
+        },
+    },
+    SegmentMeta {
+        name: "java_version",
+        render: &Delegated {
+            text: TextSource::Plain(java_version),
+            icon: IconSource::Key("java"),
+        },
+    },
+    SegmentMeta {
+        name: "dotnet_version",
+        render: &Delegated {
+            text: TextSource::Plain(dotnet_version),
+            icon: IconSource::Key("dotnet"),
+        },
+    },
+    SegmentMeta {
+        name: "swift_version",
+        render: &Delegated {
+            text: TextSource::Plain(swift_version),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "terraform_version",
+        render: &Delegated {
+            text: TextSource::Plain(terraform_version),
+            icon: IconSource::Key("terraform"),
+        },
+    },
+    SegmentMeta {
+        name: "cpu_arch",
+        render: &Delegated {
+            text: TextSource::Plain(cpu_arch),
+            icon: IconSource::Key("cpu-arch"),
+        },
+    },
+    SegmentMeta {
+        name: "virtualenv",
+        render: &Delegated {
+            text: TextSource::Cwd(virtualenv_text),
+            icon: IconSource::Key("python"),
+        },
+    },
+    SegmentMeta {
+        name: "anaconda",
+        render: &Delegated {
+            text: TextSource::Cwd(anaconda_text),
+            icon: IconSource::Key("python"),
+        },
+    },
+    SegmentMeta {
+        name: "pyenv",
+        render: &Delegated {
+            text: TextSource::Cwd(pyenv_text),
+            icon: IconSource::Key("python"),
+        },
+    },
+    SegmentMeta {
+        name: "nodeenv",
+        render: &Delegated {
+            text: TextSource::Cwd(nodeenv_text),
+            icon: IconSource::Key("node"),
+        },
+    },
+    SegmentMeta {
+        name: "nodenv",
+        render: &Delegated {
+            text: TextSource::Cwd(nodenv_text),
+            icon: IconSource::Key("node"),
+        },
+    },
+    SegmentMeta {
+        name: "nvm",
+        render: &Delegated {
+            text: TextSource::Cwd(nvm_text),
+            icon: IconSource::Key("node"),
+        },
+    },
+    SegmentMeta {
+        name: "rbenv",
+        render: &Delegated {
+            text: TextSource::Cwd(rbenv_text),
+            icon: IconSource::Key("ruby"),
+        },
+    },
+    SegmentMeta {
+        name: "chruby",
+        render: &Delegated {
+            text: TextSource::Cwd(chruby_text),
+            icon: IconSource::Key("ruby"),
+        },
+    },
+    SegmentMeta {
+        name: "rvm",
+        render: &Delegated {
+            text: TextSource::Cwd(rvm_text),
+            icon: IconSource::Key("ruby"),
+        },
+    },
+    SegmentMeta {
+        name: "goenv",
+        render: &Delegated {
+            text: TextSource::Cwd(goenv_text),
+            icon: IconSource::Key("go"),
+        },
+    },
+    SegmentMeta {
+        name: "jenv",
+        render: &Delegated {
+            text: TextSource::Cwd(jenv_text),
+            icon: IconSource::Key("java"),
+        },
+    },
+    SegmentMeta {
+        name: "phpenv",
+        render: &Delegated {
+            text: TextSource::Cwd(phpenv_text),
+            icon: IconSource::Key("php"),
+        },
+    },
+    SegmentMeta {
+        name: "luaenv",
+        render: &Delegated {
+            text: TextSource::Cwd(luaenv_text),
+            icon: IconSource::Key("lua"),
+        },
+    },
+    SegmentMeta {
+        name: "plenv",
+        render: &Delegated {
+            text: TextSource::Cwd(plenv_text),
+            icon: IconSource::Key("perl"),
+        },
+    },
+    SegmentMeta {
+        name: "scalaenv",
+        render: &Delegated {
+            text: TextSource::Cwd(scalaenv_text),
+            icon: IconSource::Key("scala"),
+        },
+    },
+    SegmentMeta {
+        name: "perlbrew",
+        render: &Delegated {
+            text: TextSource::Cwd(perlbrew_text),
+            icon: IconSource::Key("perl"),
+        },
+    },
+    SegmentMeta {
+        name: "load",
+        render: &Delegated {
+            text: TextSource::Plain(load),
+            icon: IconSource::Key("load"),
+        },
+    },
+    SegmentMeta {
+        name: "ram",
+        render: &Delegated {
+            text: TextSource::Plain(ram),
+            icon: IconSource::Key("ram"),
+        },
+    },
+    SegmentMeta {
+        name: "swap",
+        render: &Delegated {
+            text: TextSource::Plain(swap),
+            icon: IconSource::Key("swap"),
+        },
+    },
+    SegmentMeta {
+        name: "disk_usage",
+        render: &Delegated {
+            text: TextSource::Cwd(disk_usage),
+            icon: IconSource::Key("disk"),
+        },
+    },
+    SegmentMeta {
+        name: "battery",
+        render: &Delegated {
+            text: TextSource::Plain(battery),
+            icon: IconSource::Key("battery"),
+        },
+    },
+    SegmentMeta {
+        name: "aws",
+        render: &Delegated {
+            text: TextSource::Plain(aws_text),
+            icon: IconSource::Key("aws"),
+        },
+    },
+    SegmentMeta {
+        name: "azure",
+        render: &Delegated {
+            text: TextSource::Plain(azure_text),
+            icon: IconSource::Key("azure"),
+        },
+    },
+    SegmentMeta {
+        name: "gcloud",
+        render: &Delegated {
+            text: TextSource::Plain(gcloud_text),
+            icon: IconSource::Key("gcloud"),
+        },
+    },
+    SegmentMeta {
+        name: "kubecontext",
+        render: &Delegated {
+            text: TextSource::Cwd(kubecontext_text),
+            icon: IconSource::Key("kube"),
+        },
+    },
+    SegmentMeta {
+        name: "terraform",
+        render: &Delegated {
+            text: TextSource::Cwd(terraform_text),
+            icon: IconSource::Key("terraform"),
+        },
+    },
+    SegmentMeta {
+        name: "ip",
+        render: &Delegated {
+            text: TextSource::Plain(ip_text),
+            icon: IconSource::Key("network"),
+        },
+    },
+    SegmentMeta {
+        name: "vpn_ip",
+        render: &Delegated {
+            text: TextSource::Plain(vpn_ip_text),
+            icon: IconSource::Key("vpn"),
+        },
+    },
+    SegmentMeta {
+        name: "wifi",
+        render: &Delegated {
+            text: TextSource::Plain(wifi_text),
+            icon: IconSource::Key("wifi"),
+        },
+    },
+    SegmentMeta {
+        name: "public_ip",
+        render: &Delegated {
+            text: TextSource::Plain(public_ip_text),
+            icon: IconSource::Key("public-ip"),
+        },
+    },
+    SegmentMeta {
+        name: "detect_virt",
+        render: &Delegated {
+            text: TextSource::Plain(detect_virt),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "toolbox",
+        render: &Delegated {
+            text: TextSource::Plain(toolbox_text),
+            icon: IconSource::Key("toolbox"),
+        },
+    },
+    SegmentMeta {
+        name: "dir_writable",
+        render: &Delegated {
+            text: TextSource::Cwd(dir_writable_text),
+            icon: IconSource::Key("lock"),
+        },
+    },
+    SegmentMeta {
+        name: "per_directory_history",
+        render: &Delegated {
+            text: TextSource::Plain(per_directory_history_text),
+            icon: IconSource::Key("history"),
+        },
+    },
+    SegmentMeta {
+        name: "haskell_stack",
+        render: &Delegated {
+            text: TextSource::Plain(haskell_stack_text),
+            icon: IconSource::Key("haskell"),
+        },
+    },
+    SegmentMeta {
+        name: "package",
+        render: &Delegated {
+            text: TextSource::Cwd(package_text),
+            icon: IconSource::Key("package"),
+        },
+    },
+    SegmentMeta {
+        name: "asdf",
+        render: &Delegated {
+            text: TextSource::Cwd(asdf_text),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "fvm",
+        render: &Delegated {
+            text: TextSource::Cwd(fvm_text),
+            icon: IconSource::Key("flutter"),
+        },
+    },
+    SegmentMeta {
+        name: "google_app_cred",
+        render: &Delegated {
+            text: TextSource::Plain(google_app_cred_text),
+            icon: IconSource::Key("gcloud"),
+        },
+    },
+    SegmentMeta {
+        name: "aws_eb_env",
+        render: &Delegated {
+            text: TextSource::Plain(aws_eb_env_text),
+            icon: IconSource::Key("aws-eb"),
+        },
+    },
+    SegmentMeta {
+        name: "laravel_version",
+        render: &Delegated {
+            text: TextSource::Cwd(laravel_version_text),
+            icon: IconSource::Key("laravel"),
+        },
+    },
+    SegmentMeta {
+        name: "rspec_stats",
+        render: &Delegated {
+            text: TextSource::Cwd(rspec_stats_text),
+            icon: IconSource::Key("test"),
+        },
+    },
+    SegmentMeta {
+        name: "todo",
+        render: &Delegated {
+            text: TextSource::Plain(todo_text),
+            icon: IconSource::Key("todo"),
+        },
+    },
+    SegmentMeta {
+        name: "taskwarrior",
+        render: &Delegated {
+            text: TextSource::Plain(taskwarrior_text),
+            icon: IconSource::Key("taskwarrior"),
+        },
+    },
+    SegmentMeta {
+        name: "dropbox",
+        render: &Delegated {
+            text: TextSource::Plain(dropbox_text),
+            icon: IconSource::Key("dropbox"),
+        },
+    },
+    SegmentMeta {
+        name: "proxy",
+        render: &Delegated {
+            text: TextSource::Plain(proxy_text),
+            icon: IconSource::Key("proxy"),
+        },
+    },
+    SegmentMeta {
+        name: "openfoam",
+        render: &Delegated {
+            text: TextSource::Plain(openfoam_text),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "ranger",
+        render: &Delegated {
+            text: TextSource::Arg(level_text, "RANGER_LEVEL"),
+            icon: IconSource::ContentCond(icon_ranger),
+        },
+    },
+    SegmentMeta {
+        name: "yazi",
+        render: &Delegated {
+            text: TextSource::Arg(level_text, "YAZI_LEVEL"),
+            icon: IconSource::ContentCond(icon_yazi),
+        },
+    },
+    SegmentMeta {
+        name: "nnn",
+        render: &Delegated {
+            text: TextSource::Arg(level_text, "NNNLVL"),
+            icon: IconSource::ContentCond(icon_nnn),
+        },
+    },
+    SegmentMeta {
+        name: "lf",
+        render: &Delegated {
+            text: TextSource::Arg(level_text, "LF_LEVEL"),
+            icon: IconSource::ContentCond(icon_lf),
+        },
+    },
+    SegmentMeta {
+        name: "nix_shell",
+        render: &Delegated {
+            text: TextSource::Plain(nix_shell_text),
+            icon: IconSource::Key("nix"),
+        },
+    },
+    SegmentMeta {
+        name: "vi_mode",
+        render: &Delegated {
+            text: TextSource::Segment(vi_mode_text),
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "docker_machine",
+        render: &Delegated {
+            text: TextSource::Env("DOCKER_MACHINE_NAME"),
+            icon: IconSource::Key("server"),
+        },
+    },
+    SegmentMeta {
+        name: "history",
+        render: &Delegated {
+            text: TextSource::History,
+            icon: IconSource::None,
+        },
+    },
+    SegmentMeta {
+        name: "background_jobs",
+        render: &Delegated {
+            text: TextSource::Jobs,
+            icon: IconSource::Key("background-jobs"),
+        },
+    },
+    SegmentMeta {
+        name: "ssh",
+        render: &Delegated {
+            text: TextSource::Empty,
+            icon: IconSource::ContentCond(icon_ssh),
+        },
+    },
+    SegmentMeta {
+        name: "xplr",
+        render: &Delegated {
+            text: TextSource::Empty,
+            icon: IconSource::ContentCond(icon_xplr),
+        },
+    },
+    SegmentMeta {
+        name: "midnight_commander",
+        render: &Delegated {
+            text: TextSource::Empty,
+            icon: IconSource::ContentCond(icon_midnight_commander),
+        },
+    },
+    SegmentMeta {
+        name: "vim_shell",
+        render: &Delegated {
+            text: TextSource::Empty,
+            icon: IconSource::ContentCond(icon_vim_shell),
+        },
+    },
+    SegmentMeta {
+        name: "direnv",
+        render: &Delegated {
+            text: TextSource::Empty,
+            icon: IconSource::ContentCond(icon_direnv),
+        },
+    },
+    SegmentMeta {
+        name: "chezmoi_shell",
+        render: &Delegated {
+            text: TextSource::Empty,
+            icon: IconSource::ContentCond(icon_chezmoi_shell),
+        },
+    },
+    SegmentMeta {
+        name: "dir",
+        render: &DirSegment,
+    },
+    SegmentMeta {
+        name: "vcs",
+        render: &VcsSegment,
+    },
+    SegmentMeta {
+        name: "status",
+        render: &StatusSegment,
+    },
+    SegmentMeta {
+        name: "prompt_char",
+        render: &PromptCharSegment,
+    },
+    SegmentMeta {
+        name: "command_execution_time",
+        render: &ExecTimeSegment,
+    },
+    SegmentMeta {
+        name: "symfony2_tests",
+        render: &Symfony2TestsSegment,
+    },
+    SegmentMeta {
+        name: "os",
+        render: &OsSegment,
+    },
+    SegmentMeta {
+        name: "os_icon",
+        render: &OsSegment,
+    },
 ];
 
 /// Look up one segment row.
-pub(super) fn find(name: &str) -> Option<&'static SegmentSpec> {
+pub(super) fn find(name: &str) -> Option<&'static SegmentMeta> {
     SEGMENTS.iter().find(|s| s.name == name)
 }
 
