@@ -174,5 +174,4 @@ mod tests {
         assert_eq!(pattern_alternatives("[a|b]"), ["[a|b]"]);
         assert_eq!(pattern_alternatives("a(|b)c"), ["ac", "abc"]);
     }
-
 }

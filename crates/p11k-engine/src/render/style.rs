@@ -189,7 +189,6 @@ pub(super) fn zsh_fg(c: &Color) -> String {
     }
 }
 
-
 /// Colors attach text: fg defaults to the segment style, when set it overrides the foreground
 /// (bg/bold still inherit the segment style).
 pub(super) fn paint_attach(style: &Style, a: &AttachText) -> String {
