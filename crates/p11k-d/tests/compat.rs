@@ -271,3 +271,98 @@ fn differential_eof_exit_code() {
         assert_eq!(status.code(), Some(0));
     }
 }
+
+// ---- Extended states: annotated tag at HEAD, stash, in-progress action, non-ASCII and caps ----
+
+fn run_git(dir: &std::path::Path, args: &[&str]) {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Differential: an annotated tag that points at HEAD. The tag object has to be peeled before
+/// the comparison, otherwise the field is empty in both daemons for the wrong reason.
+#[test]
+#[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
+fn differential_annotated_tag_at_head() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = make_repo(tmp.path());
+    run_git(tmp.path(), &["tag", "-a", "v2.0", "-m", "release"]);
+    assert_identical(
+        format!("id\x1f{repo}\x1e").as_bytes(),
+        format!("id\x1f{repo}\x1e").as_bytes(),
+        "annotated tag at HEAD",
+    );
+}
+
+/// Differential: a stash plus a merge in progress (MERGE_HEAD present).
+#[test]
+#[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
+fn differential_stash_and_in_progress_action() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = make_repo(tmp.path());
+    std::fs::write(tmp.path().join("a"), b"stashed change\n").unwrap();
+    run_git(tmp.path(), &["stash", "push", "-q", "-m", "s1"]);
+    std::fs::write(tmp.path().join("a"), b"merged change\n").unwrap();
+    run_git(tmp.path(), &["add", "a"]);
+    run_git(tmp.path(), &["commit", "-qm", "third"]);
+    let head = run_git_output(tmp.path(), &["rev-parse", "HEAD"]);
+    std::fs::write(
+        tmp.path().join(".git").join("MERGE_HEAD"),
+        format!("{head}\n"),
+    )
+    .unwrap();
+    assert_identical(
+        format!("id\x1f{repo}\x1e").as_bytes(),
+        format!("id\x1f{repo}\x1e").as_bytes(),
+        "stash and MERGE_HEAD",
+    );
+}
+
+fn run_git_output(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Differential: a non-ASCII branch, path and file content, plus a case-sensitive pair of files
+/// (`A` and `a`) from the committed fixture.
+#[test]
+#[ignore = "needs GITSTATUSD_PATH pointing at the original gitstatusd"]
+fn differential_unicode_and_case_caps() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = make_repo(tmp.path());
+    std::fs::write(
+        tmp.path().join("\u{6587}\u{4ef6}.txt"),
+        include_bytes!("fixtures/unicode.txt"),
+    )
+    .unwrap();
+    // `a` is already tracked, so `A` forms a case-sensitive pair with it on this filesystem.
+    std::fs::write(tmp.path().join("A"), b"upper\n").unwrap();
+    // Create the non-ASCII branch without checking it out: `checkout` refuses because the worktree
+    // holds untracked files, and the status request only needs the HEAD ref.
+    let git_repo = git2::Repository::open(tmp.path()).unwrap();
+    let head = git_repo.head().unwrap().peel_to_commit().unwrap();
+    git_repo.branch("\u{5206}\u{652f}", &head, false).unwrap();
+    git_repo.set_head("refs/heads/\u{5206}\u{652f}").unwrap();
+    assert_identical(
+        format!("id\x1f{repo}\x1e").as_bytes(),
+        format!("id\x1f{repo}\x1e").as_bytes(),
+        "unicode branch and paths with case-sensitive names",
+    );
+}

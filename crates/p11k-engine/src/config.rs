@@ -1470,6 +1470,76 @@ mod tests {
         assert!(!Config::parse(&text).unwrap().instant_prompt);
     }
 
+    /// The layout flags and the indent are read, clamped, serialized and read back.
+    #[test]
+    fn layout_flags_and_indent_round_trip() {
+        let cfg = Config::parse("layout { left { line { dir } } }").unwrap();
+        assert!(!cfg.layout.show_ruler);
+        assert_eq!(cfg.layout.right_indent, 1);
+
+        let cfg = Config::parse(
+            "layout {\n    left { line { dir } }\n    show-ruler #true\n    right-indent 0\n}\n",
+        )
+        .unwrap();
+        assert!(cfg.layout.show_ruler);
+        assert_eq!(cfg.layout.right_indent, 0);
+        let text = cfg.to_kdl();
+        assert!(text.contains("show-ruler #true"), "{text}");
+        assert!(text.contains("right-indent 0"), "{text}");
+        let again = Config::parse(&text).unwrap();
+        assert!(again.layout.show_ruler);
+        assert_eq!(again.layout.right_indent, 0);
+
+        // `#false` is accepted and turns the ruler off.
+        let cfg = Config::parse("layout {\n    left { line { dir } }\n    show-ruler #false\n}\n")
+            .unwrap();
+        assert!(!cfg.layout.show_ruler);
+
+        // Out-of-range values are clamped instead of rejected.
+        let cfg =
+            Config::parse("layout {\n    left { line { dir } }\n    right-indent 99\n}\n").unwrap();
+        assert_eq!(cfg.layout.right_indent, 9);
+    }
+
+    /// Directory classification rules keep their pattern, state and icon through a round trip.
+    #[test]
+    fn dir_classes_parse_and_round_trip() {
+        let src = "dir-classes {\n    class \"src/**\" state=\"WORK\" icon=\"x\"\n    class \"docs/**\";\n}\n";
+        let cfg = Config::parse(src).unwrap();
+        assert_eq!(cfg.dir_classes.len(), 2);
+        assert_eq!(cfg.dir_classes[0].pattern, "src/**");
+        assert_eq!(cfg.dir_classes[0].state, "WORK");
+        assert_eq!(cfg.dir_classes[0].icon, "x");
+        assert_eq!(cfg.dir_classes[1].pattern, "docs/**");
+        assert!(cfg.dir_classes[1].state.is_empty());
+        assert!(cfg.dir_classes[1].icon.is_empty());
+
+        let again = Config::parse(&cfg.to_kdl()).unwrap();
+        assert_eq!(cfg.dir_classes, again.dir_classes);
+
+        // A rule without the pattern argument is skipped instead of creating an empty rule.
+        let cfg = Config::parse("dir-classes { class state=\"WORK\" }").unwrap();
+        assert!(cfg.dir_classes.is_empty());
+    }
+
+    /// Invalid input is either reported or ignored with the documented fallback; it never panics.
+    #[test]
+    fn invalid_config_input_is_reported_or_ignored() {
+        assert!(
+            Config::parse("layout {").is_err(),
+            "an unterminated document is an error"
+        );
+
+        // Unknown top-level nodes warn and do not fail the parse.
+        let cfg = Config::parse("unknown-node 1\nlayout { left { line { dir } } }\n").unwrap();
+        assert!(!cfg.layout.left.is_empty());
+
+        // Unknown enum values fall back to the defaults.
+        let cfg = Config::parse("mode \"not-a-mode\"\nicon-padding \"not-a-padding\"\n").unwrap();
+        assert_eq!(cfg.mode, IconMode::NerdfontComplete);
+        assert_eq!(cfg.icon_padding, IconPadding::None);
+    }
+
     #[test]
     fn to_kdl_roundtrips_presets() {
         for kind in crate::presets::PresetKind::ALL {
