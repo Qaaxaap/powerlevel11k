@@ -1360,20 +1360,5 @@ pub fn display_width_of(s: &str) -> usize {
 }
 
 pub(crate) fn display_width(s: &str) -> usize {
-    let mut w = 0;
-    let mut in_esc = false;
-    for c in s.chars() {
-        if in_esc {
-            if c == 'm' {
-                in_esc = false;
-            }
-            continue;
-        }
-        if c == '\x1b' {
-            in_esc = true;
-            continue;
-        }
-        w += UnicodeWidthChar::width(c).unwrap_or(0);
-    }
-    w
+    super::ansi::width(s)
 }
