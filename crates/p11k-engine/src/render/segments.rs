@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 
 use crate::config::{Config, Segment, Style};
-use crate::theme::HeaderInfo;
+use crate::model::HeaderInfo;
 
 use super::env::*;
 use super::icons::dir_class_match;

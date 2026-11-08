@@ -1,7 +1,7 @@
 //! The announce protocol: the shell writes one line per prompt event into a FIFO, the engine
 //! reads them in order, plus the byte-level helpers the pass-through stream needs.
 
-use crate::theme::HeaderInfo;
+use crate::model::HeaderInfo;
 
 /// Announce messages: drawing the prompt window and resize.
 pub enum AnnMsg {

@@ -5,11 +5,11 @@
 //! the current directory. This module keeps the tables and the resolution order together.
 
 use crate::config::Config;
-use crate::theme::GitStatus;
+use crate::model::GitStatus;
 use std::cell::RefCell;
 
 use super::dir_writable_state;
-use super::glob::glob_match_path;
+use crate::pattern::glob_match_path;
 
 pub(super) fn icon_by_mode(e: &IconEntry, mode: &crate::config::IconMode) -> String {
     match mode {
@@ -171,7 +171,7 @@ pub(super) fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
 pub(super) fn resolve_icon_choice(
     config: &Config,
     icon: &super::segment::Icon,
-    info: &crate::theme::HeaderInfo,
+    info: &crate::model::HeaderInfo,
     vcs: Option<&GitStatus>,
 ) -> Option<String> {
     use super::segment::Icon;

@@ -10,17 +10,15 @@
 //! Input: config plus the current state. Output: the header ANSI string.
 
 use crate::config::{Color, Config, Element, Segment, Style};
-use crate::theme::{GitStatus, HeaderInfo};
+use crate::model::{GitStatus, HeaderInfo};
 use std::cell::RefCell;
 mod ansi;
-mod glob;
-mod segment;
-mod special;
-pub(crate) use self::glob::workdir_is_disabled;
 mod env;
 mod icons;
 mod registry;
+mod segment;
 mod segments;
+mod special;
 mod style;
 use self::icons::{icon_str, resolve_icon_choice};
 use self::segment::{Ctx, IconStyle, SegmentValue};
@@ -2339,8 +2337,8 @@ mod tests {
 
     /// Fixed git status for the golden renders.
     /// The status covers every vcs state that the header can draw.
-    fn golden_vcs() -> crate::theme::GitStatus {
-        crate::theme::GitStatus {
+    fn golden_vcs() -> crate::model::GitStatus {
+        crate::model::GitStatus {
             branch: "main".into(),
             commit: "0123456789abcdef0123456789abcdef01234567".into(),
             staged: 1,
@@ -2361,8 +2359,8 @@ mod tests {
         }
     }
 
-    fn golden_info() -> crate::theme::HeaderInfo {
-        crate::theme::HeaderInfo {
+    fn golden_info() -> crate::model::HeaderInfo {
+        crate::model::HeaderInfo {
             exit_code: Some(9),
             cwd: "/srv/p11k/golden/repo".into(),
             exec_seconds: 12.5,

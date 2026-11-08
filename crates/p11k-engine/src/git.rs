@@ -30,7 +30,7 @@ pub struct GitResult {
 pub fn git_status(cache: &mut RepoCache, cwd: &str, disabled_workdir: &str) -> Option<GitStatus> {
     let repo = cache.get_or_open(cwd.as_bytes(), false)?;
     let workdir = String::from_utf8_lossy(&repo.workdir).into_owned();
-    if crate::render::workdir_is_disabled(disabled_workdir, &workdir) {
+    if crate::pattern::workdir_is_disabled(disabled_workdir, &workdir) {
         return None;
     }
     let f = repo.build_fields(false);

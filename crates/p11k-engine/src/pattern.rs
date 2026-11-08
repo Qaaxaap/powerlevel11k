@@ -8,7 +8,7 @@
 /// p10k's `DIR_CLASSES` matches `$PWD` with zsh extended globs; p11k uses a simplified glob:
 /// `~` expands to $HOME, `*` / `?` / `[…]` do not cross `/`, `**` crosses directories, and
 /// everything else is literal. A pattern ending in `/` (`~/work/`) also matches all subdirs.
-pub(super) fn glob_match_path(pattern: &str, path: &str, home: &str) -> bool {
+pub(crate) fn glob_match_path(pattern: &str, path: &str, home: &str) -> bool {
     let pat = match pattern.strip_prefix('~') {
         Some(rest) => format!("{home}{rest}"),
         None => pattern.to_string(),
@@ -20,7 +20,7 @@ pub(super) fn glob_match_path(pattern: &str, path: &str, home: &str) -> bool {
 }
 
 /// Simplified glob: `**` crosses `/`, `*` / `?` / `[…]` do not.
-pub(super) fn glob_match(pat: &str, text: &str) -> bool {
+pub(crate) fn glob_match(pat: &str, text: &str) -> bool {
     fn go(p: &[char], t: &[char]) -> bool {
         match p.first() {
             None => t.is_empty(),
@@ -71,7 +71,7 @@ pub(crate) fn workdir_is_disabled(pattern: &str, workdir: &str) -> bool {
 }
 
 /// `workdir_is_disabled` with an explicit home directory.
-pub(super) fn workdir_matches(pattern: &str, workdir: &str, home: &str) -> bool {
+pub(crate) fn workdir_matches(pattern: &str, workdir: &str, home: &str) -> bool {
     if pattern.is_empty() {
         return false;
     }
