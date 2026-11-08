@@ -1,9 +1,9 @@
 //! Segment registry: one table for every segment that only delegates to a text function.
 //!
-//! Each entry holds the text source and the icon source together, so adding a segment means one
-//! table row instead of a match arm plus an icon-table arm. The special segments that need the
-//! renderer state (`dir`, `vcs`, `status`, `prompt_char`, `command_execution_time`,
-//! `symfony2_tests`) keep their branch in the dispatcher.
+//! Each entry holds the text source and the icon source together. A delegating segment is one
+//! table row. The segments that need the renderer state (`dir`, `vcs`, `status`, `prompt_char`,
+//! `command_execution_time`, `symfony2_tests`) keep their branch in the dispatcher until the
+//! registry carries a trait object.
 //!
 //! The icon is rendered from the same row: the visible identifier is the icon key for the mode,
 //! and the renderer asks for it once per segment.
@@ -82,7 +82,7 @@ impl SegmentSpec {
     }
 }
 
-/// The registry, ordered by segment name.
+/// The registry: one row per delegating segment. `find` scans it.
 pub(super) static SEGMENTS: &[SegmentSpec] = &[
     spec(
         "time",
