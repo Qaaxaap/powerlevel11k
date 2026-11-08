@@ -4,6 +4,8 @@
 // background jobs) or depend on the machine (os icon) are deliberately absent.
 mode "nerdfont-complete"
 shell "zsh"
+// The reference frames cover the prompt after the shell is ready, not the instant phase.
+instant-prompt #false
 layout {
     left { line { dir; vcs; status } }
     right { line { command_execution_time; status } }

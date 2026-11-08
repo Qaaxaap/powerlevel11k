@@ -407,6 +407,9 @@ pub struct Config {
     /// `shell "zsh"`: the shell to proxy. `--shell` overrides it, and `$SHELL` is used when
     /// neither is given.
     pub shell: Option<String>,
+    /// `instant-prompt #false`: do not draw the provisional header while the shell loads its
+    /// config (p10k `POWERLEVEL9K_INSTANT_PROMPT` off). Default true.
+    pub instant_prompt: bool,
     /// `icon-padding "moderate"`: how much space separates an icon from the content next to it.
     /// p10k's `POWERLEVEL9K_ICON_PADDING`, which defaults to `none` (one space).
     pub icon_padding: IconPadding,
@@ -475,6 +478,7 @@ impl Default for Config {
             icon_overrides: BTreeMap::new(),
             dir_classes: Vec::new(),
             shell: None,
+            instant_prompt: true,
             icon_padding: IconPadding::default(),
         }
     }
@@ -560,6 +564,9 @@ impl Config {
             let mut n = KdlNode::new("shell");
             n.entries_mut().push(KdlEntry::new(shell.clone()));
             doc.nodes_mut().push(n);
+        }
+        if !self.instant_prompt {
+            doc.nodes_mut().push(leaf("instant-prompt", false));
         }
         if self.icon_padding == IconPadding::Moderate {
             doc.nodes_mut().push(leaf("icon-padding", "moderate"));
@@ -729,6 +736,7 @@ impl Config {
         let mut icon_overrides: BTreeMap<String, IconOverride> = BTreeMap::new();
         let mut dir_classes: Vec<DirClass> = Vec::new();
         let mut shell: Option<String> = None;
+        let mut instant_prompt = true;
         let mut icon_padding = IconPadding::default();
 
         for node in doc.nodes() {
@@ -763,6 +771,9 @@ impl Config {
                 "icon" => icon_overrides = parse_icon_table(node),
                 "dir-classes" => dir_classes = parse_dir_classes(node),
                 "shell" => shell = first_value(node).and_then(str_val),
+                "instant-prompt" => {
+                    instant_prompt = first_value(node).map(bool_val).unwrap_or(true);
+                }
                 "icon-padding" => {
                     if let Some(s) = first_value(node).and_then(str_val) {
                         icon_padding = IconPadding::from_str(&s);
@@ -782,6 +793,7 @@ impl Config {
             icon_overrides,
             dir_classes,
             shell,
+            instant_prompt,
             icon_padding,
         })
     }
@@ -1442,6 +1454,20 @@ mod tests {
         assert_eq!(c.shell.as_deref(), Some("bash"));
         let again = Config::parse(&c.to_kdl()).unwrap();
         assert_eq!(again.shell.as_deref(), Some("bash"));
+    }
+
+    /// The instant prompt is on by default; `#false` turns it off and round-trips.
+    #[test]
+    fn instant_prompt_is_on_by_default_and_can_be_turned_off() {
+        assert!(Config::default().instant_prompt);
+        let off = Config::parse("layout { left { line { dir } } }\ninstant-prompt #false").unwrap();
+        assert!(!off.instant_prompt);
+        let text = off.to_kdl();
+        assert!(
+            text.contains("instant-prompt #false"),
+            "the disabled option must serialize, got:\n{text}"
+        );
+        assert!(!Config::parse(&text).unwrap().instant_prompt);
     }
 
     #[test]

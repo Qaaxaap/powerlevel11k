@@ -82,6 +82,11 @@
 
 `os` 的徽标随发行版动态（arch、ubuntu 等），不经过 `icon {}` 覆盖。
 
+## 即时提示符
+
+- `instant-prompt #false` 关闭即时提示符（instant prompt）。关闭后，shell 加载配置期间，引擎不绘制临时头部。这一项对应 p10k `POWERLEVEL9K_INSTANT_PROMPT` 的 off。默认 `#true`。
+- 只有选项启用时，shell 才收到 `P11K_INSTANT=1`。shell 用它按即时布局打印第一个提示符，并把用户 rc 的输出另起一行。
+
 ## 布局
 
 - `layout { left { … } right { … } }`。`left` / `right` 下用 `line { … }` 声明每行。
