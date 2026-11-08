@@ -2288,36 +2288,31 @@ mod tests {
 
     #[test]
     fn env_indicator_segments() {
-        // ranger: setting RANGER_LEVEL shows the level; clearing it hides the segment.
+        // ranger: setting RANGER_LEVEL shows the level; an empty environment hides it. The
+        // injected map keeps the test independent of the variables the machine ships, and the
+        // per-thread seam keeps it independent of tests that run in parallel.
         let r = Config::parse("layout { left { line { ranger #true } } }").unwrap();
-        unsafe {
-            std::env::set_var("RANGER_LEVEL", "2");
-        }
-        let h = render_header_lines(&r, &info("/tmp", None), None, 80).join("\r\n");
+        let h = with_env(&[("RANGER_LEVEL", "2")], || {
+            render_header_lines(&r, &info("/tmp", None), None, 80).join("\r\n")
+        });
         assert!(h.contains('2'), "ranger should show the level, got: {h:?}");
-        unsafe {
-            std::env::remove_var("RANGER_LEVEL");
-        }
-        let h2 = render_header_lines(&r, &info("/tmp", None), None, 80).join("\r\n");
+        let h2 = with_env(&[], || {
+            render_header_lines(&r, &info("/tmp", None), None, 80).join("\r\n")
+        });
         assert_eq!(
             h2.trim(),
             "",
-            "ranger should be hidden after clearing, got: {h2:?}"
+            "ranger should be hidden in an empty environment, got: {h2:?}"
         );
-        // proxy: setting http_proxy shows its host:port (clearing is not asserted, the machine
-        // may ship proxy env).
+        // proxy: setting http_proxy shows its host:port.
         let p = Config::parse("layout { left { line { proxy #true } } }").unwrap();
-        unsafe {
-            std::env::set_var("http_proxy", "http://proxy.example:8080");
-        }
-        let hp = render_header_lines(&p, &info("/tmp", None), None, 80).join("\r\n");
+        let hp = with_env(&[("http_proxy", "http://proxy.example:8080")], || {
+            render_header_lines(&p, &info("/tmp", None), None, 80).join("\r\n")
+        });
         assert!(
             hp.contains("proxy.example:8080"),
             "proxy should show the http_proxy host:port, got: {hp:?}"
         );
-        unsafe {
-            std::env::remove_var("http_proxy");
-        }
     }
 
     #[test]
