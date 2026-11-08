@@ -312,113 +312,92 @@ struct Engine {
     _pwsh_guard: Option<MutexGuard<'static, ()>>,
 }
 
-/// Start the engine under isolation: explicit `--shell zsh` (CI's `$SHELL` is bash, while the
-/// assertions below are written against zsh's output).
-fn spawn_engine() -> Engine {
-    spawn_engine_with_config_home("/nonexistent-p11k-config")
+/// How to start the engine for one case. The defaults match the isolation every case needs:
+/// explicit `--shell zsh` (CI's `$SHELL` is bash, while the assertions are written against zsh's
+/// output), a config home that does not exist, `/dev/null` rc files and `/tmp` as the cwd.
+struct EngineSpec {
+    shell: String,
+    config_home: String,
+    user_rc: String,
+    theme: Option<String>,
+    cwd: String,
 }
 
-/// `config_home` becomes `$XDG_CONFIG_HOME`, where the engine looks for the theme when `--config`
-/// is not given. The default is a directory that does not exist, or the developer's own theme
-/// would decide what these assertions see.
-fn spawn_engine_with_config_home(config_home: &str) -> Engine {
-    spawn_engine_shell("zsh", config_home)
-}
-
-/// `shell` is passed to `--shell`. Every shell prints the same skeleton (blank rows, the
-/// zero-width signal, the prefix); only the surrounding hooks differ.
-fn spawn_engine_shell(shell: &str, config_home: &str) -> Engine {
-    let socket = format!(
-        "p11k-proxy-{shell}-{}",
-        SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
-    );
-    // Take the lock before the server starts, so the tmux server, the shell and the case all sit
-    // inside the serialised section.
-    let pwsh_guard = (shell == "pwsh").then(|| {
-        PWSH_SERIAL
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    });
-    Engine {
-        master: Box::new(Tmux::start(
-            &socket,
-            shell,
-            config_home,
-            "/dev/null",
-            None,
-            "/tmp",
-        )),
-        writer: Box::new(TmuxKeys { socket }),
-        _pwsh_guard: pwsh_guard,
+impl EngineSpec {
+    fn new() -> Self {
+        Self {
+            shell: "zsh".to_string(),
+            config_home: "/nonexistent-p11k-config".to_string(),
+            user_rc: "/dev/null".to_string(),
+            theme: None,
+            cwd: "/tmp".to_string(),
+        }
     }
-}
 
-/// Like [`spawn_engine_shell`], but the inner shell sources `user_rc` first. Used by the cases
-/// that have to reproduce a user setup that p11k must coexist with.
-fn spawn_engine_shell_with_rc(shell: &str, config_home: &str, user_rc: &str) -> Engine {
-    let socket = format!(
-        "p11k-rc-{shell}-{}",
-        SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
-    );
-    Engine {
-        master: Box::new(Tmux::start(
-            &socket,
-            shell,
-            config_home,
-            user_rc,
-            None,
-            "/tmp",
-        )),
-        writer: Box::new(TmuxKeys { socket }),
-        _pwsh_guard: None,
+    /// The shell binary passed to `--shell`. Every shell prints the same skeleton (blank rows,
+    /// the zero-width signal, the prefix). Only the surrounding hooks differ.
+    fn shell(mut self, shell: &str) -> Self {
+        self.shell = shell.to_string();
+        self
     }
-}
 
-/// Start the engine with an explicit theme for `shell`. The engine reads a theme file with
-/// `--config`.
-fn spawn_engine_shell_with_theme(shell: &str, theme: &str) -> Engine {
-    let socket = format!(
-        "p11k-theme-{shell}-{}",
-        SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
-    );
-    let path = std::env::temp_dir().join(format!("p11k-theme-{socket}.kdl"));
-    std::fs::write(&path, theme).unwrap();
-    Engine {
-        master: Box::new(Tmux::start(
-            &socket,
-            shell,
-            "/nonexistent-p11k-config",
-            "/dev/null",
-            Some(&path),
-            "/tmp",
-        )),
-        writer: Box::new(TmuxKeys { socket }),
-        _pwsh_guard: None,
+    /// `$XDG_CONFIG_HOME` where the engine looks for the theme when `--config` is absent.
+    /// The default is a directory that does not exist; a developer's own theme must not decide
+    /// what the assertions see.
+    fn config_home(mut self, config_home: &str) -> Self {
+        self.config_home = config_home.to_string();
+        self
     }
-}
 
-fn spawn_engine_with_theme(theme: &str) -> Engine {
-    spawn_engine_shell_with_theme("zsh", theme)
-}
+    /// The inner shell sources this file first. The cases that reproduce a user setup use it.
+    fn user_rc(mut self, user_rc: &str) -> Self {
+        self.user_rc = user_rc.to_string();
+        self
+    }
 
-/// Start the engine with its cwd in `dir`. The case that needs a git scan slower than the prompt
-/// uses this: the prompt appears first and the worker finishes while the user is idle.
-fn spawn_engine_in_dir(dir: &str) -> Engine {
-    let socket = format!(
-        "p11k-gitwake-{}",
-        SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
-    );
-    Engine {
-        master: Box::new(Tmux::start(
-            &socket,
-            "zsh",
-            "/nonexistent-p11k-config",
-            "/dev/null",
-            None,
-            dir,
-        )),
-        writer: Box::new(TmuxKeys { socket }),
-        _pwsh_guard: None,
+    /// A KDL theme for `--config`. The engine reads the theme from a temporary file.
+    fn theme(mut self, theme: &str) -> Self {
+        self.theme = Some(theme.to_string());
+        self
+    }
+
+    /// The cwd of the engine. The git-wake case needs a repository whose scan outlives the prompt.
+    fn cwd(mut self, cwd: &str) -> Self {
+        self.cwd = cwd.to_string();
+        self
+    }
+
+    fn start(self) -> Engine {
+        let socket = format!(
+            "p11k-{}-{}",
+            self.shell,
+            SOCKET_SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        // Take the lock before the server starts, so the tmux server, the shell and the case all
+        // sit inside the serialised section. pwsh needs the lock: several .NET runtimes starting
+        // at once on a small runner starve each other.
+        let pwsh_guard = (self.shell == "pwsh").then(|| {
+            PWSH_SERIAL
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        });
+        let theme_path = self.theme.as_ref().map(|kdl| {
+            let path = std::env::temp_dir().join(format!("p11k-theme-{socket}.kdl"));
+            std::fs::write(&path, kdl).unwrap();
+            path
+        });
+        Engine {
+            master: Box::new(Tmux::start(
+                &socket,
+                &self.shell,
+                &self.config_home,
+                &self.user_rc,
+                theme_path.as_deref(),
+                &self.cwd,
+            )),
+            writer: Box::new(TmuxKeys { socket }),
+            _pwsh_guard: pwsh_guard,
+        }
     }
 }
 
@@ -560,7 +539,9 @@ fn theme_is_read_from_the_config_home() {
     )
     .unwrap();
 
-    let eng = spawn_engine_with_config_home(home.to_str().unwrap());
+    let eng = EngineSpec::new()
+        .config_home(home.to_str().unwrap())
+        .start();
     let out = read_until(&eng.master, "FROM-CONFIG-HOME", Duration::from_secs(10));
     let _ = std::fs::remove_dir_all(&home);
     assert!(
@@ -571,7 +552,7 @@ fn theme_is_read_from_the_config_home() {
 
 #[test]
 fn initial_prompt_shows_header_and_input_line() {
-    let eng = spawn_engine();
+    let eng = EngineSpec::new().start();
     let out = wait_ready(&eng.master);
     assert!(
         out.contains('/') || out.contains('~'),
@@ -598,7 +579,7 @@ fn initial_prompt_shows_header_and_input_line() {
 /// header redraws; p11k owns the prompt, so the mark must not reach the terminal at all.
 #[test]
 fn zsh_startup_does_not_flash_the_eof_mark() {
-    let eng = spawn_engine();
+    let eng = EngineSpec::new().start();
     let startup = wait_ready(&eng.master);
     assert!(
         !startup.contains("\x1b[7m%"),
@@ -619,7 +600,10 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
         std::fs::create_dir_all(dir.join(name)).unwrap();
     }
 
-    let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
+    let mut eng = EngineSpec::new()
+        .shell("bash")
+        .config_home("/nonexistent-p11k-config")
+        .start();
     wait_ready(&eng.master);
     assert_readline_available(&mut eng);
 
@@ -656,7 +640,7 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
 /// sit between its marker and the paint that covers it.
 #[test]
 fn zsh_job_notification_reprint_is_covered() {
-    let mut eng = spawn_engine();
+    let mut eng = EngineSpec::new().start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"sleep 1 &\n").unwrap();
@@ -695,7 +679,10 @@ fn bash_two_row_header_is_backfilled() {
     )
     .unwrap();
 
-    let mut eng = spawn_engine_shell("bash", home.to_str().unwrap());
+    let mut eng = EngineSpec::new()
+        .shell("bash")
+        .config_home(home.to_str().unwrap())
+        .start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"echo two-row-probe\n").unwrap();
@@ -728,7 +715,10 @@ fn bash_long_prefix_is_backfilled() {
     )
     .unwrap();
 
-    let mut eng = spawn_engine_shell("bash", home.to_str().unwrap());
+    let mut eng = EngineSpec::new()
+        .shell("bash")
+        .config_home(home.to_str().unwrap())
+        .start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"echo wide-probe\n").unwrap();
@@ -760,7 +750,10 @@ fn bash_typed_underscores_are_echoed_immediately() {
     )
     .unwrap();
 
-    let mut eng = spawn_engine_shell("bash", home.to_str().unwrap());
+    let mut eng = EngineSpec::new()
+        .shell("bash")
+        .config_home(home.to_str().unwrap())
+        .start();
     wait_ready(&eng.master);
 
     for ch in ["_", "_", "_", "_", "_"] {
@@ -782,7 +775,10 @@ fn bash_typed_underscores_are_echoed_immediately() {
 /// bash/fish/pwsh — zsh paints through zle-line-init and never buffers).
 #[test]
 fn bash_typed_characters_are_echoed_immediately() {
-    let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
+    let mut eng = EngineSpec::new()
+        .shell("bash")
+        .config_home("/nonexistent-p11k-config")
+        .start();
     wait_ready(&eng.master);
 
     for ch in ["i", "m", "m", "e", "d"] {
@@ -813,7 +809,10 @@ fn bash_enter_inside_the_completion_pager_is_covered() {
         std::fs::create_dir_all(dir.join(format!("c{i:03}"))).unwrap();
     }
 
-    let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
+    let mut eng = EngineSpec::new()
+        .shell("bash")
+        .config_home("/nonexistent-p11k-config")
+        .start();
     wait_ready(&eng.master);
     assert_readline_available(&mut eng);
 
@@ -904,7 +903,11 @@ fn transient_hook_survives_reentrant_zle_plugins() {
     )
     .unwrap();
 
-    let mut eng = spawn_engine_shell_with_rc("zsh", home.to_str().unwrap(), rc.to_str().unwrap());
+    let mut eng = EngineSpec::new()
+        .shell("zsh")
+        .config_home(home.to_str().unwrap())
+        .user_rc(rc.to_str().unwrap())
+        .start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"echo P11K-REENTRY\n").unwrap();
@@ -927,7 +930,7 @@ fn transient_prompt_folds_the_instant_header() {
     let theme = "layout {\n    left { line { dir } }\n    right { line { status } }\n    \
                  transient-prompt #true\n}\nsegments {\n    status verbose=#true\n}\n    \
                  frame { first-prefix \"HDRMARK|\" }\n";
-    let mut eng = spawn_engine_with_theme(theme);
+    let mut eng = EngineSpec::new().theme(theme).start();
     wait_ready(&eng.master);
     let screen = eng.master.screen();
     assert!(
@@ -966,7 +969,7 @@ fn same_dir_keeps_the_first_prompt_whole() {
     let theme = "layout {\n    left { line { dir } }\n    right { line { status } }\n    \
                  transient-prompt same-dir\n}\nsegments {\n    status verbose=#true\n}\n    \
                  frame { first-prefix \"HDRMARK|\" }\n";
-    let mut eng = spawn_engine_with_theme(theme);
+    let mut eng = EngineSpec::new().theme(theme).start();
     wait_ready(&eng.master);
 
     // `P11K-DONE` appears only in the output, never in the echoed command line, so the read
@@ -1000,7 +1003,7 @@ const RESIZE_THEME: &str = "layout {\n    left { line { dir } }\n    right { lin
 /// syncs the inner pty to the new size and redraws after the shell reprints its prompt.
 #[test]
 fn zsh_resize_repaints_the_header_and_keeps_the_buffer() {
-    let mut eng = spawn_engine_with_theme(RESIZE_THEME);
+    let mut eng = EngineSpec::new().theme(RESIZE_THEME).start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"echo typed-buffer").unwrap();
@@ -1022,7 +1025,7 @@ fn zsh_resize_repaints_the_header_and_keeps_the_buffer() {
 /// header with the input line under it.
 #[test]
 fn bash_resize_repaints_the_header() {
-    let mut eng = spawn_engine_shell_with_theme("bash", RESIZE_THEME);
+    let mut eng = EngineSpec::new().shell("bash").theme(RESIZE_THEME).start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"echo typed-buffer").unwrap();
@@ -1038,7 +1041,7 @@ fn bash_resize_repaints_the_header() {
 /// same single header with the buffer under it.
 #[test]
 fn fish_resize_repaints_the_header() {
-    let mut eng = spawn_engine_shell_with_theme("fish", RESIZE_THEME);
+    let mut eng = EngineSpec::new().shell("fish").theme(RESIZE_THEME).start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"echo typed-buffer").unwrap();
@@ -1058,7 +1061,7 @@ fn fish_resize_repaints_the_header() {
 /// `string collect`, so the header landed on the echoed command instead of the row below it.
 #[test]
 fn fish_keeps_the_command_echo_on_screen() {
-    let mut eng = spawn_engine_shell_with_theme("fish", RESIZE_THEME);
+    let mut eng = EngineSpec::new().shell("fish").theme(RESIZE_THEME).start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"sleep 1\n").unwrap();
@@ -1082,7 +1085,7 @@ fn show_ruler_does_not_cover_the_previous_output() {
     let theme = "layout {\n    left { line { dir } }\n    right { line { status } }\n    \
                  show-ruler #true\n}\nsegments {\n    status verbose=#true\n}\n    \
                  frame { first-prefix \"HDRMARK|\" }\n";
-    let mut eng = spawn_engine_with_theme(theme);
+    let mut eng = EngineSpec::new().theme(theme).start();
     wait_ready(&eng.master);
 
     // The output text differs from the echoed command, so only the output can match it.
@@ -1112,7 +1115,7 @@ fn same_dir_mode_folds_in_the_same_directory_and_keeps_a_changed_one() {
     let theme = "layout {\n    left { line { dir } }\n    right { line { status } }\n    \
                  transient-prompt same-dir\n}\nsegments {\n    status verbose=#true\n}\n    \
                  frame { first-prefix \"HDRMARK|\" }\n";
-    let mut eng = spawn_engine_with_theme(theme);
+    let mut eng = EngineSpec::new().theme(theme).start();
     wait_ready(&eng.master);
 
     // The first prompt has no previous directory, so its header stays whole. The fold decision
@@ -1174,7 +1177,7 @@ fn same_dir_mode_folds_in_the_same_directory_and_keeps_a_changed_one() {
 /// output intact.
 #[test]
 fn resize_while_a_command_runs_keeps_the_next_prompt_clean() {
-    let mut eng = spawn_engine_with_theme(RESIZE_THEME);
+    let mut eng = EngineSpec::new().theme(RESIZE_THEME).start();
     wait_ready(&eng.master);
     eng.writer
         .write_all(b"sleep 1; printf 'P11K-%s\\n' LATE\n")
@@ -1205,7 +1208,7 @@ fn show_ruler_with_a_multi_line_header_keeps_the_output() {
     let theme = "layout {\n    left { line { dir }; line { time } }\n    right { line { status } }\n    \
                  show-ruler #true\n}\nsegments {\n    status verbose=#true\n}\n    \
                  frame { first-prefix \"HDRMARK|\" }\n";
-    let mut eng = spawn_engine_with_theme(theme);
+    let mut eng = EngineSpec::new().theme(theme).start();
     wait_ready(&eng.master);
 
     eng.writer
@@ -1260,7 +1263,10 @@ fn assert_resized_screen(master: &Tmux) {
 
 #[test]
 fn bash_ctrl_l_rebuilds_the_prompt() {
-    let mut eng = spawn_engine_shell("bash", "/nonexistent-p11k-config");
+    let mut eng = EngineSpec::new()
+        .shell("bash")
+        .config_home("/nonexistent-p11k-config")
+        .start();
     wait_ready(&eng.master);
     assert_readline_available(&mut eng);
 
@@ -1313,7 +1319,7 @@ fn assert_readline_available(eng: &mut Engine) {
 
 #[test]
 fn command_output_passthrough_and_next_prompt() {
-    let mut eng = spawn_engine();
+    let mut eng = EngineSpec::new().start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"echo hello-from-shell\n").unwrap();
@@ -1354,7 +1360,9 @@ fn prompt_add_newline_leaves_one_blank_row() {
     )
     .unwrap();
 
-    let mut eng = spawn_engine_with_config_home(home.to_str().unwrap());
+    let mut eng = EngineSpec::new()
+        .config_home(home.to_str().unwrap())
+        .start();
     wait_ready(&eng.master);
 
     eng.writer
@@ -1398,7 +1406,7 @@ fn prompt_add_newline_leaves_one_blank_row() {
 
 #[test]
 fn exit_code_shows_in_status() {
-    let mut eng = spawn_engine();
+    let mut eng = EngineSpec::new().start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"false\n").unwrap();
@@ -1414,7 +1422,7 @@ fn exit_code_shows_in_status() {
 fn prompt_char_turns_error_color_on_failure() {
     // The default lean prompt_char has state ERROR fg=196 and normal fg=76: after a
     // failed command the ❯ prefix should turn red.
-    let mut eng = spawn_engine();
+    let mut eng = EngineSpec::new().start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"false\n").unwrap();
@@ -1430,7 +1438,7 @@ fn prompt_char_turns_error_color_on_failure() {
 
 #[test]
 fn ctrl_c_interrupts_running_command() {
-    let mut eng = spawn_engine();
+    let mut eng = EngineSpec::new().start();
     wait_ready(&eng.master);
 
     eng.writer.write_all(b"sleep 5\n").unwrap();
@@ -1462,7 +1470,10 @@ const SHELL_READY: Duration = Duration::from_secs(90);
 /// The header is painted, the input line carries the prefix, and every placeholder the shell
 /// printed is covered: the marker is always followed by the engine's backfill (DECSC, `\x1b7`).
 fn marker_shell_paints_its_prompt(shell: &str) {
-    let eng = spawn_engine_shell(shell, "/nonexistent-p11k-config");
+    let eng = EngineSpec::new()
+        .shell(shell)
+        .config_home("/nonexistent-p11k-config")
+        .start();
     let out = wait_ready_within(&eng.master, SHELL_READY);
 
     assert!(
@@ -1491,7 +1502,10 @@ fn marker_shell_paints_its_prompt(shell: &str) {
 /// A command inside fish: its output passes through, a new prompt follows, and a failing command
 /// turns the status segment into ✘.
 fn marker_shell_runs_a_command(shell: &str, fail: &str) {
-    let mut eng = spawn_engine_shell(shell, "/nonexistent-p11k-config");
+    let mut eng = EngineSpec::new()
+        .shell(shell)
+        .config_home("/nonexistent-p11k-config")
+        .start();
     wait_ready_within(&eng.master, SHELL_READY);
 
     eng.writer.write_all(b"echo hello-from-proxy\n").unwrap();
@@ -1524,7 +1538,10 @@ fn marker_shell_runs_a_command(shell: &str, fail: &str) {
 /// Typed characters come back one at a time: looking for the placeholder must not hold output
 /// back, or the input line lags behind the keyboard.
 fn marker_shell_echoes_typed_characters(shell: &str) {
-    let mut eng = spawn_engine_shell(shell, "/nonexistent-p11k-config");
+    let mut eng = EngineSpec::new()
+        .shell(shell)
+        .config_home("/nonexistent-p11k-config")
+        .start();
     wait_ready_within(&eng.master, SHELL_READY);
 
     for ch in ["i", "m", "m", "e", "d"] {
@@ -1584,15 +1601,13 @@ fn pwsh_echoes_typed_characters() {
 /// of the prefix in the captured byte stream has to keep the frame colour.
 #[test]
 fn pwsh_redraws_keep_the_input_prefix_colour() {
-    let _guard = PWSH_SERIAL
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // The engine builder takes the pwsh lock itself, so this case must not take it again.
     let theme = r#"mode "nerdfont-complete"
 layout { left { line { dir; status } } }
 frame fg=240 { last-prefix "╰─" }
 segments { status verbose=#true }
 "#;
-    let mut eng = spawn_engine_shell_with_theme("pwsh", theme);
+    let mut eng = EngineSpec::new().shell("pwsh").theme(theme).start();
     let _ = read_until(&eng.master, "╰", Duration::from_secs(20));
     eng.writer.write_all(b"a").unwrap();
     eng.writer.flush().unwrap();
@@ -1630,7 +1645,7 @@ segments { status verbose=#true }
 fn a_slow_git_result_repaints_the_header_without_input() {
     let repo = create_slow_git_repo();
     let dir = repo.0.to_string_lossy().into_owned();
-    let engine = spawn_engine_in_dir(&dir);
+    let engine = EngineSpec::new().cwd(&dir).start();
     let _ = wait_ready(&engine.master);
     let screen = engine
         .master
@@ -1674,7 +1689,7 @@ fn assert_raw_terminal(termios: &libc::termios, when: &str) {
 /// the engine never checked the result.
 #[test]
 fn zsh_resize_keeps_the_terminal_in_raw_mode() {
-    let engine = spawn_engine();
+    let engine = EngineSpec::new().start();
     let _ = wait_ready(&engine.master);
     let pid = engine.master.pane_pid();
     assert_raw_terminal(&engine_termios(pid), "before the resize");
