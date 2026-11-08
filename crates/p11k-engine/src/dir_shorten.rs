@@ -108,24 +108,104 @@ const MARKERS: &[&str] = &[
     "go.mod",
 ];
 
-/// Fold the absolute path `cwd` and return the part sequence (without `~`/`/`; the caller assembles it and adds prefixes).
+/// Filesystem access for the shortening strategies. The production implementation is
+/// [`RealFs`]; tests inject an in-memory one, so the strategies do not read the host.
+pub(super) trait Fs {
+    /// Names in the directory, or None when it cannot be read.
+    fn read_dir(&self, path: &Path) -> Option<Vec<String>>;
+    /// Directory mtime in nanoseconds since the epoch, used as the cache key.
+    fn mtime_ns(&self, path: &Path) -> Option<i64>;
+    /// Whether the path exists.
+    fn exists(&self, path: &Path) -> bool;
+    /// Whether the path is a directory.
+    fn is_dir(&self, path: &Path) -> bool;
+}
+
+/// The process filesystem.
+pub(super) struct RealFs;
+
+impl Fs for RealFs {
+    fn read_dir(&self, path: &Path) -> Option<Vec<String>> {
+        std::fs::read_dir(path).ok().map(|rd| {
+            rd.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+                .collect()
+        })
+    }
+
+    fn mtime_ns(&self, path: &Path) -> Option<i64> {
+        let md = std::fs::metadata(path).ok()?;
+        let t = md.modified().ok()?;
+        Some(t.duration_since(UNIX_EPOCH).ok()?.as_nanos() as i64)
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        path.exists()
+    }
+
+    fn is_dir(&self, path: &Path) -> bool {
+        path.is_dir()
+    }
+}
+
+/// The input of one shortening run: the parts, their base directory, the options and the
+/// filesystem the strategies may read.
+struct FoldCtx<'a> {
+    parts: &'a [String],
+    base: &'a Path,
+    opts: &'a Opts,
+    fs: &'a dyn Fs,
+}
+
+impl FoldCtx<'_> {
+    fn len(&self) -> usize {
+        self.opts.length.max(1)
+    }
+
+    fn delim(&self) -> &str {
+        &self.opts.delimiter
+    }
+
+    fn n(&self) -> usize {
+        self.parts.len()
+    }
+
+    fn abs(&self, up_to: usize) -> PathBuf {
+        join(self.base, &self.parts[..=up_to])
+    }
+}
+
+/// Fold the absolute path `cwd` and return the part sequence (without `~`/`/`; the caller
+/// assembles it and adds prefixes).
 pub fn shorten(cwd: &Path, home: Option<&Path>, opts: &Opts) -> Vec<DirPart> {
-    let len = opts.length.max(1);
+    shorten_with_fs(cwd, home, opts, &RealFs)
+}
+
+/// [`shorten`] with an injected filesystem.
+fn shorten_with_fs(cwd: &Path, home: Option<&Path>, opts: &Opts, fs: &dyn Fs) -> Vec<DirPart> {
     let (parts, base) = split_parts(cwd, home);
     if parts.is_empty() {
         return Vec::new();
     }
-    match opts.strategy {
-        Strategy::TruncateToUnique => fold_unique(&parts, len, &base, opts),
-        Strategy::TruncateMiddle => fold_truncate(&parts, len, &opts.delimiter, true),
-        Strategy::TruncateFromRight => fold_truncate(&parts, len, &opts.delimiter, false),
-        Strategy::TruncateToLast => fold_to_last(&parts, len, &opts.delimiter),
-        Strategy::TruncateToFirstAndLast => fold_first_last(&parts, len, &opts.delimiter),
-        Strategy::TruncateAbsolute => fold_absolute(&parts, len, &opts.delimiter),
-        Strategy::TruncateWithFolderMarker => {
-            fold_folder_marker(&parts, &base, &opts.delimiter, opts)
-        }
-        Strategy::FoldToLast => fold_keep_last(&parts, len, &opts.delimiter),
+    let ctx = FoldCtx {
+        parts: &parts,
+        base: &base,
+        opts,
+        fs,
+    };
+    strategy(opts.strategy)(&ctx)
+}
+
+/// The strategy table: one function per strategy. The dispatcher only picks the row.
+fn strategy(s: Strategy) -> fn(&FoldCtx<'_>) -> Vec<DirPart> {
+    match s {
+        Strategy::TruncateToUnique => fold_unique,
+        Strategy::TruncateMiddle => fold_middle,
+        Strategy::TruncateFromRight => fold_from_right,
+        Strategy::TruncateToLast => fold_to_last,
+        Strategy::TruncateToFirstAndLast => fold_first_last,
+        Strategy::TruncateAbsolute => fold_absolute,
+        Strategy::TruncateWithFolderMarker => fold_folder_marker,
+        Strategy::FoldToLast => fold_keep_last,
     }
 }
 
@@ -145,49 +225,6 @@ fn to_parts(p: &Path) -> Vec<String> {
         .filter(|c| matches!(c, Component::Normal(_)))
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect()
-}
-
-/// `truncate_to_unique`: anchors are kept, the rest are shortened to unique prefixes.
-///
-/// With `opts.budget` as `None` the whole path is left as is; with `Some(n)` levels are folded
-/// front to back until the accumulated saved columns reach n.
-fn fold_unique(parts: &[String], shortenlen: usize, base: &Path, opts: &Opts) -> Vec<DirPart> {
-    let n = parts.len();
-    let anchor_tail = shortenlen.min(n);
-    let delim_len = opts.delimiter.chars().count();
-    let mut saved = 0usize;
-    let mut slots: Vec<Slot> = Vec::with_capacity(n);
-    for (i, part) in parts.iter().enumerate() {
-        let abs = join(base, &parts[..=i]);
-        let is_anchor = i >= n - anchor_tail || has_marker_in(&abs, opts);
-        if is_anchor {
-            slots.push(Slot::part(i, Class::Anchor));
-            continue;
-        }
-        let text = match opts.budget {
-            None => part.clone(),
-            Some(budget) => {
-                let short = shorten_component(&abs, part);
-                let gain = part
-                    .chars()
-                    .count()
-                    .saturating_sub(short.chars().count() + delim_len);
-                if gain > 0 && saved < budget {
-                    saved += gain;
-                    short
-                } else {
-                    part.clone()
-                }
-            }
-        };
-        let class = if text != *part {
-            Class::Shortened
-        } else {
-            Class::Normal
-        };
-        slots.push(Slot::edited(i, class, text));
-    }
-    materialize(parts, "", slots)
 }
 
 /// One output slot: a kept path part or the ellipsis. The strategies choose slots; the
@@ -245,12 +282,67 @@ fn range_slots(parts_len: usize, range: std::ops::Range<usize>) -> Vec<Slot> {
         .collect()
 }
 
-/// `truncate_middle` / `truncate_from_right`: the first and last parts are kept, interior levels are truncated.
-fn fold_truncate(parts: &[String], len: usize, delim: &str, middle: bool) -> Vec<DirPart> {
+/// `truncate_to_unique`: anchors are kept, the rest are shortened to unique prefixes.
+///
+/// With `opts.budget` as `None` the whole path is left as is; with `Some(n)` levels are folded
+/// front to back until the accumulated saved columns reach n.
+fn fold_unique(ctx: &FoldCtx<'_>) -> Vec<DirPart> {
+    let n = ctx.n();
+    let shortenlen = ctx.len();
+    let anchor_tail = shortenlen.min(n);
+    let delim_len = ctx.delim().chars().count();
+    let mut saved = 0usize;
+    let mut slots: Vec<Slot> = Vec::with_capacity(n);
+    for (i, part) in ctx.parts.iter().enumerate() {
+        let abs = ctx.abs(i);
+        let is_anchor = i >= n - anchor_tail || has_marker_in(ctx, &abs);
+        if is_anchor {
+            slots.push(Slot::part(i, Class::Anchor));
+            continue;
+        }
+        let text = match ctx.opts.budget {
+            None => part.clone(),
+            Some(budget) => {
+                let short = shorten_component(ctx, &abs, part);
+                let gain = part
+                    .chars()
+                    .count()
+                    .saturating_sub(short.chars().count() + delim_len);
+                if gain > 0 && saved < budget {
+                    saved += gain;
+                    short
+                } else {
+                    part.clone()
+                }
+            }
+        };
+        let class = if text != *part {
+            Class::Shortened
+        } else {
+            Class::Normal
+        };
+        slots.push(Slot::edited(i, class, text));
+    }
+    materialize(ctx.parts, "", slots)
+}
+
+/// `truncate_middle`: the first and last parts are kept, interior levels are truncated.
+fn fold_middle(ctx: &FoldCtx<'_>) -> Vec<DirPart> {
+    fold_truncate(ctx, true)
+}
+
+/// `truncate_from_right`: the first part is kept, interior levels keep their head.
+fn fold_from_right(ctx: &FoldCtx<'_>) -> Vec<DirPart> {
+    fold_truncate(ctx, false)
+}
+
+fn fold_truncate(ctx: &FoldCtx<'_>, middle: bool) -> Vec<DirPart> {
+    let len = ctx.len();
+    let delim = ctx.delim();
     let d = delim.chars().count();
-    let n = parts.len();
+    let n = ctx.n();
     let mut slots = Vec::with_capacity(n);
-    for (i, part) in parts.iter().enumerate() {
+    for (i, part) in ctx.parts.iter().enumerate() {
         // p10k handles only the 2nd through 2nd-to-last parts (first and last as is).
         let interior = i > 0 && i + 1 < n;
         let chars: Vec<char> = part.chars().collect();
@@ -267,28 +359,32 @@ fn fold_truncate(parts: &[String], len: usize, delim: &str, middle: bool) -> Vec
             slots.push(Slot::part(i, class_for(i, n)));
         }
     }
-    materialize(parts, "", slots)
+    materialize(ctx.parts, "", slots)
 }
 
-/// `truncate_to_last`: keep only the last `len` levels, dropping the rest into a single ellipsis.
-fn fold_to_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
-    let n = parts.len();
+/// `truncate_to_last`: keep only the last `len` levels, dropping the rest into one ellipsis.
+fn fold_to_last(ctx: &FoldCtx<'_>) -> Vec<DirPart> {
+    let len = ctx.len();
+    let delim = ctx.delim();
+    let n = ctx.n();
     if n <= len {
-        return plain(parts);
+        return plain(ctx.parts);
     }
     let mut slots = Vec::new();
     if !delim.is_empty() {
         slots.push(Slot::Ellipsis);
     }
     slots.extend(range_slots(n, n - len..n));
-    materialize(parts, delim, slots)
+    materialize(ctx.parts, delim, slots)
 }
 
 /// `truncate_to_first_and_last`: first `len` + last `len`, with one ellipsis in between.
-fn fold_first_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
-    let n = parts.len();
+fn fold_first_last(ctx: &FoldCtx<'_>) -> Vec<DirPart> {
+    let len = ctx.len();
+    let delim = ctx.delim();
+    let n = ctx.n();
     if n <= len * 2 {
-        return plain(parts);
+        return plain(ctx.parts);
     }
     let mut slots = Vec::with_capacity(len * 2 + 1);
     for i in 0..len {
@@ -300,27 +396,29 @@ fn fold_first_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     for i in n - len..n {
         slots.push(Slot::part(i, Class::Anchor));
     }
-    materialize(parts, delim, slots)
+    materialize(ctx.parts, delim, slots)
 }
 
 /// `truncate_absolute(_chars)`: truncate the whole path by character count, keeping the tail.
-fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
-    // Accumulate parts back from the end until len is exceeded; the overflowing level keeps only
-    // its tail characters.
+fn fold_absolute(ctx: &FoldCtx<'_>) -> Vec<DirPart> {
+    let len = ctx.len();
+    let delim = ctx.delim();
+    let n = ctx.n();
+    // Accumulate parts back from the end until len is exceeded; the overflowing level keeps
+    // only its tail characters.
     let mut acc = 0usize;
     let mut start = 0usize;
-    for i in (0..parts.len()).rev() {
-        let l = parts[i].chars().count() + 1; // +1 for the separator
+    for i in (0..n).rev() {
+        let l = ctx.parts[i].chars().count() + 1; // +1 for the separator
         if acc + l > len {
             start = i;
             break;
         }
         acc += l;
     }
-    let n = parts.len();
     let mut slots = Vec::with_capacity(n - start);
     if start > 0 {
-        let part = &parts[start];
+        let part = &ctx.parts[start];
         let keep = len.saturating_sub(acc);
         let chars: Vec<char> = part.chars().collect();
         let text = if keep > 0 && keep < chars.len() {
@@ -337,16 +435,17 @@ fn fold_absolute(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
     } else {
         slots.extend(range_slots(n, start..n));
     }
-    materialize(parts, "", slots)
+    materialize(ctx.parts, "", slots)
 }
 
 /// `truncate_with_folder_marker`: gaps between marker files fold into the ellipsis.
-fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -> Vec<DirPart> {
-    let n = parts.len();
+fn fold_folder_marker(ctx: &FoldCtx<'_>) -> Vec<DirPart> {
+    let delim = ctx.delim();
+    let n = ctx.n();
     let mut marks: Vec<usize> = Vec::new();
     for i in (0..n).rev() {
-        let abs = join(base, &parts[..=i]);
-        if has_marker_in(&abs, opts) {
+        let abs = ctx.abs(i);
+        if has_marker_in(ctx, &abs) {
             marks.push(i);
         }
     }
@@ -364,7 +463,7 @@ fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -
     }
     let mut slots = Vec::with_capacity(n);
     let mut elided = false;
-    for (i, _) in parts.iter().enumerate() {
+    for (i, _) in ctx.parts.iter().enumerate() {
         if hidden[i] {
             if !elided && !delim.is_empty() {
                 slots.push(Slot::Ellipsis);
@@ -374,21 +473,23 @@ fn fold_folder_marker(parts: &[String], base: &Path, delim: &str, opts: &Opts) -
         }
         slots.push(Slot::part(i, class_for(i, n)));
     }
-    materialize(parts, delim, slots)
+    materialize(ctx.parts, delim, slots)
 }
 
 /// Default branch for an empty strategy: keep the last `len` levels, prefixed by one ellipsis.
-fn fold_keep_last(parts: &[String], len: usize, delim: &str) -> Vec<DirPart> {
-    let n = parts.len();
+fn fold_keep_last(ctx: &FoldCtx<'_>) -> Vec<DirPart> {
+    let len = ctx.len();
+    let delim = ctx.delim();
+    let n = ctx.n();
     if n <= len {
-        return plain(parts);
+        return plain(ctx.parts);
     }
     let mut slots = Vec::with_capacity(len + 1);
     if !delim.is_empty() {
         slots.push(Slot::Ellipsis);
     }
     slots.extend(range_slots(n, n - len..n));
-    materialize(parts, delim, slots)
+    materialize(ctx.parts, delim, slots)
 }
 
 /// Keep everything (when the strategy needs no folding).
@@ -414,13 +515,13 @@ fn join(base: &Path, parts: &[String]) -> PathBuf {
 }
 
 /// Shortest unique prefix of the part among its directory siblings (cache first).
-fn shorten_component(abs: &Path, name: &str) -> String {
+fn shorten_component(ctx: &FoldCtx<'_>, abs: &Path, name: &str) -> String {
     let parent = abs.parent().unwrap_or_else(|| Path::new("/"));
-    let parent_mtime = file_mtime(parent).unwrap_or(-1);
+    let parent_mtime = ctx.fs.mtime_ns(parent).unwrap_or(-1);
     if let Some(v) = CACHE.with(|c| c.borrow().get(&(abs.to_path_buf(), parent_mtime)).cloned()) {
         return v;
     }
-    let Some(sibs) = list_dir(parent) else {
+    let Some(sibs) = ctx.fs.read_dir(parent) else {
         return name.to_string();
     };
     let mut best = name.to_string();
@@ -439,27 +540,15 @@ fn shorten_component(abs: &Path, name: &str) -> String {
     best
 }
 
-/// Whether this absolute path prefix has an ancestor containing a marker file (only `opts.marker` when it is non-empty).
-fn has_marker_in(abs: &Path, opts: &Opts) -> bool {
-    if !opts.marker.is_empty() {
-        return abs.join(&opts.marker).exists();
+/// Whether this absolute path prefix has an ancestor containing a marker file (only
+/// `opts.marker` when it is non-empty).
+fn has_marker_in(ctx: &FoldCtx<'_>, abs: &Path) -> bool {
+    if !ctx.opts.marker.is_empty() {
+        return ctx.fs.exists(&abs.join(&ctx.opts.marker));
     }
     MARKERS
         .iter()
-        .any(|m| abs.join(m).exists() || abs.join(m).is_dir())
-}
-
-fn list_dir(path: &Path) -> Option<Vec<String>> {
-    std::fs::read_dir(path).ok().map(|rd| {
-        rd.filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
-            .collect()
-    })
-}
-
-fn file_mtime(path: &Path) -> Option<i64> {
-    let md = std::fs::metadata(path).ok()?;
-    let t = md.modified().ok()?;
-    Some(t.duration_since(UNIX_EPOCH).ok()?.as_nanos() as i64)
+        .any(|m| ctx.fs.exists(&abs.join(m)) || ctx.fs.is_dir(&abs.join(m)))
 }
 
 #[cfg(test)]
@@ -557,16 +646,86 @@ mod tests {
         assert_eq!(texts("/alpha/bravo/charlie", &o), vec!["\u{2026}rlie"]);
     }
 
+    /// An in-memory filesystem: the shortening strategies do not touch the host in tests.
+    struct FakeFs {
+        dirs: std::collections::BTreeMap<PathBuf, Vec<String>>,
+        mtime: i64,
+    }
+
+    impl FakeFs {
+        fn new(entries: &[(&str, &[&str])]) -> FakeFs {
+            let dirs = entries
+                .iter()
+                .map(|(dir, names)| {
+                    (
+                        PathBuf::from(dir),
+                        names.iter().map(|s| s.to_string()).collect(),
+                    )
+                })
+                .collect();
+            FakeFs { dirs, mtime: 1 }
+        }
+    }
+
+    impl Fs for FakeFs {
+        fn read_dir(&self, path: &Path) -> Option<Vec<String>> {
+            self.dirs.get(path).cloned()
+        }
+
+        fn mtime_ns(&self, _path: &Path) -> Option<i64> {
+            Some(self.mtime)
+        }
+
+        fn exists(&self, path: &Path) -> bool {
+            self.dirs.contains_key(path)
+        }
+
+        fn is_dir(&self, path: &Path) -> bool {
+            self.dirs.contains_key(path)
+        }
+    }
+
     #[test]
     fn home_prefix_keeps_last_as_anchor() {
-        let home = std::env::temp_dir().join("p11k-shorten-home2");
-        let _ = std::fs::remove_dir_all(&home);
-        std::fs::create_dir_all(home.join("Projects").join("p11k")).unwrap();
-        std::fs::create_dir_all(home.join("Templates")).unwrap();
+        // The engine reads the tree through the injected filesystem, not the host.
+        let fs = FakeFs::new(&[
+            ("/home/u", &["Projects", "Templates"]),
+            ("/home/u/Projects", &["p11k"]),
+            ("/home/u/Templates", &[]),
+            ("/home/u/Projects/p11k", &[]),
+        ]);
+        let home = Path::new("/home/u");
         let cwd = home.join("Projects").join("p11k");
         let o = opts(Strategy::TruncateToUnique, 1, "");
-        let parts = shorten(&cwd, Some(&home), &o);
+        let parts = shorten_with_fs(&cwd, Some(home), &o, &fs);
         assert_eq!(parts.last().map(|p| p.text.as_str()), Some("p11k"));
         assert_eq!(parts.last().map(|p| p.class), Some(Class::Anchor));
+        // The non-anchor level shortens to the shortest unique prefix among its siblings.
+        assert_eq!(parts.first().map(|p| p.text.as_str()), Some("P"));
+        assert_eq!(parts.first().map(|p| p.class), Some(Class::Shortened));
+    }
+
+    /// The sibling list comes from the injected filesystem, so the result is deterministic.
+    #[test]
+    fn unique_prefix_reads_the_injected_siblings() {
+        let o = opts(Strategy::TruncateToUnique, 1, "");
+        let home = Path::new("/x");
+        let fs = FakeFs::new(&[
+            ("/x", &["Projects", "Photos"]),
+            ("/x/Projects", &["sub"]),
+            ("/x/Projects/sub", &[]),
+        ]);
+        let parts = shorten_with_fs(&home.join("Projects").join("sub"), Some(home), &o, &fs);
+        // With two P-siblings the prefix must extend past "P".
+        assert_eq!(parts.first().map(|p| p.text.as_str()), Some("Pr"));
+        // A separate root keeps the prefix cache of the first case out of this one.
+        let home = Path::new("/y");
+        let fs = FakeFs::new(&[
+            ("/y", &["Projects", "Zeta"]),
+            ("/y/Projects", &["sub"]),
+            ("/y/Projects/sub", &[]),
+        ]);
+        let parts = shorten_with_fs(&home.join("Projects").join("sub"), Some(home), &o, &fs);
+        assert_eq!(parts.first().map(|p| p.text.as_str()), Some("P"));
     }
 }
