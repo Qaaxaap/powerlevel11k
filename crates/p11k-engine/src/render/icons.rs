@@ -127,6 +127,12 @@ pub(super) fn icon_default(key: &str) -> Option<IconEntry> {
 /// Resolves an icon name: top-level `icon{}` overrides (auto-detected category via all plus
 /// exact nf/compat/ascii tiers) → otherwise the built-in default table (per mode).
 pub(super) fn icon_str(config: &Config, key: &str) -> Option<String> {
+    // An empty icon means "no icon", not "a zero-width icon": the default table is empty for
+    // some segments in the compatible and ascii tiers, and an empty override must not fall back
+    // to the default. Returning None keeps the padding and the middle text slot out of the row.
+    fn non_empty(s: String) -> Option<String> {
+        (!s.is_empty()).then_some(s)
+    }
     if let Some(ov) = config.icon_overrides.get(key) {
         let exact = match config.mode {
             crate::config::IconMode::NerdfontComplete
@@ -135,16 +141,16 @@ pub(super) fn icon_str(config: &Config, key: &str) -> Option<String> {
             crate::config::IconMode::Ascii => ov.ascii.as_ref(),
         };
         if let Some(c) = exact {
-            return Some(c.clone());
+            return non_empty(c.clone());
         }
         if let Some(a) = &ov.all
             && all_covers(a, &config.mode)
         {
-            return Some(a.clone());
+            return non_empty(a.clone());
         }
     }
     let e = icon_default(key)?;
-    Some(icon_by_mode(&e, &config.mode))
+    non_empty(icon_by_mode(&e, &config.mode))
 }
 
 /// Auto-detection for the `all` field: NF Private Use chars land in the nf tier only,

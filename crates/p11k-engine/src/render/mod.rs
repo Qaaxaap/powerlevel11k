@@ -1806,8 +1806,8 @@ mod tests {
             icon_str(&mk("nerdfont-complete"), "folder").unwrap(),
             "\u{f115}"
         );
-        assert_eq!(icon_str(&mk("compatible"), "folder").unwrap(), "");
-        assert_eq!(icon_str(&mk("ascii"), "folder").unwrap(), "");
+        assert_eq!(icon_str(&mk("compatible"), "folder"), None);
+        assert_eq!(icon_str(&mk("ascii"), "folder"), None);
         assert_eq!(
             icon_str(&mk("nerdfont-complete"), "go").unwrap(),
             "\u{e626}"
@@ -2459,6 +2459,15 @@ mod tests {
 
     /// The dir_writable icon is a fixed key now: the text decides whether the segment shows.
     /// The old conditional helper read the engine process directory instead of the shell's.
+    /// In the ascii tier the dir icon is empty. An empty icon is no icon: the row must not gain
+    /// the icon padding.
+    #[test]
+    fn ascii_mode_draws_no_padding_for_empty_icons() {
+        let cfg = Config::parse("mode \"ascii\"\nlayout { left { line { dir } } }").unwrap();
+        let line = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("");
+        assert_eq!(strip_ansi(&line), "/tmp ", "got {line:?}");
+    }
+
     #[test]
     fn dir_writable_icon_uses_the_prompt_directory() {
         let mut cfg = Config::default_lean().unwrap();
