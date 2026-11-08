@@ -28,11 +28,13 @@ capture_and_compare() {
   local marker="/tmp/p11k-visual-$frame-done"
   rm -f "$marker"
   local command="sleep 1; echo done > $marker"
-  # Pwsh starts slower than the other shells. Give it one more second before the stability
-  # check starts. The prompt and the input echo are then on screen.
+  # Pwsh starts slower than the other shells. Type only after the first real prompt: keys that
+  # arrive during the instant phase make pwsh run an empty command before the engine replaces the
+  # instant header, and the capture shows the stale header above the new one. Zsh does not show
+  # this because its first prompt does not start on a new row.
   local min_wait=0.7
   if [ "$shell" = "pwsh" ]; then
-    min_wait=1.7
+    min_wait=3.5
   fi
 
   [ -f "$run" ] || {

@@ -287,21 +287,8 @@ if [ -n "$TYPE_TEXT" ]; then
   if [ -n "$TYPE_WAIT_FOR" ]; then
     # The command writes this marker when it finishes. Wait for the marker before the fixed
     # TYPE_WAIT. The capture then occurs after the command completed.
-    #
-    # kitty's remote-control key injection can lose the single Return event on a loaded host:
-    # the typed line is on screen but the command never starts. Send Return again once when the
-    # marker does not appear within 5 seconds. The typed text is already on the input line, so a
-    # second Return starts the command; a command that only needs longer than 5 seconds would
-    # also receive an empty line after it finishes, and the frame difference would be visible.
-    _waited=0
-    _resent=0
     for _ in $(seq 1 $((SETTLE_TIMEOUT * 100))); do
       [ -e "$TYPE_WAIT_FOR" ] && break
-      if [ "$_resent" = "0" ] && [ "$_waited" -ge 500 ]; then
-        kitten @ --to "unix:$KITTY_SOCKET" send-key Return
-        _resent=1
-      fi
-      _waited=$((_waited + 1))
       sleep 0.01
     done
     if [ ! -e "$TYPE_WAIT_FOR" ]; then
