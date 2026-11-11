@@ -880,34 +880,15 @@ pub(super) fn dir_shorten_opts(
 }
 
 /// Expands env vars: `${VAR}` or `$VAR` → the value; undefined → empty string.
+/// Expand `$VAR` and `${VAR}` in static text. An unset variable expands to nothing, as p10k's
+/// `print -P` does; the process environment is the source (this is the user's text, not a test
+/// fixture).
 pub(super) fn expand_env(s: &str) -> String {
-    let b: Vec<char> = s.chars().collect();
-    let mut out = String::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == '$' && i + 1 < b.len() {
-            if b[i + 1] == '{' {
-                if let Some(rel) = b[i + 2..].iter().position(|&c| c == '}') {
-                    let name: String = b[i + 2..i + 2 + rel].iter().collect();
-                    out.push_str(&std::env::var(&name).unwrap_or_default());
-                    i = i + 2 + rel + 1;
-                    continue;
-                }
-            } else if b[i + 1].is_ascii_alphanumeric() || b[i + 1] == '_' {
-                let mut j = i + 1;
-                while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == '_') {
-                    j += 1;
-                }
-                let name: String = b[i + 1..j].iter().collect();
-                out.push_str(&std::env::var(&name).unwrap_or_default());
-                i = j;
-                continue;
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    out
+    shellexpand::env_with_context(s, |name| {
+        Ok::<Option<String>, ()>(Some(std::env::var(name).unwrap_or_default()))
+    })
+    .map(|expanded| expanded.into_owned())
+    .unwrap_or_else(|_| s.to_string())
 }
 
 /// A foreground-color style prop on a segment → style (segment style by default).
@@ -1400,6 +1381,20 @@ mod tests {
         // Invalid JSON and a missing key yield None.
         assert_eq!(json_str_field("not json", "name").as_deref(), None);
         assert_eq!(json_str_field(doc, "missing").as_deref(), None);
+    }
+
+    #[test]
+    fn env_expansion_keeps_the_p10k_semantics() {
+        // A set variable expands; an unset one expands to nothing.
+        let path = std::env::var("PATH").expect("the test process has PATH");
+        assert_eq!(expand_env("${PATH}"), path);
+        assert_eq!(expand_env("$PATH"), path);
+        assert_eq!(expand_env("a${PATH}b"), format!("a{path}b"));
+        assert_eq!(expand_env("x$P11K_TEST_UNDEFINED_VAR-y"), "x-y");
+        // The unset variable expands to empty; a `${VAR:-default}` default is not applied,
+        // which keeps the previous behaviour (p10k's `print -P` would apply it, but static
+        // text never used that form).
+        assert_eq!(expand_env("${P11K_TEST_UNDEFINED_VAR:-fallback}"), "");
     }
 
     #[test]
