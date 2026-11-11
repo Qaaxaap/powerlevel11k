@@ -171,8 +171,8 @@ pub(super) fn package_text(cwd: &str) -> String {
     let Some(content) = find_up_content(cwd, "package.json") else {
         return String::new();
     };
-    let name = json_str_field(&content, "\"name\":");
-    let version = json_str_field(&content, "\"version\":");
+    let name = json_str_field(&content, "name");
+    let version = json_str_field(&content, "version");
     match (name, version) {
         (Some(n), Some(v)) => format!("{n}@{}", v.trim_start_matches('v')),
         (Some(n), None) => n,
@@ -181,15 +181,14 @@ pub(super) fn package_text(cwd: &str) -> String {
 }
 
 /// Extracts the value of a `"key": "value"` field from a JSON string.
+/// One string field of a JSON document. A missing key, a non-string value and invalid JSON
+/// all yield `None`.
 pub(super) fn json_str_field(content: &str, key: &str) -> Option<String> {
-    let pos = content.find(key)?;
-    let rest = &content[pos + key.len()..];
-    let rest = rest
-        .trim_start()
-        .strip_prefix(':')
-        .unwrap_or(rest)
-        .trim_start();
-    Some(rest.strip_prefix('"')?.split('"').next()?.to_string())
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()?
+        .get(key)?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// vi_mode segment: current zsh edit mode → name; empty when not zsh (unreported).
@@ -255,7 +254,7 @@ pub(super) fn google_app_cred_text() -> String {
     let Some(content) = std::fs::read_to_string(&path).ok() else {
         return String::new();
     };
-    json_str_field(&content, "\"project_id\"").unwrap_or_default()
+    json_str_field(&content, "project_id").unwrap_or_default()
 }
 
 /// Elastic Beanstalk environment name (the `* `-prefixed current line of eb list).
@@ -831,20 +830,20 @@ pub(super) fn dir_seg_text(
 
 /// p10k `_p9k_url_escape`: everything outside `[a-zA-Z0-9"/:_.-!'()~]` is escaped as `%XX`.
 pub(super) fn url_escape(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        let keep = b.is_ascii_alphanumeric()
-            || matches!(
-                b,
-                b'"' | b'/' | b':' | b'_' | b'.' | b'-' | b'!' | b'\'' | b'(' | b')' | b'~'
-            );
-        if keep {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
+    use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+    const KEEP: &AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'"')
+        .remove(b'/')
+        .remove(b':')
+        .remove(b'_')
+        .remove(b'.')
+        .remove(b'-')
+        .remove(b'!')
+        .remove(b'\'')
+        .remove(b'(')
+        .remove(b')')
+        .remove(b'~');
+    utf8_percent_encode(s, KEEP).to_string()
 }
 
 /// Reads the dir segment's `shorten-dir-length` (keep the last N levels, default 1 as in p10k).
@@ -1374,4 +1373,41 @@ pub(super) fn arrow(ch: &str, fg: Color, bg: Color) -> String {
 
 pub(crate) fn display_width(s: &str) -> usize {
     super::ansi::width(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_fields_are_parsed_as_json() {
+        let doc = r#"{
+            "name": "p11k",
+            "version": "1.2.3",
+            "nested": { "name": "inner" },
+            "count": 3,
+            "escaped": "a\"b\\c"
+        }"#;
+        assert_eq!(json_str_field(doc, "name").as_deref(), Some("p11k"));
+        assert_eq!(json_str_field(doc, "version").as_deref(), Some("1.2.3"));
+        // The old hand parser read the first `name` it found, including a nested key; a real
+        // parser reads the top level.
+        assert_eq!(json_str_field(doc, "nested").as_deref(), None);
+        // A non-string value is not a string field.
+        assert_eq!(json_str_field(doc, "count").as_deref(), None);
+        // Escapes are decoded.
+        assert_eq!(json_str_field(doc, "escaped").as_deref(), Some("a\"b\\c"));
+        // Invalid JSON and a missing key yield None.
+        assert_eq!(json_str_field("not json", "name").as_deref(), None);
+        assert_eq!(json_str_field(doc, "missing").as_deref(), None);
+    }
+
+    #[test]
+    fn url_escape_keeps_the_p10k_set() {
+        assert_eq!(url_escape("/home/u/proj"), "/home/u/proj");
+        assert_eq!(url_escape("a b"), "a%20b");
+        assert_eq!(url_escape("caf\u{e9}"), "caf%C3%A9");
+        // Quotes and the other allowed characters stay literal.
+        assert_eq!(url_escape("\"x\"/:_.-!'()~"), "\"x\"/:_.-!'()~");
+    }
 }
