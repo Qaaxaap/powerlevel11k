@@ -58,7 +58,7 @@ cargo install iai-callgrind-runner --version 0.16.1   # must match iai-callgrind
 
 ## Commit conventions
 
-- [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, ...). A `!` marks breaking changes.
+- [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`, `build:`, `deps:`, ...). A `!` marks breaking changes. `deps:` covers dependency additions, removals and version bumps.
 - Commit messages in English.
 - One commit carries one logical change. Unrelated work must not be bundled. A commit that mixes a refactor with a feature will be asked to be split.
 - The subject is at most 72 characters and completes the sentence "if applied, this commit will ...". The body states *why* and does not restate the diff.

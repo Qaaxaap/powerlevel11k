@@ -41,6 +41,7 @@ commit_parsers = [
   { message = "^docs", group = "Documentation" },
   { message = "^test", group = "Tests" },
   { message = "^build", group = "Build" },
+  { message = "^deps", group = "Dependencies" },
   { message = "^ci", group = "CI" },
   { message = "^i18n", group = "Translations" },
   { message = "^style", group = "Style" },
