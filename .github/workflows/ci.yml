@@ -70,7 +70,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -eu
-          pattern='^(feat|fix|chore|docs|test|ci|refactor|perf|build|style|revert|i18n|license|bench)(\([a-z0-9._-]+\))?!?: .+'
+          pattern='^(feat|fix|chore|docs|test|ci|refactor|perf|build|deps|style|revert|i18n|license|bench)(\([a-z0-9._-]+\))?!?: .+'
           status=0
           check() {
             local title=$1
