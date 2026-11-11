@@ -6,7 +6,7 @@
 //! ([`Delegated`]); segments that need the renderer state implement the trait directly.
 
 use crate::config::{Config, Segment};
-use crate::model::{GitStatus, HeaderInfo};
+use crate::model::{GitStatus, HeaderInfo, ViMode};
 
 use super::env::*;
 use super::style::paint;
@@ -18,6 +18,7 @@ pub(super) struct Ctx<'a> {
     pub info: &'a HeaderInfo,
     pub vcs: Option<&'a GitStatus>,
     pub dir_budget: Option<usize>,
+    pub vi_mode: ViMode,
 }
 
 /// The icon decision: the renderer resolves keys and draws the icon.
@@ -95,6 +96,8 @@ pub(super) enum TextSource {
     /// The number of background jobs.
     Jobs,
     History,
+    /// The vi mode text, read from [`Ctx::vi_mode`].
+    ViMode,
     Empty,
 }
 
@@ -114,6 +117,7 @@ impl TextSource {
                 }
             }
             TextSource::History => ctx.info.history.to_string(),
+            TextSource::ViMode => super::segments::vi_mode_text(ctx.segment, ctx.vi_mode),
             TextSource::Empty => String::new(),
         }
     }

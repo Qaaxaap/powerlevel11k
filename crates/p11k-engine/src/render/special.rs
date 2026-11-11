@@ -76,7 +76,7 @@ pub(super) struct PromptCharSegment;
 
 impl SegmentRender for PromptCharSegment {
     fn render(&self, ctx: &Ctx<'_>) -> SegmentValue {
-        let state = prompt_state(ctx.config, Some(ctx.info));
+        let state = prompt_state(ctx.config, Some(ctx.info), ctx.vi_mode);
         let style = ctx.segment.effective_style(state, &ctx.config.defaults);
         SegmentValue::text(paint(ctx.segment.char_for(state, "❯"), &style))
     }

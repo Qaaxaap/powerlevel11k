@@ -308,7 +308,7 @@ fn preview_lines(cfg: &Config) -> Vec<String> {
     let vcs = sample_vcs();
     let mut lines = crate::render::render_header_lines(cfg, &sample_info(), Some(&vcs), cols);
     // Input line: the prompt_char prefix the engine draws (the shell's buffer follows).
-    lines.push(crate::render::input_prefix(cfg, None).text);
+    lines.push(crate::render::input_prefix(cfg, None, crate::model::ViMode::Unreported).text);
     lines
 }
 

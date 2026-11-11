@@ -15,18 +15,34 @@ use crate::theme::{self, GitStatus, HeaderInfo};
 /// `last` carries the lines the previous paint wrote; see [`theme::redraw_header_cfg`]. The
 /// signal means the shell reprinted the prompt, so the caller clears `last` before this call and
 /// the header is always painted here.
+/// The header paint inputs of one prompt.
+pub struct PromptPaint<'a> {
+    pub config: &'a Config,
+    pub rows: usize,
+    /// The announced prompt state; `None` before the first announcement (instant phase).
+    pub current: Option<&'a HeaderInfo>,
+    pub instant: &'a HeaderInfo,
+    pub last_vcs: Option<&'a (String, Option<GitStatus>)>,
+    pub vi_mode: crate::model::ViMode,
+}
+
 pub fn paint_prompt(
     out: &mut dyn Write,
-    config: &Config,
-    rows: usize,
-    current: Option<&HeaderInfo>,
-    instant: &HeaderInfo,
-    last_vcs: Option<&(String, Option<GitStatus>)>,
+    paint: PromptPaint<'_>,
     last: &mut Option<Vec<crate::render::PaintedLine>>,
 ) -> io::Result<()> {
-    let info = current.unwrap_or(instant);
-    let vcs = last_vcs
+    let info = paint.current.unwrap_or(paint.instant);
+    let vcs = paint
+        .last_vcs
         .filter(|(cwd, _)| cwd == &info.cwd)
         .and_then(|(_, s)| s.as_ref());
-    theme::redraw_header_cfg(out, rows, config, info, vcs, last)
+    theme::redraw_header_cfg(
+        out,
+        paint.rows,
+        paint.config,
+        info,
+        vcs,
+        last,
+        paint.vi_mode,
+    )
 }

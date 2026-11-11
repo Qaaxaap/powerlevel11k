@@ -52,9 +52,10 @@ pub fn render_header_cfg(
     config: &crate::config::Config,
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
+    vi_mode: crate::model::ViMode,
 ) -> io::Result<Vec<usize>> {
     prompt_start(out)?;
-    let lines = crate::render::render_header_lines_with_widths(config, info, vcs, cols);
+    let lines = crate::render::render_header_lines_with_widths(config, info, vcs, cols, vi_mode);
     header_body(out, &lines)
 }
 
@@ -81,8 +82,9 @@ pub fn redraw_header_cfg(
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
     last: &mut Option<Vec<crate::render::PaintedLine>>,
+    vi_mode: crate::model::ViMode,
 ) -> io::Result<()> {
-    let lines = crate::render::render_header_lines_with_widths(config, info, vcs, cols);
+    let lines = crate::render::render_header_lines_with_widths(config, info, vcs, cols, vi_mode);
     if last.as_ref() == Some(&lines) {
         return Ok(());
     }
@@ -151,23 +153,59 @@ mod tests {
 
         let mut out = Vec::new();
         let mut last = None;
-        redraw_header_cfg(&mut out, 80, &config, &tmp, None, &mut last).unwrap();
+        redraw_header_cfg(
+            &mut out,
+            80,
+            &config,
+            &tmp,
+            None,
+            &mut last,
+            crate::model::ViMode::Unreported,
+        )
+        .unwrap();
         let first = out.len();
         assert!(first > 0, "the first paint writes the header");
 
-        redraw_header_cfg(&mut out, 80, &config, &tmp, None, &mut last).unwrap();
+        redraw_header_cfg(
+            &mut out,
+            80,
+            &config,
+            &tmp,
+            None,
+            &mut last,
+            crate::model::ViMode::Unreported,
+        )
+        .unwrap();
         assert_eq!(
             out.len(),
             first,
             "identical lines must not be painted again"
         );
 
-        redraw_header_cfg(&mut out, 80, &config, &var, None, &mut last).unwrap();
+        redraw_header_cfg(
+            &mut out,
+            80,
+            &config,
+            &var,
+            None,
+            &mut last,
+            crate::model::ViMode::Unreported,
+        )
+        .unwrap();
         let second = out.len();
         assert!(second > first, "changed lines must repaint");
 
         last = None;
-        redraw_header_cfg(&mut out, 80, &config, &var, None, &mut last).unwrap();
+        redraw_header_cfg(
+            &mut out,
+            80,
+            &config,
+            &var,
+            None,
+            &mut last,
+            crate::model::ViMode::Unreported,
+        )
+        .unwrap();
         assert!(out.len() > second, "an empty cache must force the paint");
     }
 }
