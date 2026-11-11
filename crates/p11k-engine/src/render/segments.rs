@@ -1,8 +1,8 @@
 //! Segment text: the values each segment renders, plus the helpers that read them from the
 //! repository, the environment and the system.
 //!
-//! The renderer dispatches to these functions from [`super::render_segment`]. The segment text
-//! is plain (no colour); the style is applied by the dispatcher.
+//! The segment implementations call these functions for their text. The text is plain (no
+//! colour); the renderer applies the style.
 
 use std::fmt::Write as _;
 
@@ -339,35 +339,84 @@ pub(super) fn strftime_now(fmt: &str) -> String {
 }
 
 // Toolchain version segments: run `cmd --version`, cache the output and parse the version;
-// shown only when the command exists.
+// shown only when the command exists. The engine clears the cache at each precmd announce, so
+// the prompt shows fresh values; the TTL is a backstop for callers that never announce (tests).
 thread_local! {
-    static CMD_CACHE: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+    static CMD_CACHE: RefCell<HashMap<String, (Option<String>, std::time::Instant)>> =
+        RefCell::new(HashMap::new());
+}
+
+/// How long a command output stays cached without a prompt announce.
+const CMD_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Maximum run time for one command. A command that outlives this is killed and treated as
+/// missing: a hung tool must not freeze the prompt.
+const CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Drop the command cache; the engine calls this on every precmd announce.
+pub(crate) fn clear_cmd_cache() {
+    CMD_CACHE.with(|c| c.borrow_mut().clear());
 }
 
 pub(super) fn run_cmd(cmd: &str, args: &[&str]) -> Option<String> {
+    run_cmd_timeout(cmd, args, CMD_TIMEOUT)
+}
+
+/// Run one command with a timeout. A successful run returns its trimmed output (stderr when
+/// stdout is empty, as some version commands write there); a failure, a spawn error and a
+/// timeout all return `None`.
+fn run_cmd_timeout(cmd: &str, args: &[&str], timeout: std::time::Duration) -> Option<String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::time::Instant;
+
     let key = format!("{cmd} {}", args.join(" "));
-    CMD_CACHE.with(|c| {
-        if let Some(v) = c.borrow().get(&key) {
-            return v.clone();
+    let now = Instant::now();
+    let cached = CMD_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        match cache.get(&key) {
+            Some((value, at)) if now.duration_since(*at) < CMD_CACHE_TTL => Some(value.clone()),
+            _ => {
+                cache.remove(&key);
+                None
+            }
         }
-        let out = std::process::Command::new(cmd)
-            .args(args)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| {
-                // Some commands (e.g. java) write the version to stderr; fall back when stdout
-                // is empty.
-                let s = String::from_utf8_lossy(&o.stdout);
-                if s.trim().is_empty() {
-                    String::from_utf8_lossy(&o.stderr).trim().to_string()
-                } else {
-                    s.trim().to_string()
-                }
-            });
-        c.borrow_mut().insert(key.clone(), out.clone());
-        out
-    })
+    });
+    if let Some(value) = cached {
+        return value;
+    }
+    let mut child = std::process::Command::new(cmd)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let out = match wait_timeout::ChildExt::wait_timeout(&mut child, timeout) {
+        Ok(Some(status)) if status.success() => {
+            let mut stdout = String::new();
+            child.stdout.take()?.read_to_string(&mut stdout).ok()?;
+            if stdout.trim().is_empty() {
+                let mut stderr = String::new();
+                child.stderr.take()?.read_to_string(&mut stderr).ok()?;
+                Some(stderr.trim().to_string())
+            } else {
+                Some(stdout.trim().to_string())
+            }
+        }
+        Ok(Some(_)) => None,
+        Ok(None) => {
+            // The command outlived the timeout; kill it and report it as missing.
+            let _ = child.kill();
+            let _ = child.wait();
+            None
+        }
+        Err(_) => None,
+    };
+    CMD_CACHE.with(|c| {
+        c.borrow_mut()
+            .insert(key, (out.clone(), std::time::Instant::now()));
+    });
+    out
 }
 
 pub(super) fn go_version() -> String {
@@ -1368,6 +1417,36 @@ mod tests {
         // which keeps the previous behaviour (p10k's `print -P` would apply it, but static
         // text never used that form).
         assert_eq!(expand_env("${P11K_TEST_UNDEFINED_VAR:-fallback}"), "");
+    }
+
+    #[test]
+    fn command_runs_time_out_and_fail_closed() {
+        use std::time::Duration;
+        assert_eq!(
+            run_cmd_timeout("sh", &["-c", "echo ok"], Duration::from_secs(1)),
+            Some("ok".to_string())
+        );
+        // A non-zero exit code is a missing value.
+        assert_eq!(
+            run_cmd_timeout("sh", &["-c", "exit 3"], Duration::from_secs(1)),
+            None
+        );
+        // A hung command is killed at the timeout instead of freezing the prompt.
+        assert_eq!(
+            run_cmd_timeout("sh", &["-c", "sleep 2"], Duration::from_millis(100)),
+            None
+        );
+        // A missing executable is a missing value.
+        assert_eq!(
+            run_cmd_timeout("no-such-cmd-p11k-test", &[], Duration::from_millis(100)),
+            None
+        );
+        // The cache clear is safe to call and keeps the call working.
+        clear_cmd_cache();
+        assert_eq!(
+            run_cmd_timeout("sh", &["-c", "echo ok"], Duration::from_secs(1)),
+            Some("ok".to_string())
+        );
     }
 
     #[test]

@@ -501,6 +501,9 @@ pub fn run() -> anyhow::Result<()> {
                 }
                 match msg {
                     AnnMsg::Header(mut info) => {
+                        // New prompt: the command segments run again instead of showing the
+                        // previous prompt's values.
+                        crate::render::clear_cmd_cache();
                         debug(&format!(
                             "h: exit={:?} cwd={:?} jobs={}",
                             info.exit_code, info.cwd, info.jobs

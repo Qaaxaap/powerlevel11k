@@ -22,6 +22,7 @@ mod special;
 mod style;
 use self::icons::{icon_str, resolve_icon_choice};
 use self::segment::{Ctx, IconStyle, SegmentValue};
+pub(crate) use self::segments::clear_cmd_cache;
 use self::segments::*;
 pub use self::style::{
     input_prefix, prefix_text, prefix_text_bash, prefix_text_zsh, prompt_state, strip_ansi,
