@@ -25,6 +25,7 @@ serde_json = { workspace = true }
 shellexpand = { workspace = true }
 jiff = { workspace = true }
 strip-ansi-escapes = { workspace = true }
+wait-timeout = { workspace = true }
 
 
 [dev-dependencies]
