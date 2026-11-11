@@ -10,7 +10,7 @@
 //! Input: config plus the current state. Output: the header ANSI string.
 
 use crate::config::{Color, Config, Element, Segment, Style};
-use crate::model::{GitStatus, HeaderInfo};
+use crate::model::{GitStatus, HeaderInfo, ViMode};
 use std::cell::RefCell;
 mod ansi;
 mod env;
@@ -23,7 +23,6 @@ mod style;
 use self::icons::{icon_str, resolve_icon_choice};
 use self::segment::{Ctx, IconStyle, SegmentValue};
 use self::segments::*;
-pub use self::style::CURRENT_VI_MODE;
 pub use self::style::{
     input_prefix, prefix_text, prefix_text_bash, prefix_text_zsh, prompt_state, strip_ansi,
     transient_prompt_zsh,
@@ -64,6 +63,7 @@ struct Renderer<'a> {
     info: &'a HeaderInfo,
     vcs: Option<&'a GitStatus>,
     cols: usize,
+    vi_mode: ViMode,
 }
 
 impl<'a> Renderer<'a> {
@@ -72,12 +72,14 @@ impl<'a> Renderer<'a> {
         info: &'a HeaderInfo,
         vcs: Option<&'a GitStatus>,
         cols: usize,
+        vi_mode: ViMode,
     ) -> Self {
         Renderer {
             config,
             info,
             vcs,
             cols,
+            vi_mode,
         }
     }
 
@@ -294,6 +296,7 @@ impl<'a> Renderer<'a> {
             info: self.info,
             vcs: self.vcs,
             dir_budget,
+            vi_mode: self.vi_mode,
         };
         Some(meta.render.render(&ctx))
     }
@@ -459,8 +462,9 @@ pub fn render_header_lines_with_widths(
     info: &HeaderInfo,
     vcs: Option<&GitStatus>,
     cols: usize,
+    vi_mode: ViMode,
 ) -> Vec<PaintedLine> {
-    Renderer::new(config, info, vcs, cols).header_lines()
+    Renderer::new(config, info, vcs, cols, vi_mode).header_lines()
 }
 
 /// Render the header; the text-only view of [`render_header_lines_with_widths`].
@@ -470,7 +474,7 @@ pub fn render_header_lines(
     vcs: Option<&GitStatus>,
     cols: usize,
 ) -> Vec<String> {
-    Renderer::new(config, info, vcs, cols)
+    Renderer::new(config, info, vcs, cols, ViMode::Unreported)
         .header_lines()
         .into_iter()
         .map(|line| line.text)
@@ -577,10 +581,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        let plain =
-            Renderer::new(&cfg, &info("/tmp", None), None, 0).segment("vcs", true, None, false);
-        let joined =
-            Renderer::new(&cfg, &info("/tmp", None), None, 0).segment("vcs", true, None, true);
+        let plain = Renderer::new(&cfg, &info("/tmp", None), None, 0, ViMode::Unreported)
+            .segment("vcs", true, None, false);
+        let joined = Renderer::new(&cfg, &info("/tmp", None), None, 0, ViMode::Unreported)
+            .segment("vcs", true, None, true);
         let p = strip_sgr(&plain.text);
         let j = strip_sgr(&joined.text);
         assert!(
@@ -654,8 +658,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        let seg =
-            Renderer::new(&cfg, &info("/tmp", None), None, 0).segment("vcs", false, None, true);
+        let seg = Renderer::new(&cfg, &info("/tmp", None), None, 0, ViMode::Unreported)
+            .segment("vcs", false, None, true);
         let text = strip_sgr(&seg.text);
         assert!(
             text.starts_with("on L"),
@@ -1358,7 +1362,7 @@ mod tests {
     #[test]
     fn text_elements_do_not_inherit_the_defaults_background() {
         let cfg = Config::parse("defaults fg=200 bg=236\nlayout {}").unwrap();
-        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0).row(
+        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0, ViMode::Unreported).row(
             &[Element::Text("hi".into())],
             false,
             None,
@@ -1371,7 +1375,7 @@ mod tests {
         assert_eq!(row[0].style.fg, Color::Xterm(200));
 
         let cfg = Config::parse("defaults bg=236\nsegments { text bg=31 }\nlayout {}").unwrap();
-        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0).row(
+        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0, ViMode::Unreported).row(
             &[Element::Text("hi".into())],
             false,
             None,
@@ -1387,7 +1391,7 @@ mod tests {
     #[test]
     fn text_elements_stay_transparent_without_defaults_bg() {
         let cfg = Config::parse("layout {}").unwrap();
-        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0).row(
+        let row = Renderer::new(&cfg, &info("/tmp", None), None, 0, ViMode::Unreported).row(
             &[Element::Text("hi".into())],
             false,
             None,
@@ -1419,7 +1423,7 @@ mod tests {
             "layout { left { line { dir #true } } }\nframe {\n  last-prefix \"╰─\"\n}",
         )
         .unwrap();
-        let p = input_prefix(&cfg, None);
+        let p = input_prefix(&cfg, None, ViMode::Unreported);
         assert_eq!(
             display_width(&p.text),
             4,
@@ -1586,7 +1590,7 @@ mod tests {
         );
         // Input line prefix: last-prefix uses the child color (196), prompt_char ❯ is
         // uncolored by default.
-        let p = input_prefix(&cfg, None);
+        let p = input_prefix(&cfg, None, ViMode::Unreported);
         assert!(
             p.text.contains("\x1b[38;5;196m╰─"),
             "last-prefix child fg should override the frame-level fg, got: {:?}",
@@ -1598,6 +1602,23 @@ mod tests {
         );
     }
 
+    /// The vi_mode segment renders from the context mode; no global state is involved.
+    #[test]
+    fn vi_mode_segment_follows_the_context() {
+        let cfg = Config::parse("layout { left { line { vi_mode #true } } }").unwrap();
+        let header = |mode: ViMode| {
+            render_header_lines_with_widths(&cfg, &info("/tmp", Some(0)), None, 80, mode)
+                .into_iter()
+                .map(|line| line.text)
+                .collect::<String>()
+        };
+        assert!(header(ViMode::Command).contains("NORMAL"));
+        assert!(header(ViMode::Insert).contains("INSERT"));
+        assert!(header(ViMode::Visual).contains("VISUAL"));
+        assert!(header(ViMode::Overwrite).contains("OVERWRITE"));
+        assert_eq!(header(ViMode::Unreported).trim(), "");
+    }
+
     #[test]
     fn prompt_char_vi_states() {
         // With VIINS/VICMD chars configured the prompt switches with the edit mode
@@ -1606,20 +1627,21 @@ mod tests {
             "layout { left { line { dir } } }\nsegments { prompt_char fg=76 {\n  state VIINS char=\"I\"\n  state VICMD char=\"C\"\n} }",
         )
         .unwrap();
-        *CURRENT_VI_MODE.lock().unwrap() = "vicmd".to_string();
         assert!(
-            input_prefix(&cfg, None).text.contains('C'),
+            input_prefix(&cfg, None, ViMode::Command).text.contains('C'),
             "vicmd should switch to the VICMD char"
         );
-        *CURRENT_VI_MODE.lock().unwrap() = "viins".to_string();
         assert!(
-            input_prefix(&cfg, None).text.contains('I'),
+            input_prefix(&cfg, None, ViMode::Insert).text.contains('I'),
             "viins should switch to the VIINS char"
         );
         // A config without vi states is unaffected by the edit mode and still uses ❯/ERROR.
-        *CURRENT_VI_MODE.lock().unwrap() = String::new();
         let plain = Config::default_lean().unwrap();
-        assert!(input_prefix(&plain, None).text.contains('❯'));
+        assert!(
+            input_prefix(&plain, None, ViMode::Unreported)
+                .text
+                .contains('❯')
+        );
     }
 
     #[test]
@@ -1641,32 +1663,41 @@ mod tests {
         };
         // Last stage succeeded while an earlier one failed.
         assert_eq!(
-            prompt_state(&cfg, Some(&info_with(0, &[0, 1]))),
+            prompt_state(&cfg, Some(&info_with(0, &[0, 1])), ViMode::Unreported),
             Some("OK_PIPE")
         );
         // Plain success has no state at all.
-        assert_eq!(prompt_state(&cfg, Some(&info_with(0, &[0]))), None);
+        assert_eq!(
+            prompt_state(&cfg, Some(&info_with(0, &[0])), ViMode::Unreported),
+            None
+        );
         // The pipeline failed.
         assert_eq!(
-            prompt_state(&cfg, Some(&info_with(1, &[0, 1]))),
+            prompt_state(&cfg, Some(&info_with(1, &[0, 1])), ViMode::Unreported),
             Some("ERROR_PIPE")
         );
         // Killed by a signal, and not a pipeline.
         assert_eq!(
-            prompt_state(&cfg, Some(&info_with(130, &[130]))),
+            prompt_state(&cfg, Some(&info_with(130, &[130])), ViMode::Unreported),
             Some("ERROR_SIGNAL")
         );
         // Plain failure.
-        assert_eq!(prompt_state(&cfg, Some(&info_with(1, &[1]))), Some("ERROR"));
+        assert_eq!(
+            prompt_state(&cfg, Some(&info_with(1, &[1])), ViMode::Unreported),
+            Some("ERROR")
+        );
 
         // Undeclared extended states fall back to ERROR (and OK_PIPE to no state), so a
         // config that only knows OK/ERROR keeps behaving as before.
         let plain = Config::parse("segments { prompt_char { state \"ERROR\" fg=196 } }").unwrap();
         assert_eq!(
-            prompt_state(&plain, Some(&info_with(1, &[0, 1]))),
+            prompt_state(&plain, Some(&info_with(1, &[0, 1])), ViMode::Unreported),
             Some("ERROR")
         );
-        assert_eq!(prompt_state(&plain, Some(&info_with(0, &[0, 1]))), None);
+        assert_eq!(
+            prompt_state(&plain, Some(&info_with(0, &[0, 1])), ViMode::Unreported),
+            None
+        );
     }
 
     #[test]
@@ -1678,7 +1709,7 @@ mod tests {
              segments { prompt_char char=\">\" fg=76 {\n  state ERROR char=\"✘\" fg=196\n} }",
         )
         .unwrap();
-        let ok = input_prefix(&cfg, Some(&info("/tmp", Some(0))));
+        let ok = input_prefix(&cfg, Some(&info("/tmp", Some(0))), ViMode::Unreported);
         assert!(
             ok.text.contains("\x1b[38;5;76m>"),
             "ok state should show char (>) with fg=76, got: {:?}",
@@ -1688,13 +1719,13 @@ mod tests {
             !ok.text.contains('❯'),
             "with char configured the default ❯ should not be used"
         );
-        let err = input_prefix(&cfg, Some(&info("/tmp", Some(1))));
+        let err = input_prefix(&cfg, Some(&info("/tmp", Some(1))), ViMode::Unreported);
         assert!(
             err.text.contains("\x1b[38;5;196m✘"),
             "error state should show the state ERROR char/color, got: {:?}",
             err.text
         );
-        let none = input_prefix(&cfg, None);
+        let none = input_prefix(&cfg, None, ViMode::Unreported);
         assert!(
             none.text.contains('>'),
             "no exit code (first prompt) should use the ok state"
@@ -2399,7 +2430,7 @@ mod tests {
             .into_iter()
             .map(|cols| {
                 let mut lines = render_header_lines(&cfg, &info, Some(&vcs), cols);
-                lines.push(crate::render::input_prefix(&cfg, None).text);
+                lines.push(crate::render::input_prefix(&cfg, None, ViMode::Unreported).text);
                 (cols, lines)
             })
             .collect()
@@ -2426,6 +2457,7 @@ mod tests {
                 info: &header,
                 vcs: None,
                 dir_budget: None,
+                vi_mode: ViMode::Unreported,
             };
             let value = spec.render.render(&ctx);
             match &value.icon {
@@ -2473,6 +2505,7 @@ mod tests {
                 info: &header,
                 vcs: None,
                 dir_budget: None,
+                vi_mode: ViMode::Unreported,
             };
             assert!(
                 meta.render.render(&ctx).icon.is_content(),
@@ -2488,7 +2521,13 @@ mod tests {
     #[test]
     fn painted_line_width_matches_the_visible_width() {
         let cfg = Config::default_lean().unwrap();
-        let lines = render_header_lines_with_widths(&cfg, &info("/tmp", Some(0)), None, 80);
+        let lines = render_header_lines_with_widths(
+            &cfg,
+            &info("/tmp", Some(0)),
+            None,
+            80,
+            ViMode::Unreported,
+        );
         for line in lines {
             assert_eq!(
                 line.width,

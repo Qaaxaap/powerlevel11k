@@ -193,7 +193,7 @@ pub(super) fn json_str_field(content: &str, key: &str) -> Option<String> {
 }
 
 /// vi_mode segment: current zsh edit mode → name; empty when not zsh (unreported).
-pub(super) fn vi_mode_text(seg: &Segment) -> String {
+pub(super) fn vi_mode_text(seg: &Segment, mode: crate::model::ViMode) -> String {
     // The text is configurable (p10k `VI_INSERT/COMMAND/VISUAL/OVERWRITE_MODE_STRING`).
     let sym = |name: &str, default: &str| -> String {
         match seg.prop(name) {
@@ -201,17 +201,12 @@ pub(super) fn vi_mode_text(seg: &Segment) -> String {
             _ => default.to_string(),
         }
     };
-    let mode = CURRENT_VI_MODE
-        .lock()
-        .map(|m| m.clone())
-        .unwrap_or_default();
-    match mode.as_str() {
-        "vicmd" => sym("normal", "NORMAL"),
-        "viins" => sym("insert", "INSERT"),
-        "vis" | "viopp" => sym("visual", "VISUAL"),
-        "viowr" => sym("overwrite", "OVERWRITE"),
-        "" | "main" => String::new(), // unreported or emacs (main): hidden
-        other => other.to_string(),
+    match mode {
+        crate::model::ViMode::Command => sym("normal", "NORMAL"),
+        crate::model::ViMode::Insert => sym("insert", "INSERT"),
+        crate::model::ViMode::Visual => sym("visual", "VISUAL"),
+        crate::model::ViMode::Overwrite => sym("overwrite", "OVERWRITE"),
+        crate::model::ViMode::Unreported => String::new(), // unreported or emacs: hidden
     }
 }
 

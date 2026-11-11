@@ -69,7 +69,7 @@ pub fn run() -> anyhow::Result<()> {
     // command reads it from wherever the shell happens to be, not from the starting directory.
     // A path that cannot be resolved is kept as it is: reloading then reports the real error.
     let mut config_path = theme_file().map(|p| p.canonicalize().unwrap_or(p));
-    let mut prefix = crate::render::input_prefix(&config, None);
+    let mut prefix = crate::render::input_prefix(&config, None, crate::model::ViMode::Unreported);
     // The prompt skeleton each shell prints: `header_rows` blank rows for the header, then the
     // zero-width prompt-ready signal. Handed over as data so no template carries it. The engine
     // fills the blank rows when the signal arrives; the prefix travels in the same prompt string,
@@ -263,6 +263,9 @@ pub fn run() -> anyhow::Result<()> {
     // the same bytes over the same rows, so `redraw_header_cfg` compares against this and skips.
     // Paths that repaint over cleared rows set it to None first.
     let mut last_header: Option<Vec<crate::render::PaintedLine>> = None;
+    // The zle edit mode reported by the shell hook. It travels into the renderer as data; no
+    // global state.
+    let mut vi_mode = crate::model::ViMode::Unreported;
     // Defer the prompt repaint after a resize: wait for zle's repainted prompt and buffer to
     // pass through (~60ms) before painting the header, so it is not painted before zle has
     // moved the input line into place.
@@ -302,7 +305,14 @@ pub fn run() -> anyhow::Result<()> {
     // half a header is left behind.
     let mut instant_drawn = false;
     if config.instant_prompt {
-        theme::render_header_cfg(&mut stdout, cols as usize, &config, &instant_info, None)?;
+        theme::render_header_cfg(
+            &mut stdout,
+            cols as usize,
+            &config,
+            &instant_info,
+            None,
+            vi_mode,
+        )?;
         // Draw the instant prefix without the save/restore-cursor dance: the shell has not
         // started yet, so restoring the cursor would put it back at column 0 and the user's
         // typing would overwrite the prefix. With a plain `\r` the cursor ends up right after
@@ -351,7 +361,7 @@ pub fn run() -> anyhow::Result<()> {
                             // travelled to the shell at startup and can only change with a
                             // restart.
                             config = new_config;
-                            prefix = crate::render::input_prefix(&config, None);
+                            prefix = crate::render::input_prefix(&config, None, vi_mode);
                             let new_geometry = Geometry::new(&config, shell);
                             if new_geometry.prefix_ok != geometry.prefix_ok
                                 || new_geometry.prefix_err != geometry.prefix_err
@@ -382,6 +392,7 @@ pub fn run() -> anyhow::Result<()> {
                                     current_info.as_ref().unwrap_or(&instant_info),
                                     vcs,
                                     &mut last_header,
+                                    vi_mode,
                                 )?;
                                 stdout.flush()?;
                             }
@@ -428,6 +439,7 @@ pub fn run() -> anyhow::Result<()> {
                         &config,
                         &instant_info,
                         None,
+                        vi_mode,
                     )?;
                     // Same as the initial instant draw: keep the cursor after the prefix instead
                     // of restoring it to column 0.
@@ -526,7 +538,7 @@ pub fn run() -> anyhow::Result<()> {
                         // prefix because it is the only side that knows the exit code, the pipeline
                         // statuses and the vi mode; a shell choosing between two strings of its own
                         // could not tell `OK_PIPE` from `OK`.
-                        let state_name = crate::render::prompt_state(&config, Some(&info));
+                        let state_name = crate::render::prompt_state(&config, Some(&info), vi_mode);
                         let prefix = Geometry::prefix_for(&config, shell, state_name);
                         if shell == Shell::Pwsh {
                             // Keep the visible text next to the coloured form: PSReadLine
@@ -579,6 +591,7 @@ pub fn run() -> anyhow::Result<()> {
                                     current_info.as_ref().unwrap_or(&instant_info),
                                     vcs,
                                     &mut last_header,
+                                    vi_mode,
                                 )?;
                                 stdout.flush()?;
                                 resize_prompt_at = Some(
@@ -593,7 +606,7 @@ pub fn run() -> anyhow::Result<()> {
                         }
                     }
                     AnnMsg::VimMode(mode) => {
-                        *crate::render::CURRENT_VI_MODE.lock().unwrap() = mode;
+                        vi_mode = crate::model::ViMode::from_wire(&mode);
                         if prompt.at_prompt() {
                             debug("v: update mode, redraw header");
                             let vcs = last_vcs.as_ref().and_then(|(_, s)| s.as_ref());
@@ -604,6 +617,7 @@ pub fn run() -> anyhow::Result<()> {
                                 current_info.as_ref().unwrap_or(&instant_info),
                                 vcs,
                                 &mut last_header,
+                                vi_mode,
                             )?;
                             stdout.flush()?;
                         }
@@ -719,11 +733,14 @@ pub fn run() -> anyhow::Result<()> {
                         last_header = None;
                         paint_prompt(
                             &mut stdout,
-                            &config,
-                            last_size.1 as usize,
-                            current_info.as_ref(),
-                            &instant_info,
-                            last_vcs.as_ref(),
+                            crate::window::PromptPaint {
+                                config: &config,
+                                rows: last_size.1 as usize,
+                                current: current_info.as_ref(),
+                                instant: &instant_info,
+                                last_vcs: last_vcs.as_ref(),
+                                vi_mode,
+                            },
                             &mut last_header,
                         )?;
                         instant_drawn = false;
@@ -765,6 +782,7 @@ pub fn run() -> anyhow::Result<()> {
                     info,
                     vcs,
                     &mut last_header,
+                    vi_mode,
                 )?;
                 stdout.flush()?;
             }
@@ -777,7 +795,7 @@ pub fn run() -> anyhow::Result<()> {
             && std::time::Instant::now() >= deadline
         {
             resize_prompt_at = None;
-            let text = crate::render::input_prefix(&config, current_info.as_ref()).text;
+            let text = crate::render::input_prefix(&config, current_info.as_ref(), vi_mode).text;
             theme::render_prompt(&mut stdout, &text)?;
             stdout.flush()?;
             debug("deferred prompt drawn");

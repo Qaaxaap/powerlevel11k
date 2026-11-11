@@ -61,3 +61,65 @@ pub struct GitStatus {
     /// tracking remote URL (used to pick the vcs icon by domain, e.g. github/archlinux).
     pub remote_url: String,
 }
+
+/// The zle edit mode, reported by the shell hook (announce field `v`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViMode {
+    /// Not reported, or emacs mode.
+    #[default]
+    Unreported,
+    Insert,
+    Command,
+    Visual,
+    Overwrite,
+}
+
+impl ViMode {
+    /// Parse the wire value of the announce field.
+    pub fn from_wire(s: &str) -> ViMode {
+        match s {
+            "viins" => ViMode::Insert,
+            "vicmd" => ViMode::Command,
+            "vis" | "viopp" => ViMode::Visual,
+            "viowr" => ViMode::Overwrite,
+            _ => ViMode::Unreported,
+        }
+    }
+
+    /// The p10k `PROMPT_CHAR_{OK,ERROR}` state bucket for this mode; `None` when the mode is
+    /// unreported or emacs.
+    pub fn state(self) -> Option<&'static str> {
+        match self {
+            ViMode::Unreported => None,
+            ViMode::Insert => Some("VIINS"),
+            ViMode::Command => Some("VICMD"),
+            ViMode::Visual => Some("VIVIS"),
+            ViMode::Overwrite => Some("VIOWR"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vi_mode_parses_the_wire_values() {
+        assert_eq!(ViMode::from_wire("viins"), ViMode::Insert);
+        assert_eq!(ViMode::from_wire("vicmd"), ViMode::Command);
+        assert_eq!(ViMode::from_wire("vis"), ViMode::Visual);
+        assert_eq!(ViMode::from_wire("viopp"), ViMode::Visual);
+        assert_eq!(ViMode::from_wire("viowr"), ViMode::Overwrite);
+        assert_eq!(ViMode::from_wire("main"), ViMode::Unreported);
+        assert_eq!(ViMode::from_wire(""), ViMode::Unreported);
+    }
+
+    #[test]
+    fn vi_mode_maps_to_the_prompt_char_state() {
+        assert_eq!(ViMode::Insert.state(), Some("VIINS"));
+        assert_eq!(ViMode::Command.state(), Some("VICMD"));
+        assert_eq!(ViMode::Visual.state(), Some("VIVIS"));
+        assert_eq!(ViMode::Overwrite.state(), Some("VIOWR"));
+        assert_eq!(ViMode::Unreported.state(), None);
+    }
+}

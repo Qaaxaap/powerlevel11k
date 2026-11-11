@@ -499,7 +499,7 @@ pub(super) static SEGMENTS: &[SegmentMeta] = &[
     SegmentMeta {
         name: "vi_mode",
         render: &Delegated {
-            text: TextSource::Segment(vi_mode_text),
+            text: TextSource::ViMode,
             icon: IconSource::None,
         },
     },

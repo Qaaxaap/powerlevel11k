@@ -7,30 +7,11 @@
 use std::fmt::Write as _;
 
 use crate::config::{AttachText, Color, Config, Style};
-use crate::model::HeaderInfo;
-
-/// Current zsh edit mode (reported by the zle hook, updated live by the engine); empty when
-/// not zsh or unreported.
-pub static CURRENT_VI_MODE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+use crate::model::{HeaderInfo, ViMode};
 
 /// Input line prefix: `frame.last_prefix` + `prompt_char` content, already coloured.
 pub struct InputPrefix {
     pub text: String,
-}
-
-/// vi state for the current zsh edit mode (p10k's `VIINS`/`VICMD`/`VIVIS`/`VIOWR`).
-pub(super) fn vi_state() -> Option<&'static str> {
-    let mode = CURRENT_VI_MODE
-        .lock()
-        .map(|m| m.clone())
-        .unwrap_or_default();
-    match mode.as_str() {
-        "viins" => Some("VIINS"),
-        "vicmd" => Some("VICMD"),
-        "vis" | "viopp" => Some("VIVIS"),
-        "viowr" => Some("VIOWR"),
-        _ => None,
-    }
 }
 
 /// prompt_char state. vi mode wins (p10k
@@ -40,8 +21,12 @@ pub(super) fn vi_state() -> Option<&'static str> {
 /// status state. Extended states mirror p10k's `STATUS_EXTENDED_STATES`: a failing pipeline
 /// is `ERROR_PIPE`, death by signal is `ERROR_SIGNAL`, and a pipeline whose last stage
 /// succeeded while an earlier one failed is `OK_PIPE`.
-pub fn prompt_state(config: &Config, info: Option<&HeaderInfo>) -> Option<&'static str> {
-    if let Some(st) = vi_state() {
+pub fn prompt_state(
+    config: &Config,
+    info: Option<&HeaderInfo>,
+    vi_mode: ViMode,
+) -> Option<&'static str> {
+    if let Some(st) = vi_mode.state() {
         let configured = config
             .segment("prompt_char")
             .states
@@ -142,9 +127,9 @@ pub(super) fn paint_zsh(text: &str, style: &Style) -> String {
 /// Computes the input line prefix (e.g. `╰─❯`). `last_prefix` (frame style) and the prompt
 /// char (prompt_char style, entering ERROR state from `exit_code`) are colored; `width` is
 /// the ANSI-stripped display width.
-pub fn input_prefix(config: &Config, info: Option<&HeaderInfo>) -> InputPrefix {
+pub fn input_prefix(config: &Config, info: Option<&HeaderInfo>, vi_mode: ViMode) -> InputPrefix {
     InputPrefix {
-        text: prefix_text(config, prompt_state(config, info)),
+        text: prefix_text(config, prompt_state(config, info, vi_mode)),
     }
 }
 
