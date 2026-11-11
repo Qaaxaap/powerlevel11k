@@ -329,27 +329,12 @@ pub(super) fn date_text(seg: &crate::config::Segment) -> String {
     strftime_now(fmt)
 }
 
+/// Format the current local time with a strftime format. An invalid format yields an empty
+/// string instead of an error; a segment with a broken format shows nothing.
 pub(super) fn strftime_now(fmt: &str) -> String {
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&now, &mut tm) };
-    let cfmt = match std::ffi::CString::new(fmt) {
-        Ok(c) => c,
-        Err(_) => return String::new(),
-    };
-    let mut buf = [0u8; 128];
-    let n = unsafe {
-        libc::strftime(
-            buf.as_mut_ptr() as *mut libc::c_char,
-            buf.len(),
-            cfmt.as_ptr(),
-            &tm,
-        )
-    };
-    if n == 0 {
-        String::new()
-    } else {
-        String::from_utf8_lossy(&buf[..n]).into_owned()
+    match jiff::fmt::strtime::format(fmt, &jiff::Zoned::now()) {
+        Ok(s) => s,
+        Err(_) => String::new(),
     }
 }
 
@@ -657,26 +642,14 @@ pub(super) fn time_text(seg: &crate::config::Segment) -> String {
     }
 }
 
-/// Current time HH:MM:SS (libc localtime).
+/// Current local time as HH:MM:SS.
 pub(super) fn now_hhmmss() -> String {
-    let tm = local_time();
-    format!("{:02}:{:02}:{:02}", tm.tm_hour, tm.tm_min, tm.tm_sec)
+    strftime_now("%H:%M:%S")
 }
 
 /// 12-hour `HH:MM:SS AM/PM` (matching p10k `%I:%M:%S %p`, hours 01–12).
 pub(super) fn now_hhmmss_12h() -> String {
-    let tm = local_time();
-    let hour12 = tm.tm_hour % 12;
-    let hour12 = if hour12 == 0 { 12 } else { hour12 };
-    let ampm = if tm.tm_hour < 12 { "AM" } else { "PM" };
-    format!("{hour12:02}:{:02}:{:02} {ampm}", tm.tm_min, tm.tm_sec)
-}
-
-pub(super) fn local_time() -> libc::tm {
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&now, &mut tm) };
-    tm
+    strftime_now("%I:%M:%S %p")
 }
 
 /// Command duration formatting (matching p10k `prompt_command_execution_time`):
@@ -1395,6 +1368,26 @@ mod tests {
         // which keeps the previous behaviour (p10k's `print -P` would apply it, but static
         // text never used that form).
         assert_eq!(expand_env("${P11K_TEST_UNDEFINED_VAR:-fallback}"), "");
+    }
+
+    #[test]
+    fn time_formats_match_p10k() {
+        let year = strftime_now("%Y");
+        assert_eq!(year.len(), 4, "year should be four digits, got {year:?}");
+        assert!(year.chars().all(|c| c.is_ascii_digit()));
+        let date = strftime_now("%d.%m.%y");
+        assert_eq!(date.len(), 8, "date should use dd.mm.yy, got {date:?}");
+        let hms = now_hhmmss();
+        assert_eq!(hms.len(), 8, "time should be HH:MM:SS, got {hms:?}");
+        assert_eq!(&hms[2..3], ":");
+        assert_eq!(&hms[5..6], ":");
+        let hms12 = now_hhmmss_12h();
+        assert!(
+            hms12.ends_with("AM") || hms12.ends_with("PM"),
+            "12-hour time should carry AM/PM, got {hms12:?}"
+        );
+        // An invalid format is a hidden segment, not a panic.
+        assert_eq!(strftime_now("%"), "");
     }
 
     #[test]
