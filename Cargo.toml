@@ -23,6 +23,7 @@ jiff = "0.2"
 strip-ansi-escapes = "0.2"
 wait-timeout = "0.2"
 walkdir = "2"
+globset = "0.4"
 insta = "1"
 
 [profile.release]

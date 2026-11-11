@@ -5,7 +5,7 @@
 //! literal. A pattern ending in `/` also matches all subdirectories. A top-level `|` and every
 //! `(...)` group expand to alternatives, mirroring the zsh syntax the themes use.
 
-/// p10k's `DIR_CLASSES` matches `$PWD` with zsh extended globs; p11k uses a simplified glob:
+/// p10k's `DIR_CLASSES` matches `$PWD` with zsh extended globs; p11k uses a glob where
 /// `~` expands to $HOME, `*` / `?` / `[…]` do not cross `/`, `**` crosses directories, and
 /// everything else is literal. A pattern ending in `/` (`~/work/`) also matches all subdirs.
 pub(crate) fn glob_match_path(pattern: &str, path: &str, home: &str) -> bool {
@@ -19,47 +19,16 @@ pub(crate) fn glob_match_path(pattern: &str, path: &str, home: &str) -> bool {
     glob_match(&pat, path)
 }
 
-/// Simplified glob: `**` crosses `/`, `*` / `?` / `[…]` do not.
+/// One glob pattern against one path: `**` crosses `/`, `*` / `?` / `[…]` do not.
 pub(crate) fn glob_match(pat: &str, text: &str) -> bool {
-    fn go(p: &[char], t: &[char]) -> bool {
-        match p.first() {
-            None => t.is_empty(),
-            Some('*') if p.get(1) == Some(&'*') => (0..=t.len()).any(|i| go(&p[2..], &t[i..])),
-            Some('*') => (0..=t.len())
-                .take_while(|i| *i == 0 || t[i - 1] != '/')
-                .any(|i| go(&p[1..], &t[i..])),
-            Some('?') => !t.is_empty() && t[0] != '/' && go(&p[1..], &t[1..]),
-            Some('[') => {
-                let Some(close) = p.iter().position(|c| *c == ']') else {
-                    return !t.is_empty() && t[0] == '[' && go(&p[1..], &t[1..]);
-                };
-                if t.is_empty() || t[0] == '/' {
-                    return false;
-                }
-                let set: Vec<char> = p[1..close].to_vec();
-                let mut hit = false;
-                let mut i = 0;
-                while i < set.len() {
-                    if i + 2 < set.len() && set[i + 1] == '-' {
-                        if t[0] >= set[i] && t[0] <= set[i + 2] {
-                            hit = true;
-                        }
-                        i += 3;
-                    } else {
-                        if set[i] == t[0] {
-                            hit = true;
-                        }
-                        i += 1;
-                    }
-                }
-                hit && go(&p[close + 1..], &t[1..])
-            }
-            Some(c) => !t.is_empty() && t[0] == *c && go(&p[1..], &t[1..]),
-        }
-    }
-    let p: Vec<char> = pat.chars().collect();
-    let t: Vec<char> = text.chars().collect();
-    go(&p, &t)
+    let Ok(glob) = globset::GlobBuilder::new(pat)
+        .literal_separator(true)
+        .build()
+    else {
+        // An unparsable pattern (e.g. an unterminated `[`) is a literal: nothing else to do.
+        return pat == text;
+    };
+    glob.compile_matcher().is_match(text)
 }
 
 /// Whether a repo whose workdir is `workdir` must be ignored (p10k
@@ -173,5 +142,24 @@ mod tests {
         assert!(workdir_matches("~/work/", "/home/u/work/a/b", "/home/u"));
         assert_eq!(pattern_alternatives("[a|b]"), ["[a|b]"]);
         assert_eq!(pattern_alternatives("a(|b)c"), ["ac", "abc"]);
+    }
+
+    #[test]
+    fn glob_separators_and_wildcards() {
+        // `*` stays inside one path component.
+        assert!(glob_match("/a/*.php", "/a/b.php"));
+        assert!(!glob_match("/a/*.php", "/a/b/c.php"));
+        // `**` crosses components.
+        assert!(glob_match("/a/**/*.php", "/a/b/c/d.php"));
+        assert!(glob_match("/a/**", "/a/b/c"));
+        // `?` and a character class.
+        assert!(glob_match("/a/b?c", "/a/bxc"));
+        assert!(!glob_match("/a/b?c", "/a/b/c"));
+        assert!(glob_match("/a/[bc]ig", "/a/big"));
+        assert!(!glob_match("/a/[bc]ig", "/a/dig"));
+        assert!(glob_match("/a/[a-z]ig", "/a/zig"));
+        // An unterminated class is a literal pattern.
+        assert!(glob_match("/a/[", "/a/["));
+        assert!(!glob_match("/a/[", "/a/b"));
     }
 }
