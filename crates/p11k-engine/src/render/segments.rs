@@ -337,10 +337,7 @@ pub(super) fn date_text(seg: &crate::config::Segment) -> String {
 /// Format the current local time with a strftime format. An invalid format yields an empty
 /// string instead of an error; a segment with a broken format shows nothing.
 pub(super) fn strftime_now(fmt: &str) -> String {
-    match jiff::fmt::strtime::format(fmt, &jiff::Zoned::now()) {
-        Ok(s) => s,
-        Err(_) => String::new(),
-    }
+    jiff::fmt::strtime::format(fmt, &jiff::Zoned::now()).unwrap_or_default()
 }
 
 // Toolchain version segments: run `cmd --version`, cache the output and parse the version;
@@ -364,13 +361,17 @@ pub(crate) fn clear_cmd_cache() {
 }
 
 pub(super) fn run_cmd(cmd: &str, args: &[&str]) -> Option<String> {
-    run_cmd_timeout(cmd, args, CMD_TIMEOUT)
+    run_cmd_with_timeout(cmd, args, CMD_TIMEOUT)
 }
 
 /// Run one command with a timeout. A successful run returns its trimmed output (stderr when
 /// stdout is empty, as some version commands write there); a failure, a spawn error and a
 /// timeout all return `None`.
-fn run_cmd_timeout(cmd: &str, args: &[&str], timeout: std::time::Duration) -> Option<String> {
+pub(super) fn run_cmd_with_timeout(
+    cmd: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Option<String> {
     use std::io::Read;
     use std::process::Stdio;
     use std::time::Instant;
@@ -1459,28 +1460,28 @@ mod tests {
     fn command_runs_time_out_and_fail_closed() {
         use std::time::Duration;
         assert_eq!(
-            run_cmd_timeout("sh", &["-c", "echo ok"], Duration::from_secs(1)),
+            run_cmd_with_timeout("sh", &["-c", "echo ok"], Duration::from_secs(1)),
             Some("ok".to_string())
         );
         // A non-zero exit code is a missing value.
         assert_eq!(
-            run_cmd_timeout("sh", &["-c", "exit 3"], Duration::from_secs(1)),
+            run_cmd_with_timeout("sh", &["-c", "exit 3"], Duration::from_secs(1)),
             None
         );
         // A hung command is killed at the timeout instead of freezing the prompt.
         assert_eq!(
-            run_cmd_timeout("sh", &["-c", "sleep 2"], Duration::from_millis(100)),
+            run_cmd_with_timeout("sh", &["-c", "sleep 2"], Duration::from_millis(100)),
             None
         );
         // A missing executable is a missing value.
         assert_eq!(
-            run_cmd_timeout("no-such-cmd-p11k-test", &[], Duration::from_millis(100)),
+            run_cmd_with_timeout("no-such-cmd-p11k-test", &[], Duration::from_millis(100)),
             None
         );
         // The cache clear is safe to call and keeps the call working.
         clear_cmd_cache();
         assert_eq!(
-            run_cmd_timeout("sh", &["-c", "echo ok"], Duration::from_secs(1)),
+            run_cmd_with_timeout("sh", &["-c", "echo ok"], Duration::from_secs(1)),
             Some("ok".to_string())
         );
     }
@@ -1509,7 +1510,7 @@ mod tests {
     fn url_escape_keeps_the_p10k_set() {
         assert_eq!(url_escape("/home/u/proj"), "/home/u/proj");
         assert_eq!(url_escape("a b"), "a%20b");
-        assert_eq!(url_escape("caf\u{e9}"), "caf%C3%A9");
+        assert_eq!(url_escape("x\u{e9}"), "x%C3%A9");
         // Quotes and the other allowed characters stay literal.
         assert_eq!(url_escape("\"x\"/:_.-!'()~"), "\"x\"/:_.-!'()~");
     }

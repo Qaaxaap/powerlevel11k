@@ -1,12 +1,12 @@
 //! Environment and system data: user, host, ssh, memory, swap, disk, battery, network and the
 //! values the environment segments render.
 //!
-//! The lookups are cached where p10k caches them. `meminfo_kb` reads `/proc/meminfo` once per
-//! call; the callers read the same file for related fields.
+//! The lookups are cached where p10k caches them. The memory segments share one
+//! `/proc/meminfo` snapshot; command output is cached by [`run_cmd`] and cleared per prompt.
 
 use std::cell::RefCell;
 
-use super::run_cmd;
+use super::segments::{run_cmd, run_cmd_with_timeout};
 
 #[derive(Clone)]
 pub(super) struct EnvInfo {
@@ -357,5 +357,12 @@ pub(super) fn wifi_text() -> String {
 
 /// Public IP: curl query (cached by run_cmd; synchronous on the first call, cached afterwards).
 pub(super) fn public_ip_text() -> String {
-    run_cmd("curl", &["-s", "--max-time", "4", "https://v4.ident.me/"]).unwrap_or_default()
+    // The public address is optional; a slow network must not hold the first prompt for
+    // longer than the command timeout (the first prompt is painted synchronously).
+    run_cmd_with_timeout(
+        "curl",
+        &["-s", "--max-time", "4", "https://v4.ident.me/"],
+        std::time::Duration::from_secs(1),
+    )
+    .unwrap_or_default()
 }
