@@ -23,6 +23,7 @@ unicode-width = { workspace = true }
 percent-encoding = { workspace = true }
 serde_json = { workspace = true }
 shellexpand = { workspace = true }
+jiff = { workspace = true }
 
 
 [dev-dependencies]

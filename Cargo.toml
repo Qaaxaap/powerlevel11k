@@ -19,6 +19,7 @@ unicode-width = "0.2"
 percent-encoding = "2"
 serde_json = "1"
 shellexpand = "3"
+jiff = "0.2"
 insta = "1"
 
 [profile.release]
