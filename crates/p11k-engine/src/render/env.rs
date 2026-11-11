@@ -192,15 +192,38 @@ pub(super) fn human_bytes(bytes: u64) -> String {
     }
 }
 
-/// Reads one field of /proc/meminfo (KiB).
-pub(super) fn meminfo_kb(name: &str) -> Option<u64> {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()?
-        .lines()
-        .find_map(|l| {
-            l.strip_prefix(&format!("{name}:"))
-                .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
-        })
+/// The fields the memory segments need, read from one /proc/meminfo snapshot.
+struct MemInfo {
+    available_kb: u64,
+    swap_total_kb: u64,
+    swap_free_kb: u64,
+}
+
+impl MemInfo {
+    /// Parse the snapshot; missing fields read as 0.
+    fn parse(text: &str) -> MemInfo {
+        let field = |name: &str| -> u64 {
+            text.lines()
+                .find_map(|l| {
+                    l.strip_prefix(name)
+                        .and_then(|rest| rest.trim_start().strip_prefix(':'))
+                        .and_then(|rest| rest.split_whitespace().next())
+                        .and_then(|v| v.parse().ok())
+                })
+                .unwrap_or(0)
+        };
+        MemInfo {
+            available_kb: field("MemAvailable"),
+            swap_total_kb: field("SwapTotal"),
+            swap_free_kb: field("SwapFree"),
+        }
+    }
+}
+
+/// One snapshot of /proc/meminfo: ram and swap read it together instead of three times.
+fn meminfo() -> MemInfo {
+    let text = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    MemInfo::parse(&text)
 }
 
 /// Load: current system load (the first value of /proc/loadavg).
@@ -213,16 +236,18 @@ pub(super) fn load() -> String {
 
 /// Free memory (MemAvailable, human readable).
 pub(super) fn ram() -> String {
-    meminfo_kb("MemAvailable")
-        .map(|kb| human_bytes(kb * 1024))
-        .unwrap_or_default()
+    let kb = meminfo().available_kb;
+    if kb == 0 {
+        String::new()
+    } else {
+        human_bytes(kb * 1024)
+    }
 }
 
 /// Used swap.
 pub(super) fn swap() -> String {
-    let total = meminfo_kb("SwapTotal").unwrap_or(0);
-    let free = meminfo_kb("SwapFree").unwrap_or(0);
-    let used = total.saturating_sub(free);
+    let info = meminfo();
+    let used = info.swap_total_kb.saturating_sub(info.swap_free_kb);
     if used == 0 {
         String::new()
     } else {
