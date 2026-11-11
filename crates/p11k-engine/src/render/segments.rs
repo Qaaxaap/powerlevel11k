@@ -29,16 +29,21 @@ pub(super) fn dir_show_writable(seg: &crate::config::Segment) -> i64 {
     }
 }
 
+/// Whether the directory is writable for the current user. p10k tests `[[ -w $PWD ]]`;
+/// access(2) matches that, including ACLs and root.
+fn dir_is_writable(cwd: &str) -> bool {
+    let Some(bytes) = std::ffi::CString::new(cwd).ok() else {
+        return false;
+    };
+    let code = unsafe { libc::access(bytes.as_ptr(), libc::W_OK) };
+    code == 0
+}
+
 /// Returns the matching state name when the directory is not writable (or missing under v3),
-/// otherwise None. p10k tests `[[ -w $PWD ]]`; access(2) matches that here.
+/// otherwise None.
 pub(super) fn dir_writable_state(seg: &crate::config::Segment, cwd: &str) -> Option<&'static str> {
     let mode = dir_show_writable(seg);
-    if mode <= 0 {
-        return None;
-    }
-    let bytes = std::ffi::CString::new(cwd).ok()?;
-    let writable = unsafe { libc::access(bytes.as_ptr(), libc::W_OK) } == 0;
-    if writable {
+    if mode <= 0 || dir_is_writable(cwd) {
         return None;
     }
     if mode > 2 && !std::path::Path::new(cwd).exists() {
@@ -129,11 +134,11 @@ pub(super) fn toolbox_text() -> String {
 }
 
 pub(super) fn dir_writable_text(cwd: &str) -> String {
-    use std::os::unix::fs::MetadataExt;
-    let writable = std::fs::metadata(cwd)
-        .map(|m| m.mode() & 0o222 != 0)
-        .unwrap_or(true);
-    if writable { String::new() } else { "!".into() }
+    if dir_is_writable(cwd) {
+        String::new()
+    } else {
+        "!".into()
+    }
 }
 
 pub(super) fn per_directory_history_text() -> String {
@@ -582,21 +587,21 @@ pub(super) fn symfony2_tests_text(cwd: &str) -> String {
     }
     let mut all = 0usize;
     let mut tests = 0usize;
-    let mut stack = vec![root.join("src")];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    for entry in walkdir::WalkDir::new(root.join("src"))
+        .follow_links(false)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
             continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "php") {
-                all += 1;
-                if path.to_string_lossy().contains("Tests") {
-                    tests += 1;
-                }
-            }
+        }
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "php") {
+            continue;
+        }
+        all += 1;
+        if path.to_string_lossy().contains("Tests") {
+            tests += 1;
         }
     }
     if all == 0 {
@@ -1417,6 +1422,37 @@ mod tests {
         // which keeps the previous behaviour (p10k's `print -P` would apply it, but static
         // text never used that form).
         assert_eq!(expand_env("${P11K_TEST_UNDEFINED_VAR:-fallback}"), "");
+    }
+
+    /// One writable test backs both the text and the state: access(2) instead of the mode
+    /// bits, so ACLs and root behave like p10k's `[[ -w $PWD ]]`.
+    #[test]
+    fn dir_writable_uses_one_check() {
+        // A directory that exists and that the test user owns is writable.
+        assert_eq!(dir_writable_text("/tmp"), "");
+        // A missing directory is not writable.
+        assert_eq!(
+            dir_writable_text("/nonexistent-p11k-dir-writable-test"),
+            "!"
+        );
+    }
+
+    #[test]
+    fn symfony2_test_ratio_reads_the_tree() {
+        let root = std::env::temp_dir().join("p11k-sf2-test");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src/AppBundle/Tests")).unwrap();
+        std::fs::create_dir_all(root.join("app")).unwrap();
+        std::fs::write(root.join("app/AppKernel.php"), "").unwrap();
+        std::fs::write(root.join("src/AppBundle/Foo.php"), "").unwrap();
+        std::fs::write(root.join("src/AppBundle/Tests/FooTest.php"), "").unwrap();
+        let text = symfony2_tests_text(root.to_str().unwrap());
+        // One test file, one code file: 100%.
+        assert_eq!(text, "SF2: 100.00%");
+        // A tree with no code files left (only tests) hides the segment.
+        std::fs::remove_file(root.join("src/AppBundle/Foo.php")).unwrap();
+        assert_eq!(symfony2_tests_text(root.to_str().unwrap()), "");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

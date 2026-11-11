@@ -817,6 +817,7 @@ dependencies = [
  "strip-ansi-escapes",
  "unicode-width 0.2.3",
  "wait-timeout",
+ "walkdir",
 ]
 
 [[package]]

@@ -26,6 +26,7 @@ shellexpand = { workspace = true }
 jiff = { workspace = true }
 strip-ansi-escapes = { workspace = true }
 wait-timeout = { workspace = true }
+walkdir = { workspace = true }
 
 
 [dev-dependencies]

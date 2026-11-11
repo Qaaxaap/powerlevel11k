@@ -22,6 +22,7 @@ shellexpand = "3"
 jiff = "0.2"
 strip-ansi-escapes = "0.2"
 wait-timeout = "0.2"
+walkdir = "2"
 insta = "1"
 
 [profile.release]
