@@ -76,24 +76,23 @@ msgstr "配置里的 shell 无法识别，回退到 $SHELL（可选 zsh/bash/fis
 
 #: crates/p11k-engine/src/config.rs:75
 msgid "invalid colour; a hex colour needs six digits: "
-msgstr ""
+msgstr "十六进制颜色需要六位数字："
 
 #: crates/p11k-engine/src/config.rs:86
-#, fuzzy
 msgid "unknown colour name: "
-msgstr "无法识别的配置键: "
+msgstr "未知颜色名："
 
 #: crates/p11k-engine/src/config.rs:87
 msgid "use a name, 0-255, #rrggbb or default"
-msgstr ""
+msgstr "请使用颜色名、0-255、#rrggbb 或 default"
 
 #: crates/p11k-engine/src/config.rs:98
 msgid "colour index is outside 0-255: "
-msgstr ""
+msgstr "颜色索引超出 0-255："
 
 #: crates/p11k-engine/src/config.rs:102
 msgid "expected a colour (0-255, #rrggbb, a colour name or default)"
-msgstr ""
+msgstr "应为颜色（0-255、#rrggbb、颜色名或 default）"
 
 # ---- 配置解析 ----
 #: crates/p11k-engine/src/config.rs:530
