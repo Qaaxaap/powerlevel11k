@@ -107,25 +107,42 @@ mod tests {
     /// wrappers and no text. Enumerated rather than listed, so adding or splitting a module
     /// cannot silently drop its msgids from the check.
     fn sources() -> Vec<(String, String)> {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files: Vec<(String, String)> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
-            .filter(|path| path.file_name().is_some_and(|name| name != "i18n.rs"))
-            .map(|path| {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let text = std::fs::read_to_string(&path)
-                    .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-                (name, text)
-            })
-            .collect();
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<(String, String)> = Vec::new();
+        walk_sources(&root, &root, &mut files);
         files.sort();
         files
+    }
+
+    /// Collect every source file below `dir`; a module directory (e.g. `wizard/`) holds sources
+    /// too, so the scan recurses.
+    fn walk_sources(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        files: &mut Vec<(String, String)>,
+    ) {
+        let entries =
+            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_sources(root, &path, files);
+                continue;
+            }
+            if path.extension().is_none_or(|ext| ext != "rs")
+                || path.file_name().is_some_and(|name| name == "i18n.rs")
+            {
+                continue;
+            }
+            let name = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            files.push((name, text));
+        }
     }
 
     /// Parse .po/.pot: pull out every msgid (including continuation chunks), skipping the empty header msgid.
