@@ -147,7 +147,7 @@ msgstr "Pure."
 
 #: crates/p11k-engine/src/wizard.rs:36
 msgid "p11k configure needs an interactive terminal"
-msgstr ""
+msgstr "p11k configure 需要在交互式终端中运行"
 
 #: crates/p11k-engine/src/wizard.rs:94
 msgid "Use this theme?"
