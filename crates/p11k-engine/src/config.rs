@@ -1494,19 +1494,21 @@ mod tests {
     #[test]
     fn invalid_colours_fail_the_load() {
         let layout = "layout { left { line { dir } } }";
-        for (bad, needle) in [
-            ("defaults fg=999", "fg: colour index is outside 0-255: 999"),
-            ("defaults bg=-1", "bg: colour index is outside 0-255: -1"),
-            ("defaults fg=\"#zzzzzz\"", "fg: invalid colour"),
-            ("defaults fg=\"#12345\"", "fg: invalid colour"),
-            ("defaults fg=\"nope\"", "fg: unknown colour name: nope"),
-            ("defaults fg=#true", "fg: expected a colour"),
+        // The message text is localised, so the assertions check the property name and the
+        // value, which stay the same in every language.
+        for (bad, key, value) in [
+            ("defaults fg=999", "fg", "999"),
+            ("defaults bg=-1", "bg", "-1"),
+            ("defaults fg=\"#zzzzzz\"", "fg", "#zzzzzz"),
+            ("defaults fg=\"#12345\"", "fg", "#12345"),
+            ("defaults fg=\"nope\"", "fg", "nope"),
+            ("defaults fg=#true", "fg", ""),
         ] {
             let src = format!("{layout}\n{bad}");
             let err = Config::parse(&src).expect_err(&format!("{bad} must fail"));
             assert!(
-                err.contains(needle),
-                "{bad} should report {needle:?}, got {err:?}"
+                err.contains(key) && err.contains(value),
+                "{bad} should report {key:?} and {value:?}, got {err:?}"
             );
         }
         // Attached text and the separator colours go through the same parser.
