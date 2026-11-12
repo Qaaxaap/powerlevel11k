@@ -12,143 +12,87 @@ use crate::model::HeaderInfo;
 use crate::presets::{self, PresetKind};
 use std::io::{self, Write};
 
-enum Step<T> {
-    Answer(T),
+/// Why a question stopped: the user asked to restart or quit, or a write failed.
+enum Control {
     Restart,
     Quit,
+    Io(io::Error),
 }
 
-/// Convert any `Step<T>`'s Restart/Quit variants into `Step<U>` (Answer never reaches here).
-fn early<T, U>(s: Step<T>) -> Step<U> {
-    match s {
-        Step::Answer(_) => unreachable!("early only handles Restart/Quit"),
-        Step::Restart => Step::Restart,
-        Step::Quit => Step::Quit,
+impl From<io::Error> for Control {
+    fn from(e: io::Error) -> Control {
+        Control::Io(e)
     }
 }
+
+/// One answer; an error carries the control flow out of the wizard.
+type Answer<T> = Result<T, Control>;
 
 pub fn run() -> anyhow::Result<()> {
     let _raw = crate::state::RawTerminal::enter(libc::STDIN_FILENO)?;
     let mut out = io::stdout();
     loop {
-        match flow(&mut out)? {
-            Step::Answer(()) => return Ok(()),
-            Step::Restart => continue,
-            Step::Quit => return goodbye(&mut out),
+        match flow(&mut out) {
+            Ok(()) => return Ok(()),
+            Err(Control::Restart) => continue,
+            Err(Control::Quit) => return goodbye(&mut out),
+            Err(Control::Io(e)) => return Err(e.into()),
         }
     }
 }
 
-fn flow(out: &mut io::Stdout) -> io::Result<Step<()>> {
+fn flow(out: &mut io::Stdout) -> Answer<()> {
     // 1. Font detection → icon mode.
-    let mode = match ask_font(out)? {
-        Step::Answer(m) => m,
-        s => return Ok(early(s)),
-    };
+    let mode = ask_font(out)?;
     // 2. Style.
-    let kind = match ask_style(out, &mode)? {
-        Step::Answer(k) => k,
-        s => return Ok(early(s)),
-    };
+    let kind = ask_style(out, &mode)?;
     // 3. Color variant (branched by style) → build a Config with the color arguments.
-    let mut cfg = match ask_color(out, kind, &mode)? {
-        Step::Answer(c) => c,
-        s => return Ok(early(s)),
-    };
+    let mut cfg = ask_color(out, kind, &mode)?;
     // 4. Character set (asked when not ascii; can explicitly switch to ASCII).
-    if cfg.mode != IconMode::Ascii {
-        match ask_charset(out, &cfg, &mode)? {
-            Step::Answer(ascii) => {
-                if ascii {
-                    cfg.mode = IconMode::Ascii;
-                }
-            }
-            s => return Ok(early(s)),
-        }
+    if cfg.mode != IconMode::Ascii && ask_charset(out, &cfg, &mode)? {
+        cfg.mode = IconMode::Ascii;
     }
     // 5. Location of pure's non-permanent content.
     if kind == PresetKind::Pure {
-        match ask_use_rprompt(out, &mut cfg)? {
-            Step::Answer(()) => {}
-            s => return Ok(early(s)),
-        }
+        ask_use_rprompt(out, &mut cfg)?;
     }
     // 6. Time.
-    match ask_time(out, &mut cfg, kind)? {
-        Step::Answer(()) => {}
-        s => return Ok(early(s)),
-    }
+    ask_time(out, &mut cfg, kind)?;
     // 7. Separators/ends (classic/rainbow only).
     if matches!(kind, PresetKind::Classic | PresetKind::Rainbow) {
-        match ask_separators(out, &mut cfg)? {
-            Step::Answer(()) => {}
-            s => return Ok(early(s)),
-        }
-        match ask_heads(out, &mut cfg)? {
-            Step::Answer(()) => {}
-            s => return Ok(early(s)),
-        }
-        match ask_tails(out, &mut cfg)? {
-            Step::Answer(()) => {}
-            s => return Ok(early(s)),
-        }
+        ask_separators(out, &mut cfg)?;
+        ask_heads(out, &mut cfg)?;
+        ask_tails(out, &mut cfg)?;
     }
     // 8. Height.
-    match ask_num_lines(out, &mut cfg)? {
-        Step::Answer(()) => {}
-        s => return Ok(early(s)),
-    }
+    ask_num_lines(out, &mut cfg)?;
     // 9. Connection line (two lines and classic/rainbow only).
     if header_on(&cfg) && matches!(kind, PresetKind::Classic | PresetKind::Rainbow) {
-        match ask_gap_char(out, &mut cfg)? {
-            Step::Answer(()) => {}
-            s => return Ok(early(s)),
-        }
-        match ask_frame(out, &mut cfg)? {
-            Step::Answer(()) => {}
-            s => return Ok(early(s)),
-        }
+        ask_gap_char(out, &mut cfg)?;
+        ask_frame(out, &mut cfg)?;
     }
     // 10. Spacing.
-    match ask_empty_line(out, &mut cfg)? {
-        Step::Answer(()) => {}
-        s => return Ok(early(s)),
-    }
+    ask_empty_line(out, &mut cfg)?;
     // 11. Icons.
-    match ask_extra_icons(out, &mut cfg)? {
-        Step::Answer(()) => {}
-        s => return Ok(early(s)),
-    }
+    ask_extra_icons(out, &mut cfg)?;
     // 12. Prefixes.
-    match ask_prefixes(out, &mut cfg)? {
-        Step::Answer(()) => {}
-        s => return Ok(early(s)),
-    }
+    ask_prefixes(out, &mut cfg)?;
     // 13. transient.
-    match ask_transient(out, &mut cfg)? {
-        Step::Answer(()) => {}
-        s => return Ok(early(s)),
-    }
+    ask_transient(out, &mut cfg)?;
     // 14. Preview + confirmation.
     preview(out, &cfg)?;
-    match ask_yn(
+    if !ask_yn(
         out,
         msgid("Use this theme?"),
         msgid("Yes, write the config."),
         msgid("No."),
         None,
     )? {
-        Step::Answer(true) => {}
-        Step::Answer(false) => return Ok(Step::Quit),
-        Step::Restart => return Ok(Step::Restart),
-        Step::Quit => return Ok(Step::Quit),
+        return Err(Control::Quit);
     }
     // 15. Write to disk (asking about overwrite first if it exists).
-    match write_config(out, &cfg).map_err(|e| io::Error::other(e.to_string()))? {
-        Step::Answer(()) => Ok(Step::Answer(())),
-        Step::Restart => Ok(Step::Restart),
-        Step::Quit => Ok(Step::Quit),
-    }
+    write_config(out, &cfg)?;
+    Ok(())
 }
 
 // ---- UI basics ----
@@ -315,17 +259,14 @@ fn preview_lines(cfg: &Config) -> Vec<String> {
 // ---- Question set ----
 
 /// Font detection: diamond (⮀⮂) + lock ()/quotes (❯❮) — three glyphs landing on the three mode tiers.
-fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
-    let diamond = match ask_yn(
+fn ask_font(out: &mut io::Stdout) -> Answer<IconMode> {
+    let diamond = ask_yn(
         out,
         msgid("Does this look like a diamond (rotated square)?"),
         msgid("Yes."),
         msgid("No."),
         Some("--->  \u{e0b2}\u{e0b0}  <---"),
-    )? {
-        Step::Answer(b) => b,
-        s => return Ok(early(s)),
-    };
+    )?;
     if diamond {
         match ask_yn(
             out,
@@ -334,9 +275,8 @@ fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
             msgid("No."),
             Some("--->  \u{f023}  <---"),
         )? {
-            Step::Answer(true) => Ok(Step::Answer(IconMode::NerdfontComplete)),
-            Step::Answer(false) => Ok(Step::Answer(IconMode::Compatible)),
-            s => Ok(early(s)),
+            true => Ok(IconMode::NerdfontComplete),
+            false => Ok(IconMode::Compatible),
         }
     } else {
         match ask_yn(
@@ -346,9 +286,8 @@ fn ask_font(out: &mut io::Stdout) -> io::Result<Step<IconMode>> {
             msgid("No."),
             Some("--->  \u{276f}\u{276e}  <---"),
         )? {
-            Step::Answer(true) => Ok(Step::Answer(IconMode::Compatible)),
-            Step::Answer(false) => Ok(Step::Answer(IconMode::Ascii)),
-            s => Ok(early(s)),
+            true => Ok(IconMode::Compatible),
+            false => Ok(IconMode::Ascii),
         }
     }
 }
@@ -363,15 +302,12 @@ fn style_preview(kind: PresetKind, mode: &IconMode) -> Vec<String> {
 }
 
 /// Style: each of the four presets comes with a live prompt preview.
-fn ask_style(out: &mut io::Stdout, mode: &IconMode) -> io::Result<Step<PresetKind>> {
+fn ask_style(out: &mut io::Stdout, mode: &IconMode) -> Answer<PresetKind> {
     let titles = PresetKind::ALL.map(|k| k.title());
     let i = ask_choice_preview(out, msgid("Prompt Style"), &titles, |i| {
         style_preview(PresetKind::ALL[i], mode)
     })?;
-    match i {
-        Step::Answer(i) => Ok(Step::Answer(PresetKind::ALL[i])),
-        s => Ok(early(s)),
-    }
+    Ok(PresetKind::ALL[i])
 }
 
 /// Build a config from style + color shade index (preview and final result share one source).
@@ -385,7 +321,7 @@ fn build_with_color(kind: PresetKind, i: usize) -> Config {
 }
 
 /// Color variant (branched by style): lean 256/8, classic four shades, rainbow four frame shades, pure two palettes.
-fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> io::Result<Step<Config>> {
+fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> Answer<Config> {
     // p10k's four shade names (`color_name`).
     const FOUR: [&str; 4] = [
         msgid("Lightest."),
@@ -410,18 +346,13 @@ fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> io::Res
         c.mode = mode.clone();
         preview_lines(&c)
     })?;
-    match i {
-        Step::Answer(i) => {
-            let mut c = build_with_color(kind, i);
-            c.mode = mode.clone();
-            Ok(Step::Answer(c))
-        }
-        s => Ok(early(s)),
-    }
+    let mut c = build_with_color(kind, i);
+    c.mode = mode.clone();
+    Ok(c)
 }
 
 /// Character set: Unicode / ASCII (the preview reflects the icon/separator substitutions under ASCII).
-fn ask_charset(out: &mut io::Stdout, cfg: &Config, mode: &IconMode) -> io::Result<Step<bool>> {
+fn ask_charset(out: &mut io::Stdout, cfg: &Config, mode: &IconMode) -> Answer<bool> {
     let i = ask_choice_preview(
         out,
         msgid("Character Set"),
@@ -436,14 +367,11 @@ fn ask_charset(out: &mut io::Stdout, cfg: &Config, mode: &IconMode) -> io::Resul
             preview_lines(&c)
         },
     )?;
-    match i {
-        Step::Answer(i) => Ok(Step::Answer(i == 1)),
-        s => Ok(early(s)),
-    }
+    Ok(i == 1)
 }
 
 /// Location of pure's non-permanent content (exec/context/virtualenv).
-fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Non-permanent content location"),
@@ -467,7 +395,7 @@ fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
     )
 }
 
-fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> io::Result<Step<()>> {
+fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> Answer<()> {
     ask_apply(
         out,
         msgid("Show current time?"),
@@ -520,7 +448,7 @@ fn time_bg(kind: PresetKind, cfg: &Config) -> Option<u8> {
 }
 
 /// Separators (segment/sub): Angled/Vertical/Slanted/Round.
-fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Prompt Separators"),
@@ -547,7 +475,7 @@ fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>
 }
 
 /// End symbols, heads (end/right-start): Flat/Blurred/Sharp/Slanted/Round.
-fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Prompt Heads"),
@@ -574,7 +502,7 @@ fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
 }
 
 /// End symbols, tails (left-tail/right-tail).
-fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Prompt Tails"),
@@ -601,7 +529,7 @@ fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
 }
 
 /// Height: one line (no header) / two lines.
-fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Prompt Height"),
@@ -618,7 +546,7 @@ fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>>
     )
 }
 
-fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Prompt Connection"),
@@ -642,7 +570,7 @@ fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> 
     )
 }
 
-fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     use crate::config::FramePiece;
     ask_apply(
         out,
@@ -679,7 +607,7 @@ fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
     )
 }
 
-fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Prompt Spacing"),
@@ -689,7 +617,7 @@ fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>
     )
 }
 
-fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Icons"),
@@ -722,7 +650,7 @@ fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()
 }
 
 /// Prefix connectives: Concise (bare value) / Fluent (with on/took/at).
-fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
         msgid("Prompt Flow"),
@@ -745,7 +673,7 @@ fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> 
     )
 }
 
-fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>> {
+fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     let b = ask_yn(
         out,
         msgid("Enable Transient Prompt?"),
@@ -753,17 +681,12 @@ fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> io::Result<Step<()>>
         msgid("No."),
         None,
     )?;
-    match b {
-        Step::Answer(b) => {
-            cfg.layout.transient_prompt = if b {
-                crate::config::TransientPrompt::Always
-            } else {
-                crate::config::TransientPrompt::Off
-            };
-            Ok(Step::Answer(()))
-        }
-        s => Ok(early(s)),
-    }
+    cfg.layout.transient_prompt = if b {
+        crate::config::TransientPrompt::Always
+    } else {
+        crate::config::TransientPrompt::Off
+    };
+    Ok(())
 }
 
 // ---- Generic prompts ----
@@ -775,7 +698,7 @@ fn ask_choice_preview(
     title: &str,
     options: &[&str],
     preview: impl Fn(usize) -> Vec<String>,
-) -> io::Result<Step<usize>> {
+) -> Answer<usize> {
     loop {
         clear(out);
         // The title and option labels are msgids, translated here in one place; preview lines
@@ -792,12 +715,12 @@ fn ask_choice_preview(
         line(out, &format!("(r)  {}", t("Restart from the beginning.")))?;
         line(out, &format!("(q)  {}", t("Quit")))?;
         match key()? {
-            b'q' => return Ok(Step::Quit),
-            b'r' => return Ok(Step::Restart),
+            b'q' => return Err(Control::Quit),
+            b'r' => return Err(Control::Restart),
             k @ b'1'..=b'9' => {
                 let i = (k - b'1') as usize;
                 if i < options.len() {
-                    return Ok(Step::Answer(i));
+                    return Ok(i);
                 }
             }
             _ => {}
@@ -814,7 +737,7 @@ fn ask_apply(
     options: &[&str],
     cfg: &mut Config,
     apply: impl Fn(&mut Config, usize),
-) -> io::Result<Step<()>> {
+) -> Answer<()> {
     let i = {
         let base = cfg.clone();
         ask_choice_preview(out, title, options, |i| {
@@ -823,13 +746,8 @@ fn ask_apply(
             preview_lines(&c)
         })?
     };
-    match i {
-        Step::Answer(i) => {
-            apply(cfg, i);
-            Ok(Step::Answer(()))
-        }
-        s => Ok(early(s)),
-    }
+    apply(cfg, i);
+    Ok(())
 }
 
 /// Yes/no question; when `sample` is present, a line with the glyph sample is shown before the
@@ -840,7 +758,7 @@ fn ask_yn(
     yes: &str,
     no: &str,
     sample: Option<&str>,
-) -> io::Result<Step<bool>> {
+) -> Answer<bool> {
     ask_yn_title(out, &t(title), yes, no, sample)
 }
 
@@ -852,7 +770,7 @@ fn ask_yn_title(
     yes: &str,
     no: &str,
     sample: Option<&str>,
-) -> io::Result<Step<bool>> {
+) -> Answer<bool> {
     loop {
         clear(out);
         line(out, title)?;
@@ -868,10 +786,10 @@ fn ask_yn_title(
         line(out, &format!("(r)  {}", t("Restart from the beginning.")))?;
         line(out, &format!("(q)  {}", t("Quit")))?;
         match key()? {
-            b'q' => return Ok(Step::Quit),
-            b'r' => return Ok(Step::Restart),
-            b'y' => return Ok(Step::Answer(true)),
-            b'n' => return Ok(Step::Answer(false)),
+            b'q' => return Err(Control::Quit),
+            b'r' => return Err(Control::Restart),
+            b'y' => return Ok(true),
+            b'n' => return Ok(false),
             _ => {}
         }
     }
@@ -925,7 +843,7 @@ fn preview(out: &mut io::Stdout, cfg: &Config) -> io::Result<()> {
     Ok(())
 }
 
-fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<Step<()>> {
+fn write_config(out: &mut io::Stdout, cfg: &Config) -> Answer<()> {
     let path = crate::config::default_config_path();
     let p = path.display();
     if path.exists() {
@@ -934,11 +852,8 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<Step<()>> 
             "{} {p}?",
             t(msgid("p11k config file already exists. Overwrite"))
         );
-        match ask_yn_title(out, &title, msgid("Yes."), msgid("No."), None)? {
-            Step::Answer(true) => {}
-            Step::Answer(false) => return Ok(Step::Quit),
-            Step::Restart => return Ok(Step::Restart),
-            Step::Quit => return Ok(Step::Quit),
+        if !ask_yn_title(out, &title, msgid("Yes."), msgid("No."), None)? {
+            return Err(Control::Quit);
         }
     }
     if let Some(dir) = path.parent() {
@@ -979,7 +894,7 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> anyhow::Result<Step<()>> 
             "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise they will stack.",
         ),
     )?;
-    Ok(Step::Answer(()))
+    Ok(())
 }
 
 #[cfg(test)]
