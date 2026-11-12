@@ -13,6 +13,7 @@ use crate::presets::{self, PresetKind};
 use std::io::{self, Write};
 
 /// Why a question stopped: the user asked to restart or quit, or a write failed.
+#[derive(Debug)]
 enum Control {
     Restart,
     Quit,
@@ -29,10 +30,16 @@ impl From<io::Error> for Control {
 type Answer<T> = Result<T, Control>;
 
 pub fn run() -> anyhow::Result<()> {
+    // The wizard reads single keystrokes; without a terminal there is nothing to read and the
+    // raw-mode switch cannot apply. Fail instead of reading EOF as an answer.
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
+        anyhow::bail!("{}", t("p11k configure needs an interactive terminal"));
+    }
     let _raw = crate::state::RawTerminal::enter(libc::STDIN_FILENO)?;
     let mut out = io::stdout();
+    let mut input = StdinInput;
     loop {
-        match flow(&mut out) {
+        match flow(&mut out, &mut input) {
             Ok(()) => return Ok(()),
             Err(Control::Restart) => continue,
             Err(Control::Quit) => return goodbye(&mut out),
@@ -41,48 +48,49 @@ pub fn run() -> anyhow::Result<()> {
     }
 }
 
-fn flow(out: &mut io::Stdout) -> Answer<()> {
+fn flow(out: &mut dyn Write, input: &mut dyn Input) -> Answer<()> {
     // 1. Font detection → icon mode.
-    let mode = ask_font(out)?;
+    let mode = ask_font(out, input)?;
     // 2. Style.
-    let kind = ask_style(out, &mode)?;
+    let kind = ask_style(out, input, &mode)?;
     // 3. Color variant (branched by style) → build a Config with the color arguments.
-    let mut cfg = ask_color(out, kind, &mode)?;
+    let mut cfg = ask_color(out, input, kind, &mode)?;
     // 4. Character set (asked when not ascii; can explicitly switch to ASCII).
-    if cfg.mode != IconMode::Ascii && ask_charset(out, &cfg, &mode)? {
+    if cfg.mode != IconMode::Ascii && ask_charset(out, input, &cfg, &mode)? {
         cfg.mode = IconMode::Ascii;
     }
     // 5. Location of pure's non-permanent content.
     if kind == PresetKind::Pure {
-        ask_use_rprompt(out, &mut cfg)?;
+        ask_use_rprompt(out, input, &mut cfg)?;
     }
     // 6. Time.
-    ask_time(out, &mut cfg, kind)?;
+    ask_time(out, input, &mut cfg, kind)?;
     // 7. Separators/ends (classic/rainbow only).
     if matches!(kind, PresetKind::Classic | PresetKind::Rainbow) {
-        ask_separators(out, &mut cfg)?;
-        ask_heads(out, &mut cfg)?;
-        ask_tails(out, &mut cfg)?;
+        ask_separators(out, input, &mut cfg)?;
+        ask_heads(out, input, &mut cfg)?;
+        ask_tails(out, input, &mut cfg)?;
     }
     // 8. Height.
-    ask_num_lines(out, &mut cfg)?;
+    ask_num_lines(out, input, &mut cfg)?;
     // 9. Connection line (two lines and classic/rainbow only).
     if header_on(&cfg) && matches!(kind, PresetKind::Classic | PresetKind::Rainbow) {
-        ask_gap_char(out, &mut cfg)?;
-        ask_frame(out, &mut cfg)?;
+        ask_gap_char(out, input, &mut cfg)?;
+        ask_frame(out, input, &mut cfg)?;
     }
     // 10. Spacing.
-    ask_empty_line(out, &mut cfg)?;
+    ask_empty_line(out, input, &mut cfg)?;
     // 11. Icons.
-    ask_extra_icons(out, &mut cfg)?;
+    ask_extra_icons(out, input, &mut cfg)?;
     // 12. Prefixes.
-    ask_prefixes(out, &mut cfg)?;
+    ask_prefixes(out, input, &mut cfg)?;
     // 13. transient.
-    ask_transient(out, &mut cfg)?;
+    ask_transient(out, input, &mut cfg)?;
     // 14. Preview + confirmation.
     preview(out, &cfg)?;
     if !ask_yn(
         out,
+        input,
         msgid("Use this theme?"),
         msgid("Yes, write the config."),
         msgid("No."),
@@ -91,22 +99,42 @@ fn flow(out: &mut io::Stdout) -> Answer<()> {
         return Err(Control::Quit);
     }
     // 15. Write to disk (asking about overwrite first if it exists).
-    write_config(out, &cfg)?;
+    write_config(out, input, &cfg)?;
     Ok(())
 }
 
 // ---- UI basics ----
 
-fn clear(out: &mut io::Stdout) {
+fn clear(out: &mut dyn Write) {
     let _ = out.write_all(b"\x1b[2J\x1b[H");
     let _ = out.flush();
 }
 
 /// Write one line (raw terminal has OPOST off, so `\n` does not return to column 0; `\r` is added explicitly).
-fn line(out: &mut io::Stdout, s: &str) -> io::Result<()> {
+fn line(out: &mut dyn Write, s: &str) -> io::Result<()> {
     out.write_all(s.as_bytes())?;
     out.write_all(b"\r\n")?;
     out.flush()
+}
+
+/// Keyboard input of the wizard. Production reads the stdin byte stream; tests script the
+/// answers, so the question flow can run without a terminal.
+trait Input {
+    fn byte(&mut self) -> io::Result<u8>;
+    fn readable_within(&mut self, ms: i32) -> io::Result<bool>;
+}
+
+/// The stdin keyboard.
+struct StdinInput;
+
+impl Input for StdinInput {
+    fn byte(&mut self) -> io::Result<u8> {
+        read_byte()
+    }
+
+    fn readable_within(&mut self, ms: i32) -> io::Result<bool> {
+        readable_within(ms)
+    }
 }
 
 /// Read one key and normalize it: `q`, Ctrl-C (ISIG is cleared in raw mode, so 0x03 arrives
@@ -115,22 +143,22 @@ fn line(out: &mut io::Stdout, s: &str) -> io::Result<()> {
 /// escape sequences are consumed and ignored: a direction key is not an answer and must not quit
 /// the wizard. Other bytes are returned as is; their meaning (`r`/`y`/`n`/digits) is up to the
 /// caller.
-fn key() -> io::Result<u8> {
+fn key(input: &mut dyn Input) -> io::Result<u8> {
     loop {
-        let b = read_byte()?;
+        let b = input.byte()?;
         if b != 0x1b {
             return Ok(normalize_key(b));
         }
         // Esc alone aborts. A sequence (arrow keys, Home, End, Delete, ...) follows within a few
         // milliseconds; wait for that follow-up byte instead of treating the Esc as final.
-        if !readable_within(20)? {
+        if !input.readable_within(20)? {
             return Ok(b'q');
         }
-        let next = read_byte()?;
+        let next = input.byte()?;
         if next == b'[' || next == b'O' {
             // Consume the parameter, intermediate and final bytes of the CSI or SS3 sequence.
             loop {
-                let c = read_byte()?;
+                let c = input.byte()?;
                 if is_escape_final(c) {
                     break;
                 }
@@ -195,7 +223,7 @@ fn readable_within(ms: i32) -> io::Result<bool> {
     }
 }
 
-fn goodbye(out: &mut io::Stdout) -> anyhow::Result<()> {
+fn goodbye(out: &mut dyn Write) -> anyhow::Result<()> {
     let _ = line(out, "");
     let _ = line(out, &t("p11k configuration wizard has been aborted."));
     let _ = line(out, &t("Nothing was written."));
@@ -259,9 +287,10 @@ fn preview_lines(cfg: &Config) -> Vec<String> {
 // ---- Question set ----
 
 /// Font detection: diamond (⮀⮂) + lock ()/quotes (❯❮) — three glyphs landing on the three mode tiers.
-fn ask_font(out: &mut io::Stdout) -> Answer<IconMode> {
+fn ask_font(out: &mut dyn Write, input: &mut dyn Input) -> Answer<IconMode> {
     let diamond = ask_yn(
         out,
+        input,
         msgid("Does this look like a diamond (rotated square)?"),
         msgid("Yes."),
         msgid("No."),
@@ -270,6 +299,7 @@ fn ask_font(out: &mut io::Stdout) -> Answer<IconMode> {
     if diamond {
         match ask_yn(
             out,
+            input,
             msgid("Does this look like a lock?"),
             msgid("Yes."),
             msgid("No."),
@@ -281,6 +311,7 @@ fn ask_font(out: &mut io::Stdout) -> Answer<IconMode> {
     } else {
         match ask_yn(
             out,
+            input,
             msgid("Does this look like >< but taller and fatter?"),
             msgid("Yes."),
             msgid("No."),
@@ -302,9 +333,9 @@ fn style_preview(kind: PresetKind, mode: &IconMode) -> Vec<String> {
 }
 
 /// Style: each of the four presets comes with a live prompt preview.
-fn ask_style(out: &mut io::Stdout, mode: &IconMode) -> Answer<PresetKind> {
+fn ask_style(out: &mut dyn Write, input: &mut dyn Input, mode: &IconMode) -> Answer<PresetKind> {
     let titles = PresetKind::ALL.map(|k| k.title());
-    let i = ask_choice_preview(out, msgid("Prompt Style"), &titles, |i| {
+    let i = ask_choice_preview(out, input, msgid("Prompt Style"), &titles, |i| {
         style_preview(PresetKind::ALL[i], mode)
     })?;
     Ok(PresetKind::ALL[i])
@@ -321,7 +352,12 @@ fn build_with_color(kind: PresetKind, i: usize) -> Config {
 }
 
 /// Color variant (branched by style): lean 256/8, classic four shades, rainbow four frame shades, pure two palettes.
-fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> Answer<Config> {
+fn ask_color(
+    out: &mut dyn Write,
+    input: &mut dyn Input,
+    kind: PresetKind,
+    mode: &IconMode,
+) -> Answer<Config> {
     // p10k's four shade names (`color_name`).
     const FOUR: [&str; 4] = [
         msgid("Lightest."),
@@ -341,7 +377,7 @@ fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> Answer<
             &[msgid("Original."), msgid("Snazzy.")],
         ),
     };
-    let i = ask_choice_preview(out, title, options, |i| {
+    let i = ask_choice_preview(out, input, title, options, |i| {
         let mut c = build_with_color(kind, i);
         c.mode = mode.clone();
         preview_lines(&c)
@@ -352,9 +388,15 @@ fn ask_color(out: &mut io::Stdout, kind: PresetKind, mode: &IconMode) -> Answer<
 }
 
 /// Character set: Unicode / ASCII (the preview reflects the icon/separator substitutions under ASCII).
-fn ask_charset(out: &mut io::Stdout, cfg: &Config, mode: &IconMode) -> Answer<bool> {
+fn ask_charset(
+    out: &mut dyn Write,
+    input: &mut dyn Input,
+    cfg: &Config,
+    mode: &IconMode,
+) -> Answer<bool> {
     let i = ask_choice_preview(
         out,
+        input,
         msgid("Character Set"),
         &[msgid("Unicode."), msgid("ASCII.")],
         |i| {
@@ -371,9 +413,10 @@ fn ask_charset(out: &mut io::Stdout, cfg: &Config, mode: &IconMode) -> Answer<bo
 }
 
 /// Location of pure's non-permanent content (exec/context/virtualenv).
-fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_use_rprompt(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Non-permanent content location"),
         &[msgid("Left."), msgid("Right.")],
         cfg,
@@ -395,9 +438,15 @@ fn ask_use_rprompt(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     )
 }
 
-fn ask_time(out: &mut io::Stdout, cfg: &mut Config, kind: PresetKind) -> Answer<()> {
+fn ask_time(
+    out: &mut dyn Write,
+    input: &mut dyn Input,
+    cfg: &mut Config,
+    kind: PresetKind,
+) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Show current time?"),
         &[
             msgid("No."),
@@ -448,9 +497,10 @@ fn time_bg(kind: PresetKind, cfg: &Config) -> Option<u8> {
 }
 
 /// Separators (segment/sub): Angled/Vertical/Slanted/Round.
-fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_separators(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Prompt Separators"),
         &[
             msgid("Angled."),
@@ -475,9 +525,10 @@ fn ask_separators(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
 }
 
 /// End symbols, heads (end/right-start): Flat/Blurred/Sharp/Slanted/Round.
-fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_heads(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Prompt Heads"),
         &[
             msgid("Flat."),
@@ -502,9 +553,10 @@ fn ask_heads(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
 }
 
 /// End symbols, tails (left-tail/right-tail).
-fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_tails(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Prompt Tails"),
         &[
             msgid("Flat."),
@@ -529,9 +581,10 @@ fn ask_tails(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
 }
 
 /// Height: one line (no header) / two lines.
-fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_num_lines(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Prompt Height"),
         &[msgid("One line."), msgid("Two lines.")],
         cfg,
@@ -546,9 +599,10 @@ fn ask_num_lines(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     )
 }
 
-fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_gap_char(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Prompt Connection"),
         &[msgid("Disconnected."), msgid("Dotted."), msgid("Solid.")],
         cfg,
@@ -570,10 +624,11 @@ fn ask_gap_char(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     )
 }
 
-fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_frame(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     use crate::config::FramePiece;
     ask_apply(
         out,
+        input,
         msgid("Prompt Frame"),
         &[
             msgid("No frame."),
@@ -607,9 +662,10 @@ fn ask_frame(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     )
 }
 
-fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_empty_line(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Prompt Spacing"),
         &[msgid("Compact."), msgid("Sparse.")],
         cfg,
@@ -617,9 +673,10 @@ fn ask_empty_line(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     )
 }
 
-fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_extra_icons(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Icons"),
         &[msgid("Few icons."), msgid("Many icons.")],
         cfg,
@@ -650,9 +707,10 @@ fn ask_extra_icons(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
 }
 
 /// Prefix connectives: Concise (bare value) / Fluent (with on/took/at).
-fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_prefixes(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     ask_apply(
         out,
+        input,
         msgid("Prompt Flow"),
         &[msgid("Concise."), msgid("Fluent.")],
         cfg,
@@ -673,9 +731,10 @@ fn ask_prefixes(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
     )
 }
 
-fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
+fn ask_transient(out: &mut dyn Write, input: &mut dyn Input, cfg: &mut Config) -> Answer<()> {
     let b = ask_yn(
         out,
+        input,
         msgid("Enable Transient Prompt?"),
         msgid("Yes."),
         msgid("No."),
@@ -694,7 +753,8 @@ fn ask_transient(out: &mut io::Stdout, cfg: &mut Config) -> Answer<()> {
 /// Pick 1 of n, rendering each option's live prompt preview below it (aligns with p10k
 /// wizard's add_prompt: every entry carries a full prompt under the current config).
 fn ask_choice_preview(
-    out: &mut io::Stdout,
+    out: &mut dyn Write,
+    input: &mut dyn Input,
     title: &str,
     options: &[&str],
     preview: impl Fn(usize) -> Vec<String>,
@@ -714,7 +774,7 @@ fn ask_choice_preview(
         }
         line(out, &format!("(r)  {}", t("Restart from the beginning.")))?;
         line(out, &format!("(q)  {}", t("Quit")))?;
-        match key()? {
+        match key(input)? {
             b'q' => return Err(Control::Quit),
             b'r' => return Err(Control::Restart),
             k @ b'1'..=b'9' => {
@@ -732,7 +792,8 @@ fn ask_choice_preview(
 /// preview; on selection apply the same edit to the real config (preview and result share one
 /// source and cannot drift).
 fn ask_apply(
-    out: &mut io::Stdout,
+    out: &mut dyn Write,
+    input: &mut dyn Input,
     title: &str,
     options: &[&str],
     cfg: &mut Config,
@@ -740,7 +801,7 @@ fn ask_apply(
 ) -> Answer<()> {
     let i = {
         let base = cfg.clone();
-        ask_choice_preview(out, title, options, |i| {
+        ask_choice_preview(out, input, title, options, |i| {
             let mut c = base.clone();
             apply(&mut c, i);
             preview_lines(&c)
@@ -753,19 +814,21 @@ fn ask_apply(
 /// Yes/no question; when `sample` is present, a line with the glyph sample is shown before the
 /// options. `title`, `yes` and `no` are msgids.
 fn ask_yn(
-    out: &mut io::Stdout,
+    out: &mut dyn Write,
+    input: &mut dyn Input,
     title: &str,
     yes: &str,
     no: &str,
     sample: Option<&str>,
 ) -> Answer<bool> {
-    ask_yn_title(out, &t(title), yes, no, sample)
+    ask_yn_title(out, input, &t(title), yes, no, sample)
 }
 
 /// Like [`ask_yn`] with an already translated title. Dynamic titles (an overwrite question with a
 /// path) go through this variant so gettext sees the text once.
 fn ask_yn_title(
-    out: &mut io::Stdout,
+    out: &mut dyn Write,
+    input: &mut dyn Input,
     title: &str,
     yes: &str,
     no: &str,
@@ -785,7 +848,7 @@ fn ask_yn_title(
         line(out, &format!("(n)  {}", t(no)))?;
         line(out, &format!("(r)  {}", t("Restart from the beginning.")))?;
         line(out, &format!("(q)  {}", t("Quit")))?;
-        match key()? {
+        match key(input)? {
             b'q' => return Err(Control::Quit),
             b'r' => return Err(Control::Restart),
             b'y' => return Ok(true),
@@ -832,7 +895,7 @@ fn set_prefix(cfg: &mut Config, name: &str, prefix: &str) {
 
 // ---- Preview / writing to disk ----
 
-fn preview(out: &mut io::Stdout, cfg: &Config) -> io::Result<()> {
+fn preview(out: &mut dyn Write, cfg: &Config) -> io::Result<()> {
     clear(out);
     line(out, &t("Preview (current directory + exit code):"))?;
     line(out, "")?;
@@ -843,7 +906,7 @@ fn preview(out: &mut io::Stdout, cfg: &Config) -> io::Result<()> {
     Ok(())
 }
 
-fn write_config(out: &mut io::Stdout, cfg: &Config) -> Answer<()> {
+fn write_config(out: &mut dyn Write, input: &mut dyn Input, cfg: &Config) -> Answer<()> {
     let path = crate::config::default_config_path();
     let p = path.display();
     if path.exists() {
@@ -852,7 +915,7 @@ fn write_config(out: &mut io::Stdout, cfg: &Config) -> Answer<()> {
             "{} {p}?",
             t(msgid("p11k config file already exists. Overwrite"))
         );
-        if !ask_yn_title(out, &title, msgid("Yes."), msgid("No."), None)? {
+        if !ask_yn_title(out, input, &title, msgid("Yes."), msgid("No."), None)? {
             return Err(Control::Quit);
         }
     }
@@ -923,6 +986,399 @@ mod tests {
         assert_eq!(normalize_key(b'r'), b'r');
         assert_eq!(normalize_key(b'y'), b'y');
         assert_eq!(normalize_key(b'1'), b'1');
+    }
+
+    /// Scripted keyboard for the question flow: the bytes are answers, not terminal input.
+    struct FakeInput {
+        bytes: std::collections::VecDeque<u8>,
+    }
+
+    impl FakeInput {
+        fn new(bytes: &[u8]) -> FakeInput {
+            FakeInput {
+                bytes: bytes.iter().copied().collect(),
+            }
+        }
+    }
+
+    impl Input for FakeInput {
+        fn byte(&mut self) -> io::Result<u8> {
+            // EOF maps to `q`, matching the terminal implementation.
+            Ok(self.bytes.pop_front().unwrap_or(b'q'))
+        }
+
+        fn readable_within(&mut self, _ms: i32) -> io::Result<bool> {
+            Ok(!self.bytes.is_empty())
+        }
+    }
+
+    fn ask_yn_scripted(bytes: &[u8]) -> Answer<bool> {
+        ask_yn(
+            &mut Vec::new(),
+            &mut FakeInput::new(bytes),
+            "Question?",
+            "Yes.",
+            "No.",
+            None,
+        )
+    }
+
+    #[test]
+    fn yes_no_reads_the_scripted_answer() {
+        assert!(matches!(ask_yn_scripted(b"y"), Ok(true)));
+        assert!(matches!(ask_yn_scripted(b"n"), Ok(false)));
+        // An unknown key redraws the question and waits for the next one.
+        assert!(matches!(ask_yn_scripted(b"xyz"), Ok(true)));
+        // Arrow keys are consumed as a sequence, not as answers.
+        assert!(matches!(ask_yn_scripted(b"\x1b[Ay"), Ok(true)));
+        assert!(matches!(ask_yn_scripted(b"\x1b[3~n"), Ok(false)));
+    }
+
+    /// Run one question with scripted keys and a memory output.
+    fn run_question<T>(
+        bytes: &[u8],
+        f: impl FnOnce(&mut Vec<u8>, &mut FakeInput) -> Answer<T>,
+    ) -> (Answer<T>, String) {
+        let mut out = Vec::new();
+        let mut input = FakeInput::new(bytes);
+        let result = f(&mut out, &mut input);
+        (result, String::from_utf8_lossy(&out).into_owned())
+    }
+
+    #[test]
+    fn ask_yn_title_uses_the_dynamic_title() {
+        let (answer, screen) = run_question(b"y", |out, input| {
+            ask_yn_title(out, input, "Overwrite ./p11k.kdl?", "Yes.", "No.", None)
+        });
+        assert!(matches!(answer, Ok(true)));
+        assert!(
+            screen.contains("Overwrite ./p11k.kdl?"),
+            "screen: {screen:?}"
+        );
+    }
+
+    #[test]
+    fn font_detection_maps_the_answer_pairs() {
+        // Diamond + lock → Nerd Font Complete; diamond + no lock → Compatible.
+        assert!(matches!(
+            run_question(b"yy", |o, i| ask_font(o, i)).0,
+            Ok(IconMode::NerdfontComplete)
+        ));
+        assert!(matches!(
+            run_question(b"yn", |o, i| ask_font(o, i)).0,
+            Ok(IconMode::Compatible)
+        ));
+        // No diamond: the `><` question; yes → Compatible, no → Ascii.
+        assert!(matches!(
+            run_question(b"ny", |o, i| ask_font(o, i)).0,
+            Ok(IconMode::Compatible)
+        ));
+        assert!(matches!(
+            run_question(b"nn", |o, i| ask_font(o, i)).0,
+            Ok(IconMode::Ascii)
+        ));
+    }
+
+    #[test]
+    fn style_options_map_to_the_presets() {
+        for (key, kind) in [
+            (b"1".as_slice(), PresetKind::Lean),
+            (b"2", PresetKind::Classic),
+            (b"3", PresetKind::Rainbow),
+            (b"4", PresetKind::Pure),
+        ] {
+            let mode = IconMode::NerdfontComplete;
+            let (answer, _) = run_question(key, |o, i| ask_style(o, i, &mode));
+            assert!(
+                matches!(answer, Ok(k) if k == kind),
+                "key {key:?} → {answer:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn color_options_build_the_matching_preset() {
+        let mode = IconMode::NerdfontComplete;
+        let cases = [
+            (PresetKind::Lean, b"2".as_slice(), presets::lean(true)),
+            (PresetKind::Classic, b"3", presets::classic(3)),
+            (PresetKind::Rainbow, b"1", presets::rainbow(1)),
+            (PresetKind::Pure, b"2", presets::pure(true)),
+        ];
+        for (kind, key, expected) in cases {
+            let (answer, _) = run_question(key, |o, i| ask_color(o, i, kind, &mode));
+            let got = answer.expect("a color answer");
+            // Compare the serialized config: the preview and the result share one source.
+            assert_eq!(got.to_kdl(), expected.to_kdl(), "{kind:?} key {key:?}");
+            assert_eq!(got.mode, mode);
+        }
+    }
+
+    #[test]
+    fn charset_reports_ascii_on_the_second_option() {
+        let mut cfg = presets::lean(false);
+        cfg.mode = IconMode::NerdfontComplete;
+        let mode = IconMode::NerdfontComplete;
+        let (answer, _) = run_question(b"1", |o, i| ask_charset(o, i, &cfg, &mode));
+        assert!(
+            matches!(answer, Ok(false)),
+            "Unicode is not ASCII: {answer:?}"
+        );
+        let (answer, _) = run_question(b"2", |o, i| ask_charset(o, i, &cfg, &mode));
+        assert!(matches!(answer, Ok(true)), "ASCII: {answer:?}");
+    }
+
+    /// The exec segment moves to the chosen column; a missing segment is added.
+    #[test]
+    fn non_permanent_content_moves_between_columns() {
+        let mut cfg = presets::pure(false);
+        remove_segment(&mut cfg, "command_execution_time");
+        let (answer, _) = run_question(b"1", |o, i| ask_use_rprompt(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        let left_has = cfg
+            .layout
+            .left
+            .iter()
+            .any(|row| row.contains(&Element::Seg("command_execution_time".into())));
+        assert!(
+            left_has,
+            "left column should hold exec: {:?}",
+            cfg.layout.left
+        );
+
+        let (answer, _) = run_question(b"2", |o, i| ask_use_rprompt(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        let right_has = cfg
+            .layout
+            .right
+            .iter()
+            .any(|row| row.contains(&Element::Seg("command_execution_time".into())));
+        assert!(
+            right_has,
+            "right column should hold exec: {:?}",
+            cfg.layout.right
+        );
+        let left_has = cfg
+            .layout
+            .left
+            .iter()
+            .any(|row| row.contains(&Element::Seg("command_execution_time".into())));
+        assert!(
+            !left_has,
+            "exec must leave the left column: {:?}",
+            cfg.layout.left
+        );
+    }
+
+    /// Time: the first option removes the segment; the other two set the format and the style
+    /// background for the preset.
+    #[test]
+    fn time_options_set_the_format_and_the_background() {
+        // Classic derives the background from the existing dir segment.
+        let mut cfg = presets::classic(2);
+        let bg = match cfg.segment("dir").style.bg {
+            Color::Xterm(n) => Some(n),
+            _ => None,
+        };
+        let (answer, _) = run_question(b"2", |o, i| ask_time(o, i, &mut cfg, PresetKind::Classic));
+        assert!(matches!(answer, Ok(())));
+        let time = cfg.segment("time");
+        assert_eq!(
+            time.props.get("time-format"),
+            Some(&Prop::Str("12h".into()))
+        );
+        assert_eq!(time.style.fg, Color::Xterm(66));
+        assert_eq!(
+            time.style.bg,
+            bg.map(Color::Xterm).unwrap_or(Color::Default)
+        );
+
+        let (answer, _) = run_question(b"3", |o, i| ask_time(o, i, &mut cfg, PresetKind::Classic));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(
+            cfg.segment("time").props.get("time-format"),
+            Some(&Prop::Str("24h".into()))
+        );
+
+        let (answer, _) = run_question(b"1", |o, i| ask_time(o, i, &mut cfg, PresetKind::Classic));
+        assert!(matches!(answer, Ok(())));
+        let has = cfg
+            .layout
+            .left
+            .iter()
+            .chain(cfg.layout.right.iter())
+            .any(|row| row.contains(&Element::Seg("time".into())));
+        assert!(!has, "No should remove the time segment");
+    }
+
+    /// Separators, heads and tails: each option writes its glyph pair.
+    #[test]
+    fn separator_questions_write_their_glyphs() {
+        let mut cfg = presets::classic(2);
+        let (answer, _) = run_question(b"2", |o, i| ask_separators(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.separators.segment, "");
+        assert_eq!(cfg.separators.sub, "\u{2502}");
+        assert_eq!(cfg.separators.right_segment, "");
+        assert_eq!(cfg.separators.right_sub, "\u{2502}");
+        let (answer, _) = run_question(b"4", |o, i| ask_separators(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.separators.segment, "\u{e0b4}");
+
+        let (answer, _) = run_question(b"2", |o, i| ask_heads(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.separators.end, "\u{2593}\u{2592}\u{2591}");
+        assert_eq!(cfg.separators.right_start, "\u{2591}\u{2592}\u{2593}");
+        let (answer, _) = run_question(b"3", |o, i| ask_heads(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.separators.end, "\u{e0b0}");
+
+        let (answer, _) = run_question(b"2", |o, i| ask_tails(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.separators.left_tail, "\u{2591}\u{2592}\u{2593}");
+        assert_eq!(cfg.separators.right_tail, "\u{2593}\u{2592}\u{2591}");
+    }
+
+    #[test]
+    fn height_and_spacing_options() {
+        let mut cfg = presets::classic(2);
+        let (answer, _) = run_question(b"1", |o, i| ask_num_lines(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert!(cfg.layout.left.is_empty() && cfg.layout.right.is_empty());
+        assert_eq!(cfg.frame, Frame::default());
+        assert_eq!(cfg.separators, Separators::default());
+
+        let mut cfg = presets::classic(2);
+        let (answer, _) = run_question(b"2", |o, i| ask_empty_line(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.layout.prompt_add_newline, 1);
+        let (answer, _) = run_question(b"1", |o, i| ask_empty_line(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.layout.prompt_add_newline, 0);
+    }
+
+    #[test]
+    fn connection_and_frame_options() {
+        let mut cfg = presets::classic(2);
+        let (answer, _) = run_question(b"2", |o, i| ask_gap_char(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.separators.gap, "\u{b7}");
+        assert_eq!(cfg.separators.gap_foreground, Some(Color::Xterm(240)));
+        let (answer, _) = run_question(b"1", |o, i| ask_gap_char(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.separators.gap, " ");
+        assert_eq!(cfg.separators.gap_foreground, None);
+
+        let mut cfg = presets::classic(2);
+        let (answer, _) = run_question(b"2", |o, i| ask_frame(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        // Left frame: the suffix is cleared, the prefix stays.
+        assert_ne!(cfg.frame.first_prefix, crate::config::FramePiece::default());
+        assert_eq!(cfg.frame.first_suffix, crate::config::FramePiece::default());
+        let (answer, _) = run_question(b"3", |o, i| ask_frame(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        // Right frame: the prefix is cleared.
+        assert_eq!(cfg.frame.first_prefix, crate::config::FramePiece::default());
+    }
+
+    /// Few icons removes the os badge, the remote icon table and empties the icon overrides.
+    #[test]
+    fn few_icons_clears_the_optional_icons() {
+        let mut cfg = presets::lean(false);
+        cfg.vcs_remote_icons
+            .push(("github".into(), "\u{e709}".into()));
+        let (answer, _) = run_question(b"1", |o, i| ask_extra_icons(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert!(!cfg.segments.contains_key("os_icon"));
+        assert!(cfg.vcs_remote_icons.is_empty());
+        for key in ["folder", "git", "branch", "time", "execution-time"] {
+            let o = cfg.icon_overrides.get(key).expect("an override");
+            assert_eq!(o.all.as_deref(), Some(""), "override {key}");
+        }
+
+        let mut cfg = presets::lean(false);
+        let (answer, _) = run_question(b"2", |o, i| ask_extra_icons(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert!(cfg.icon_overrides.is_empty(), "Many keeps the icons");
+    }
+
+    #[test]
+    fn prefixes_and_transient_options() {
+        let mut cfg = presets::classic(2);
+        // The time segment exists only after the time question; ask it so its prefix is covered.
+        let (answer, _) = run_question(b"2", |o, i| ask_time(o, i, &mut cfg, PresetKind::Classic));
+        assert!(matches!(answer, Ok(())));
+        let (answer, _) = run_question(b"2", |o, i| ask_prefixes(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.segment("vcs").prefix.as_deref(), Some("on "));
+        assert_eq!(
+            cfg.segment("command_execution_time").prefix.as_deref(),
+            Some("took ")
+        );
+        assert_eq!(cfg.segment("time").prefix.as_deref(), Some("at "));
+        let (answer, _) = run_question(b"1", |o, i| ask_prefixes(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.segment("vcs").prefix, None);
+
+        let mut cfg = presets::lean(false);
+        let (answer, _) = run_question(b"y", |o, i| ask_transient(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(
+            cfg.layout.transient_prompt,
+            crate::config::TransientPrompt::Always
+        );
+        let (answer, _) = run_question(b"n", |o, i| ask_transient(o, i, &mut cfg));
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(
+            cfg.layout.transient_prompt,
+            crate::config::TransientPrompt::Off
+        );
+    }
+
+    /// apply applies the same edit that the preview showed, on a clone.
+    #[test]
+    fn ask_apply_edits_the_real_config() {
+        let mut cfg = presets::lean(false);
+        let (answer, screen) = run_question(b"2", |o, i| {
+            ask_apply(o, i, "Pick.", &["A.", "B."], &mut cfg, |c, n| {
+                c.layout.prompt_add_newline = n;
+            })
+        });
+        assert!(matches!(answer, Ok(())));
+        assert_eq!(cfg.layout.prompt_add_newline, 1);
+        assert!(screen.contains("Pick."), "screen: {screen:?}");
+        // The questions offer restart and quit on every screen.
+        assert!(
+            screen.contains("(r)") && screen.contains("(q)"),
+            "screen: {screen:?}"
+        );
+    }
+
+    #[test]
+    fn control_keys_leave_the_question() {
+        assert!(matches!(ask_yn_scripted(b"q"), Err(Control::Quit)));
+        assert!(matches!(ask_yn_scripted(b"r"), Err(Control::Restart)));
+        // Ctrl-C and a lone Esc abort like `q`.
+        assert!(matches!(ask_yn_scripted(b"\x03"), Err(Control::Quit)));
+        assert!(matches!(ask_yn_scripted(b"\x1b"), Err(Control::Quit)));
+    }
+
+    fn choice_scripted(bytes: &[u8], options: &[&str]) -> Answer<usize> {
+        ask_choice_preview(
+            &mut Vec::new(),
+            &mut FakeInput::new(bytes),
+            "Pick.",
+            options,
+            |_| Vec::new(),
+        )
+    }
+
+    #[test]
+    fn choice_reads_the_scripted_number() {
+        assert!(matches!(choice_scripted(b"1", &["a", "b"]), Ok(0)));
+        assert!(matches!(choice_scripted(b"2", &["a", "b"]), Ok(1)));
+        // A number past the last option is ignored; the next answer counts.
+        assert!(matches!(choice_scripted(b"9\n2", &["a", "b"]), Ok(1)));
     }
 
     /// CSI/SS3 final bytes end an escape sequence; digits and punctuation inside it do not.

@@ -9,7 +9,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k\n"
 "Report-Msgid-Bugs-To: https://github.com/Qaaxaap/powerlevel11k/issues\n"
-"POT-Creation-Date: 2026-11-12 20:34+0800\n"
+"POT-Creation-Date: 2026-11-12 21:42+0800\n"
 "PO-Revision-Date: 2025-01-01 00:00+0000\n"
 "Last-Translator: p11k\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -86,28 +86,28 @@ msgstr "未知颜色名："
 msgid "use a name, 0-255, #rrggbb or default"
 msgstr "请使用颜色名、0-255、#rrggbb 或 default"
 
-#: crates/p11k-engine/src/config.rs:98
+#: crates/p11k-engine/src/config.rs:97
 msgid "colour index is outside 0-255: "
 msgstr "颜色索引超出 0-255："
 
-#: crates/p11k-engine/src/config.rs:102
+#: crates/p11k-engine/src/config.rs:100
 msgid "expected a colour (0-255, #rrggbb, a colour name or default)"
 msgstr "应为颜色（0-255、#rrggbb、颜色名或 default）"
 
 # ---- 配置解析 ----
-#: crates/p11k-engine/src/config.rs:530
+#: crates/p11k-engine/src/config.rs:528
 msgid "KDL parse error: "
 msgstr "KDL 解析失败: "
 
-#: crates/p11k-engine/src/config.rs:1318
+#: crates/p11k-engine/src/config.rs:1316
 msgid "`state` needs a name (a positional string)"
 msgstr "`state` 需要一个名字（位置字符串）"
 
-#: crates/p11k-engine/src/config.rs:1336
+#: crates/p11k-engine/src/config.rs:1334
 msgid " needs text (a positional string)"
 msgstr " 需要文本（位置字符串）"
 
-#: crates/p11k-engine/src/config.rs:1394
+#: crates/p11k-engine/src/config.rs:1392
 msgid "unknown config key: "
 msgstr "无法识别的配置键: "
 
@@ -145,281 +145,285 @@ msgstr "Rainbow."
 msgid "Pure."
 msgstr "Pure."
 
-#: crates/p11k-engine/src/wizard.rs:136
+#: crates/p11k-engine/src/wizard.rs:36
+msgid "p11k configure needs an interactive terminal"
+msgstr ""
+
+#: crates/p11k-engine/src/wizard.rs:94
 msgid "Use this theme?"
 msgstr "使用此主题？"
 
-#: crates/p11k-engine/src/wizard.rs:137
+#: crates/p11k-engine/src/wizard.rs:95
 msgid "Yes, write the config."
 msgstr "是，写入配置。"
 
-#: crates/p11k-engine/src/wizard.rs:138 crates/p11k-engine/src/wizard.rs:323
-#: crates/p11k-engine/src/wizard.rs:334 crates/p11k-engine/src/wizard.rs:346
-#: crates/p11k-engine/src/wizard.rs:475 crates/p11k-engine/src/wizard.rs:753
-#: crates/p11k-engine/src/wizard.rs:937
+#: crates/p11k-engine/src/wizard.rs:96 crates/p11k-engine/src/wizard.rs:296
+#: crates/p11k-engine/src/wizard.rs:305 crates/p11k-engine/src/wizard.rs:317
+#: crates/p11k-engine/src/wizard.rs:452 crates/p11k-engine/src/wizard.rs:740
+#: crates/p11k-engine/src/wizard.rs:918
 msgid "No."
 msgstr "否。"
 
-#: crates/p11k-engine/src/wizard.rs:256
+#: crates/p11k-engine/src/wizard.rs:228
 msgid "p11k configuration wizard has been aborted."
 msgstr "p11k 配置向导已中止。"
 
-#: crates/p11k-engine/src/wizard.rs:257
+#: crates/p11k-engine/src/wizard.rs:229
 msgid "Nothing was written."
 msgstr "未写入任何内容。"
 
 # ---- wizard：字体确认 ----
-#: crates/p11k-engine/src/wizard.rs:321
+#: crates/p11k-engine/src/wizard.rs:294
 msgid "Does this look like a diamond (rotated square)?"
 msgstr "看起来像菱形（旋转的正方形）吗？"
 
-#: crates/p11k-engine/src/wizard.rs:322 crates/p11k-engine/src/wizard.rs:333
-#: crates/p11k-engine/src/wizard.rs:345 crates/p11k-engine/src/wizard.rs:752
-#: crates/p11k-engine/src/wizard.rs:937
+#: crates/p11k-engine/src/wizard.rs:295 crates/p11k-engine/src/wizard.rs:304
+#: crates/p11k-engine/src/wizard.rs:316 crates/p11k-engine/src/wizard.rs:739
+#: crates/p11k-engine/src/wizard.rs:918
 msgid "Yes."
 msgstr "是。"
 
-#: crates/p11k-engine/src/wizard.rs:332
+#: crates/p11k-engine/src/wizard.rs:303
 msgid "Does this look like a lock?"
 msgstr "看起来像锁吗？"
 
-#: crates/p11k-engine/src/wizard.rs:344
+#: crates/p11k-engine/src/wizard.rs:315
 msgid "Does this look like >< but taller and fatter?"
 msgstr "看起来像 >< 但更高更粗吗？"
 
 # ---- wizard：问题标题 ----
-#: crates/p11k-engine/src/wizard.rs:368
+#: crates/p11k-engine/src/wizard.rs:338
 msgid "Prompt Style"
 msgstr "提示符风格"
 
-#: crates/p11k-engine/src/wizard.rs:391
+#: crates/p11k-engine/src/wizard.rs:363
 msgid "Lightest."
 msgstr "最浅。"
 
-#: crates/p11k-engine/src/wizard.rs:392
+#: crates/p11k-engine/src/wizard.rs:364
 msgid "Light."
 msgstr "浅。"
 
-#: crates/p11k-engine/src/wizard.rs:393
+#: crates/p11k-engine/src/wizard.rs:365
 msgid "Dark."
 msgstr "深。"
 
-#: crates/p11k-engine/src/wizard.rs:394
+#: crates/p11k-engine/src/wizard.rs:366
 msgid "Darkest."
 msgstr "最深。"
 
-#: crates/p11k-engine/src/wizard.rs:398 crates/p11k-engine/src/wizard.rs:404
+#: crates/p11k-engine/src/wizard.rs:370 crates/p11k-engine/src/wizard.rs:376
 msgid "Prompt Colors"
 msgstr "提示符颜色"
 
-#: crates/p11k-engine/src/wizard.rs:399
+#: crates/p11k-engine/src/wizard.rs:371
 msgid "256 colors."
 msgstr "256 色。"
 
-#: crates/p11k-engine/src/wizard.rs:399
+#: crates/p11k-engine/src/wizard.rs:371
 msgid "8 colors."
 msgstr "8 色。"
 
-#: crates/p11k-engine/src/wizard.rs:401
+#: crates/p11k-engine/src/wizard.rs:373
 msgid "Prompt Color"
 msgstr "提示符颜色"
 
-#: crates/p11k-engine/src/wizard.rs:402
+#: crates/p11k-engine/src/wizard.rs:374
 msgid "Frame Color"
 msgstr "边框颜色"
 
-#: crates/p11k-engine/src/wizard.rs:405
+#: crates/p11k-engine/src/wizard.rs:377
 msgid "Original."
 msgstr "Original."
 
-#: crates/p11k-engine/src/wizard.rs:405
+#: crates/p11k-engine/src/wizard.rs:377
 msgid "Snazzy."
 msgstr "Snazzy."
 
-#: crates/p11k-engine/src/wizard.rs:427
+#: crates/p11k-engine/src/wizard.rs:400
 msgid "Character Set"
 msgstr "字符集"
 
-#: crates/p11k-engine/src/wizard.rs:428
+#: crates/p11k-engine/src/wizard.rs:401
 msgid "ASCII."
 msgstr "ASCII."
 
-#: crates/p11k-engine/src/wizard.rs:428
+#: crates/p11k-engine/src/wizard.rs:401
 msgid "Unicode."
 msgstr "Unicode."
 
-#: crates/p11k-engine/src/wizard.rs:449
+#: crates/p11k-engine/src/wizard.rs:420
 msgid "Non-permanent content location"
 msgstr "非永久内容位置"
 
-#: crates/p11k-engine/src/wizard.rs:450 crates/p11k-engine/src/wizard.rs:652
+#: crates/p11k-engine/src/wizard.rs:421 crates/p11k-engine/src/wizard.rs:635
 msgid "Left."
 msgstr "左侧。"
 
-#: crates/p11k-engine/src/wizard.rs:450 crates/p11k-engine/src/wizard.rs:653
+#: crates/p11k-engine/src/wizard.rs:421 crates/p11k-engine/src/wizard.rs:636
 msgid "Right."
 msgstr "右侧。"
 
-#: crates/p11k-engine/src/wizard.rs:473
+#: crates/p11k-engine/src/wizard.rs:450
 msgid "Show current time?"
 msgstr "显示当前时间？"
 
-#: crates/p11k-engine/src/wizard.rs:476
+#: crates/p11k-engine/src/wizard.rs:453
 msgid "12-hour format."
 msgstr "12 小时制。"
 
-#: crates/p11k-engine/src/wizard.rs:477
+#: crates/p11k-engine/src/wizard.rs:454
 msgid "24-hour format."
 msgstr "24 小时制。"
 
-#: crates/p11k-engine/src/wizard.rs:526
+#: crates/p11k-engine/src/wizard.rs:504
 msgid "Prompt Separators"
 msgstr "提示符分隔符"
 
-#: crates/p11k-engine/src/wizard.rs:528
+#: crates/p11k-engine/src/wizard.rs:506
 msgid "Angled."
 msgstr "尖角。"
 
-#: crates/p11k-engine/src/wizard.rs:529
+#: crates/p11k-engine/src/wizard.rs:507
 msgid "Vertical."
 msgstr "竖直。"
 
-#: crates/p11k-engine/src/wizard.rs:530 crates/p11k-engine/src/wizard.rs:558
-#: crates/p11k-engine/src/wizard.rs:585
+#: crates/p11k-engine/src/wizard.rs:508 crates/p11k-engine/src/wizard.rs:537
+#: crates/p11k-engine/src/wizard.rs:565
 msgid "Slanted."
 msgstr "斜。"
 
-#: crates/p11k-engine/src/wizard.rs:531 crates/p11k-engine/src/wizard.rs:559
-#: crates/p11k-engine/src/wizard.rs:586
+#: crates/p11k-engine/src/wizard.rs:509 crates/p11k-engine/src/wizard.rs:538
+#: crates/p11k-engine/src/wizard.rs:566
 msgid "Round."
 msgstr "圆角。"
 
-#: crates/p11k-engine/src/wizard.rs:553
+#: crates/p11k-engine/src/wizard.rs:532
 msgid "Prompt Heads"
 msgstr "提示符端符（heads）"
 
-#: crates/p11k-engine/src/wizard.rs:555 crates/p11k-engine/src/wizard.rs:582
+#: crates/p11k-engine/src/wizard.rs:534 crates/p11k-engine/src/wizard.rs:562
 msgid "Flat."
 msgstr "平。"
 
-#: crates/p11k-engine/src/wizard.rs:556 crates/p11k-engine/src/wizard.rs:583
+#: crates/p11k-engine/src/wizard.rs:535 crates/p11k-engine/src/wizard.rs:563
 msgid "Blurred."
 msgstr "渐变。"
 
-#: crates/p11k-engine/src/wizard.rs:557 crates/p11k-engine/src/wizard.rs:584
+#: crates/p11k-engine/src/wizard.rs:536 crates/p11k-engine/src/wizard.rs:564
 msgid "Sharp."
 msgstr "尖。"
 
-#: crates/p11k-engine/src/wizard.rs:580
+#: crates/p11k-engine/src/wizard.rs:560
 msgid "Prompt Tails"
 msgstr "提示符端符（tails）"
 
-#: crates/p11k-engine/src/wizard.rs:607
+#: crates/p11k-engine/src/wizard.rs:588
 msgid "Prompt Height"
 msgstr "提示符高度"
 
-#: crates/p11k-engine/src/wizard.rs:608
+#: crates/p11k-engine/src/wizard.rs:589
 msgid "One line."
 msgstr "一行。"
 
-#: crates/p11k-engine/src/wizard.rs:608
+#: crates/p11k-engine/src/wizard.rs:589
 msgid "Two lines."
 msgstr "两行。"
 
-#: crates/p11k-engine/src/wizard.rs:624
+#: crates/p11k-engine/src/wizard.rs:606
 msgid "Prompt Connection"
 msgstr "提示符连接线"
 
-#: crates/p11k-engine/src/wizard.rs:625
+#: crates/p11k-engine/src/wizard.rs:607
 msgid "Disconnected."
 msgstr "断开。"
 
-#: crates/p11k-engine/src/wizard.rs:625
+#: crates/p11k-engine/src/wizard.rs:607
 msgid "Dotted."
 msgstr "点线。"
 
-#: crates/p11k-engine/src/wizard.rs:625
+#: crates/p11k-engine/src/wizard.rs:607
 msgid "Solid."
 msgstr "实线。"
 
-#: crates/p11k-engine/src/wizard.rs:649
+#: crates/p11k-engine/src/wizard.rs:632
 msgid "Prompt Frame"
 msgstr "提示符边框"
 
-#: crates/p11k-engine/src/wizard.rs:651
+#: crates/p11k-engine/src/wizard.rs:634
 msgid "No frame."
 msgstr "无边框。"
 
-#: crates/p11k-engine/src/wizard.rs:654
+#: crates/p11k-engine/src/wizard.rs:637
 msgid "Full."
 msgstr "完整。"
 
-#: crates/p11k-engine/src/wizard.rs:685
+#: crates/p11k-engine/src/wizard.rs:669
 msgid "Prompt Spacing"
 msgstr "提示符间距"
 
-#: crates/p11k-engine/src/wizard.rs:686
+#: crates/p11k-engine/src/wizard.rs:670
 msgid "Compact."
 msgstr "紧凑。"
 
-#: crates/p11k-engine/src/wizard.rs:686
+#: crates/p11k-engine/src/wizard.rs:670
 msgid "Sparse."
 msgstr "稀疏。"
 
-#: crates/p11k-engine/src/wizard.rs:695
+#: crates/p11k-engine/src/wizard.rs:680
 msgid "Icons"
 msgstr "图标"
 
-#: crates/p11k-engine/src/wizard.rs:696
+#: crates/p11k-engine/src/wizard.rs:681
 msgid "Few icons."
 msgstr "少图标。"
 
-#: crates/p11k-engine/src/wizard.rs:696
+#: crates/p11k-engine/src/wizard.rs:681
 msgid "Many icons."
 msgstr "多图标。"
 
-#: crates/p11k-engine/src/wizard.rs:728
+#: crates/p11k-engine/src/wizard.rs:714
 msgid "Prompt Flow"
 msgstr "提示符措辞"
 
-#: crates/p11k-engine/src/wizard.rs:729
+#: crates/p11k-engine/src/wizard.rs:715
 msgid "Concise."
 msgstr "简洁。"
 
-#: crates/p11k-engine/src/wizard.rs:729
+#: crates/p11k-engine/src/wizard.rs:715
 msgid "Fluent."
 msgstr "流畅。"
 
-#: crates/p11k-engine/src/wizard.rs:751
+#: crates/p11k-engine/src/wizard.rs:738
 msgid "Enable Transient Prompt?"
 msgstr "启用 Transient Prompt？"
 
-#: crates/p11k-engine/src/wizard.rs:792 crates/p11k-engine/src/wizard.rs:868
+#: crates/p11k-engine/src/wizard.rs:775 crates/p11k-engine/src/wizard.rs:849
 msgid "Restart from the beginning."
 msgstr "重新开始。"
 
-#: crates/p11k-engine/src/wizard.rs:793 crates/p11k-engine/src/wizard.rs:869
+#: crates/p11k-engine/src/wizard.rs:776 crates/p11k-engine/src/wizard.rs:850
 msgid "Quit"
 msgstr "退出"
 
 # ---- wizard：预览 / 落盘 ----
-#: crates/p11k-engine/src/wizard.rs:919
+#: crates/p11k-engine/src/wizard.rs:900
 msgid "Preview (current directory + exit code):"
 msgstr "预览（当前目录 + 退出码）:"
 
-#: crates/p11k-engine/src/wizard.rs:935
+#: crates/p11k-engine/src/wizard.rs:916
 msgid "p11k config file already exists. Overwrite"
 msgstr "p11k 配置文件已存在，覆盖"
 
-#: crates/p11k-engine/src/wizard.rs:953
+#: crates/p11k-engine/src/wizard.rs:931
 msgid "New config:"
 msgstr "新配置:"
 
-#: crates/p11k-engine/src/wizard.rs:955
+#: crates/p11k-engine/src/wizard.rs:933
 msgid "Add one of these to your shell rc:"
 msgstr "将对应的一行加入 shell rc:"
 
-#: crates/p11k-engine/src/wizard.rs:979
+#: crates/p11k-engine/src/wizard.rs:957
 msgid ""
 "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise "
 "they will stack."
