@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: p11k 1.0.0-alpha.1\n"
 "Report-Msgid-Bugs-To: https://github.com/Qaaxaap/powerlevel11k/issues\n"
-"POT-Creation-Date: 2026-11-06 18:15+0800\n"
+"POT-Creation-Date: 2026-11-12 20:34+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,90 +17,110 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/p11k-engine/src/cli.rs:181 crates/p11k-engine/src/cli.rs:202
+#: crates/p11k-engine/src/cli.rs:173 crates/p11k-engine/src/cli.rs:194
 msgid "cannot read config, falling back to the built-in lean theme: "
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:192
+#: crates/p11k-engine/src/cli.rs:184
 msgid ""
 "unknown preset, falling back to the built-in lean theme (expected lean/"
 "classic/rainbow/pure): "
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:224
+#: crates/p11k-engine/src/cli.rs:216
 msgid "not inside a p11k session (P11K_ENGINE_PID is unset)"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:231
+#: crates/p11k-engine/src/cli.rs:223
 msgid "invalid P11K_ENGINE_PID (must be a positive process id)"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:241 crates/p11k-engine/src/cli.rs:251
+#: crates/p11k-engine/src/cli.rs:233 crates/p11k-engine/src/cli.rs:243
 msgid ""
 "not inside a p11k session (session data is missing; restart the session)"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:284
+#: crates/p11k-engine/src/cli.rs:276
 msgid "cannot write the reload request:"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:295
+#: crates/p11k-engine/src/cli.rs:287
 msgid "cannot remove the reload request:"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:300
+#: crates/p11k-engine/src/cli.rs:292
 msgid "cannot signal the engine (the session may have exited)"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:311
+#: crates/p11k-engine/src/cli.rs:303
 msgid "cannot read the session file:"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:314
+#: crates/p11k-engine/src/cli.rs:306
 msgid "the session token does not match; the pid may belong to another process"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:338
+#: crates/p11k-engine/src/cli.rs:330
 msgid ""
 "this session has no theme file: it was started with --preset or the built-in "
 "theme"
 msgstr ""
 
-#: crates/p11k-engine/src/cli.rs:358
+#: crates/p11k-engine/src/cli.rs:350
 msgid ""
 "unknown shell in the config, falling back to $SHELL (expected zsh/bash/fish/"
 "pwsh): "
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:486
+#: crates/p11k-engine/src/config.rs:75
+msgid "invalid colour; a hex colour needs six digits: "
+msgstr ""
+
+#: crates/p11k-engine/src/config.rs:86
+msgid "unknown colour name: "
+msgstr ""
+
+#: crates/p11k-engine/src/config.rs:87
+msgid "use a name, 0-255, #rrggbb or default"
+msgstr ""
+
+#: crates/p11k-engine/src/config.rs:98
+msgid "colour index is outside 0-255: "
+msgstr ""
+
+#: crates/p11k-engine/src/config.rs:102
+msgid "expected a colour (0-255, #rrggbb, a colour name or default)"
+msgstr ""
+
+#: crates/p11k-engine/src/config.rs:530
 msgid "KDL parse error: "
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1266
+#: crates/p11k-engine/src/config.rs:1318
 msgid "`state` needs a name (a positional string)"
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1284
+#: crates/p11k-engine/src/config.rs:1336
 msgid " needs text (a positional string)"
 msgstr ""
 
-#: crates/p11k-engine/src/config.rs:1339
+#: crates/p11k-engine/src/config.rs:1394
 msgid "unknown config key: "
 msgstr ""
 
-#: crates/p11k-engine/src/engine.rs:210
+#: crates/p11k-engine/src/engine.rs:213
 msgid "the inner shell failed to start"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:88
+#: crates/p11k-engine/src/main.rs:90
 msgid "recursive launch detected (p11k started inside a p11k session)"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:89
+#: crates/p11k-engine/src/main.rs:91
 msgid "make sure the bootstrap line in ~/.zshrc is guarded, e.g.:"
 msgstr ""
 
-#: crates/p11k-engine/src/main.rs:93
+#: crates/p11k-engine/src/main.rs:95
 msgid "cannot exec zsh -f: "
 msgstr ""
 
@@ -128,270 +148,270 @@ msgstr ""
 msgid "Yes, write the config."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:138 crates/p11k-engine/src/wizard.rs:258
-#: crates/p11k-engine/src/wizard.rs:269 crates/p11k-engine/src/wizard.rs:281
-#: crates/p11k-engine/src/wizard.rs:401 crates/p11k-engine/src/wizard.rs:679
-#: crates/p11k-engine/src/wizard.rs:853
+#: crates/p11k-engine/src/wizard.rs:138 crates/p11k-engine/src/wizard.rs:323
+#: crates/p11k-engine/src/wizard.rs:334 crates/p11k-engine/src/wizard.rs:346
+#: crates/p11k-engine/src/wizard.rs:475 crates/p11k-engine/src/wizard.rs:753
+#: crates/p11k-engine/src/wizard.rs:937
 msgid "No."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:192
+#: crates/p11k-engine/src/wizard.rs:256
 msgid "p11k configuration wizard has been aborted."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:193
+#: crates/p11k-engine/src/wizard.rs:257
 msgid "Nothing was written."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:256
+#: crates/p11k-engine/src/wizard.rs:321
 msgid "Does this look like a diamond (rotated square)?"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:257 crates/p11k-engine/src/wizard.rs:268
-#: crates/p11k-engine/src/wizard.rs:280 crates/p11k-engine/src/wizard.rs:678
-#: crates/p11k-engine/src/wizard.rs:852
+#: crates/p11k-engine/src/wizard.rs:322 crates/p11k-engine/src/wizard.rs:333
+#: crates/p11k-engine/src/wizard.rs:345 crates/p11k-engine/src/wizard.rs:752
+#: crates/p11k-engine/src/wizard.rs:937
 msgid "Yes."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:267
+#: crates/p11k-engine/src/wizard.rs:332
 msgid "Does this look like a lock?"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:279
+#: crates/p11k-engine/src/wizard.rs:344
 msgid "Does this look like >< but taller and fatter?"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:294
+#: crates/p11k-engine/src/wizard.rs:368
 msgid "Prompt Style"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:317
+#: crates/p11k-engine/src/wizard.rs:391
 msgid "Lightest."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:318
+#: crates/p11k-engine/src/wizard.rs:392
 msgid "Light."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:319
+#: crates/p11k-engine/src/wizard.rs:393
 msgid "Dark."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:320
+#: crates/p11k-engine/src/wizard.rs:394
 msgid "Darkest."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:324 crates/p11k-engine/src/wizard.rs:330
+#: crates/p11k-engine/src/wizard.rs:398 crates/p11k-engine/src/wizard.rs:404
 msgid "Prompt Colors"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:325
+#: crates/p11k-engine/src/wizard.rs:399
 msgid "256 colors."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:325
+#: crates/p11k-engine/src/wizard.rs:399
 msgid "8 colors."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:327
+#: crates/p11k-engine/src/wizard.rs:401
 msgid "Prompt Color"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:328
+#: crates/p11k-engine/src/wizard.rs:402
 msgid "Frame Color"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:331
+#: crates/p11k-engine/src/wizard.rs:405
 msgid "Original."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:331
+#: crates/p11k-engine/src/wizard.rs:405
 msgid "Snazzy."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:353
+#: crates/p11k-engine/src/wizard.rs:427
 msgid "Character Set"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:354
+#: crates/p11k-engine/src/wizard.rs:428
 msgid "ASCII."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:354
+#: crates/p11k-engine/src/wizard.rs:428
 msgid "Unicode."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:375
+#: crates/p11k-engine/src/wizard.rs:449
 msgid "Non-permanent content location"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:376 crates/p11k-engine/src/wizard.rs:578
+#: crates/p11k-engine/src/wizard.rs:450 crates/p11k-engine/src/wizard.rs:652
 msgid "Left."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:376 crates/p11k-engine/src/wizard.rs:579
+#: crates/p11k-engine/src/wizard.rs:450 crates/p11k-engine/src/wizard.rs:653
 msgid "Right."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:399
+#: crates/p11k-engine/src/wizard.rs:473
 msgid "Show current time?"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:402
+#: crates/p11k-engine/src/wizard.rs:476
 msgid "12-hour format."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:403
+#: crates/p11k-engine/src/wizard.rs:477
 msgid "24-hour format."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:452
+#: crates/p11k-engine/src/wizard.rs:526
 msgid "Prompt Separators"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:454
+#: crates/p11k-engine/src/wizard.rs:528
 msgid "Angled."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:455
+#: crates/p11k-engine/src/wizard.rs:529
 msgid "Vertical."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:456 crates/p11k-engine/src/wizard.rs:484
-#: crates/p11k-engine/src/wizard.rs:511
+#: crates/p11k-engine/src/wizard.rs:530 crates/p11k-engine/src/wizard.rs:558
+#: crates/p11k-engine/src/wizard.rs:585
 msgid "Slanted."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:457 crates/p11k-engine/src/wizard.rs:485
-#: crates/p11k-engine/src/wizard.rs:512
+#: crates/p11k-engine/src/wizard.rs:531 crates/p11k-engine/src/wizard.rs:559
+#: crates/p11k-engine/src/wizard.rs:586
 msgid "Round."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:479
+#: crates/p11k-engine/src/wizard.rs:553
 msgid "Prompt Heads"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:481 crates/p11k-engine/src/wizard.rs:508
+#: crates/p11k-engine/src/wizard.rs:555 crates/p11k-engine/src/wizard.rs:582
 msgid "Flat."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:482 crates/p11k-engine/src/wizard.rs:509
+#: crates/p11k-engine/src/wizard.rs:556 crates/p11k-engine/src/wizard.rs:583
 msgid "Blurred."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:483 crates/p11k-engine/src/wizard.rs:510
+#: crates/p11k-engine/src/wizard.rs:557 crates/p11k-engine/src/wizard.rs:584
 msgid "Sharp."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:506
+#: crates/p11k-engine/src/wizard.rs:580
 msgid "Prompt Tails"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:533
+#: crates/p11k-engine/src/wizard.rs:607
 msgid "Prompt Height"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:534
+#: crates/p11k-engine/src/wizard.rs:608
 msgid "One line."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:534
+#: crates/p11k-engine/src/wizard.rs:608
 msgid "Two lines."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:550
+#: crates/p11k-engine/src/wizard.rs:624
 msgid "Prompt Connection"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:551
+#: crates/p11k-engine/src/wizard.rs:625
 msgid "Disconnected."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:551
+#: crates/p11k-engine/src/wizard.rs:625
 msgid "Dotted."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:551
+#: crates/p11k-engine/src/wizard.rs:625
 msgid "Solid."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:575
+#: crates/p11k-engine/src/wizard.rs:649
 msgid "Prompt Frame"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:577
+#: crates/p11k-engine/src/wizard.rs:651
 msgid "No frame."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:580
+#: crates/p11k-engine/src/wizard.rs:654
 msgid "Full."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:611
+#: crates/p11k-engine/src/wizard.rs:685
 msgid "Prompt Spacing"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:612
+#: crates/p11k-engine/src/wizard.rs:686
 msgid "Compact."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:612
+#: crates/p11k-engine/src/wizard.rs:686
 msgid "Sparse."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:621
+#: crates/p11k-engine/src/wizard.rs:695
 msgid "Icons"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:622
+#: crates/p11k-engine/src/wizard.rs:696
 msgid "Few icons."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:622
+#: crates/p11k-engine/src/wizard.rs:696
 msgid "Many icons."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:654
+#: crates/p11k-engine/src/wizard.rs:728
 msgid "Prompt Flow"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:655
+#: crates/p11k-engine/src/wizard.rs:729
 msgid "Concise."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:655
+#: crates/p11k-engine/src/wizard.rs:729
 msgid "Fluent."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:677
+#: crates/p11k-engine/src/wizard.rs:751
 msgid "Enable Transient Prompt?"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:718 crates/p11k-engine/src/wizard.rs:781
+#: crates/p11k-engine/src/wizard.rs:792 crates/p11k-engine/src/wizard.rs:868
 msgid "Restart from the beginning."
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:719 crates/p11k-engine/src/wizard.rs:782
+#: crates/p11k-engine/src/wizard.rs:793 crates/p11k-engine/src/wizard.rs:869
 msgid "Quit"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:832
+#: crates/p11k-engine/src/wizard.rs:919
 msgid "Preview (current directory + exit code):"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:850
+#: crates/p11k-engine/src/wizard.rs:935
 msgid "p11k config file already exists. Overwrite"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:869
+#: crates/p11k-engine/src/wizard.rs:953
 msgid "New config:"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:871
+#: crates/p11k-engine/src/wizard.rs:955
 msgid "Add one of these to your shell rc:"
 msgstr ""
 
-#: crates/p11k-engine/src/wizard.rs:895
+#: crates/p11k-engine/src/wizard.rs:979
 msgid ""
 "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise "
 "they will stack."

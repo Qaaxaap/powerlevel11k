@@ -37,30 +37,68 @@ pub enum Color {
 }
 
 impl Color {
-    fn from_str(s: &str) -> Color {
+    /// The 16 colour names p10k accepts, in palette order.
+    const NAMES: [&'static str; 16] = [
+        "black",
+        "red",
+        "green",
+        "yellow",
+        "blue",
+        "magenta",
+        "cyan",
+        "white",
+        "brightblack",
+        "brightred",
+        "brightgreen",
+        "brightyellow",
+        "brightblue",
+        "brightmagenta",
+        "brightcyan",
+        "brightwhite",
+    ];
+
+    /// Parse one colour value. `key` names the property in the error.
+    fn from_str(s: &str, key: &str) -> Result<Color, String> {
         if let Some(hex) = s.strip_prefix('#') {
-            if hex.len() == 6
+            let valid = hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit());
+            if valid
                 && let (Ok(r), Ok(g), Ok(b)) = (
                     u8::from_str_radix(&hex[0..2], 16),
                     u8::from_str_radix(&hex[2..4], 16),
                     u8::from_str_radix(&hex[4..6], 16),
                 )
             {
-                return Color::Rgb(r, g, b);
+                return Ok(Color::Rgb(r, g, b));
             }
-            Color::Named(s.to_string())
-        } else if s == "default" {
-            Color::Default
-        } else {
-            Color::Named(s.to_string())
+            return Err(format!(
+                "{key}: {}{s}",
+                t("invalid colour; a hex colour needs six digits: ")
+            ));
         }
+        if s == "default" {
+            return Ok(Color::Default);
+        }
+        if Self::NAMES.contains(&s) {
+            return Ok(Color::Named(s.to_string()));
+        }
+        Err(format!(
+            "{key}: {}{s}; {}",
+            t("unknown colour name: "),
+            t("use a name, 0-255, #rrggbb or default")
+        ))
     }
 
-    fn from_value(v: &KdlValue) -> Color {
+    /// Parse one colour value; `key` names the property in the error.
+    fn from_value(v: &KdlValue, key: &str) -> Result<Color, String> {
         match v {
-            KdlValue::String(s) => Color::from_str(s),
-            KdlValue::Integer(n) => Color::Xterm((*n).clamp(0, 255) as u8),
-            _ => Color::Default,
+            KdlValue::String(s) => Color::from_str(s, key),
+            KdlValue::Integer(n) => u8::try_from(*n)
+                .map(Color::Xterm)
+                .map_err(|_| format!("{key}: {}{n}", t("colour index is outside 0-255: "))),
+            _ => Err(format!(
+                "{key}: {}",
+                t("expected a colour (0-255, #rrggbb, a colour name or default)")
+            )),
         }
     }
 }
@@ -86,30 +124,30 @@ pub struct Style {
 impl Style {
     /// Style of a node whose properties are all style properties (`defaults`, `frame` and its
     /// pieces): anything else is a typo, so report it.
-    fn from_style_entries(entries: &[kdl::KdlEntry]) -> Style {
+    fn from_style_entries(entries: &[kdl::KdlEntry]) -> Result<Style, String> {
         Style::parse(entries, true)
     }
 
     /// Style of a node that also carries non-style properties (a segment, a `state`): only
     /// fg/bg/bold are style here and the remaining names belong to the caller, so they are
     /// picked up by its own loop instead of being reported as unknown.
-    fn from_mixed_entries(entries: &[kdl::KdlEntry]) -> Style {
+    fn from_mixed_entries(entries: &[kdl::KdlEntry]) -> Result<Style, String> {
         Style::parse(entries, false)
     }
 
-    fn parse(entries: &[kdl::KdlEntry], warn: bool) -> Style {
+    fn parse(entries: &[kdl::KdlEntry], warn: bool) -> Result<Style, String> {
         let mut s = Style::default();
         for e in entries {
             let Some(name) = e.name() else { continue };
             match name.value() {
-                "fg" => s.fg = Color::from_value(e.value()),
-                "bg" => s.bg = Color::from_value(e.value()),
+                "fg" => s.fg = Color::from_value(e.value(), "fg")?,
+                "bg" => s.bg = Color::from_value(e.value(), "bg")?,
                 "bold" => s.bold = bool_val(e.value()),
                 _ if warn => warn_unknown_key(name.value()),
                 _ => {}
             }
         }
-        s
+        Ok(s)
     }
 }
 
@@ -759,9 +797,9 @@ impl Config {
                         }
                     }
                 }
-                "defaults" => defaults = Style::from_style_entries(node.entries()),
-                "separators" => separators = parse_separators(node),
-                "frame" => frame = parse_frame(node),
+                "defaults" => defaults = Style::from_style_entries(node.entries())?,
+                "separators" => separators = parse_separators(node)?,
+                "frame" => frame = parse_frame(node)?,
                 "vcs-remote-icons" => vcs_remote_icons = parse_remote_icons(node),
                 "mode" => {
                     if let Some(s) = first_value(node).and_then(str_val) {
@@ -1133,9 +1171,9 @@ fn parse_remote_icons(node: &KdlNode) -> Vec<(String, String)> {
 
 /// Parse the `frame` node: the frame-level style (node properties fg/bg/bold) + the
 /// prefix/suffix of first/newline/last (child nodes, value a string; a child's own fg/bg/bold overrides the frame level).
-fn parse_frame(node: &KdlNode) -> Frame {
+fn parse_frame(node: &KdlNode) -> Result<Frame, String> {
     let mut f = Frame {
-        style: Style::from_style_entries(node.entries()),
+        style: Style::from_style_entries(node.entries())?,
         ..Frame::default()
     };
     if let Some(ch) = node.children() {
@@ -1144,7 +1182,7 @@ fn parse_frame(node: &KdlNode) -> Frame {
                 continue;
             };
             let Some(text) = str_val(v) else { continue };
-            let st = Style::from_style_entries(child.entries());
+            let st = Style::from_style_entries(child.entries())?;
             // A child with no style properties → None (fall back to frame level); with them → Some (override).
             let style = if st == Style::default() {
                 None
@@ -1163,7 +1201,7 @@ fn parse_frame(node: &KdlNode) -> Frame {
             }
         }
     }
-    f
+    Ok(f)
 }
 
 /// Parse `layout`: the two layout line groups `left`/`right`, plus `prompt-add-newline`, `transient-prompt`, `show-ruler`, `right-indent`.
@@ -1252,7 +1290,7 @@ fn parse_line(node: &KdlNode) -> Vec<Element> {
 /// Parse one segment node: properties (style/text/visibility/behavior) + `state <NAME> …` child overrides.
 fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
     let mut seg = Segment {
-        style: Style::from_mixed_entries(node.entries()),
+        style: Style::from_mixed_entries(node.entries())?,
         shown: true,
         ..Default::default()
     };
@@ -1277,7 +1315,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                     let Some(nm) = first_state_name(child) else {
                         return Err(t("`state` needs a name (a positional string)"));
                     };
-                    let st = Style::from_mixed_entries(child.entries());
+                    let st = Style::from_mixed_entries(child.entries())?;
                     let ch = named_str(child, "char");
                     seg.states.insert(
                         nm,
@@ -1298,7 +1336,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                     };
                     let attach = AttachText {
                         text,
-                        fg: named_color(child, "fg"),
+                        fg: named_color(child, "fg")?,
                     };
                     match child.name().value() {
                         "text-left" => seg.text_left = Some(attach),
@@ -1322,12 +1360,15 @@ fn named_str(node: &KdlNode, name: &str) -> Option<String> {
         .and_then(|e| str_val(e.value()))
 }
 
-/// A node's named color property (e.g. attached text's `fg=196`).
-fn named_color(node: &KdlNode, name: &str) -> Option<Color> {
-    node.entries()
-        .iter()
-        .find(|e| e.name().map(|n| n.value() == name).unwrap_or(false))
-        .map(|e| Color::from_value(e.value()))
+/// A node's named colour property (e.g. attached text's `fg=196`). A missing property is
+/// `None`; a present one must parse.
+fn named_color(node: &KdlNode, name: &str) -> Result<Option<Color>, String> {
+    for e in node.entries() {
+        if e.name().map(|n| n.value() == name).unwrap_or(false) {
+            return Ok(Some(Color::from_value(e.value(), name)?));
+        }
+    }
+    Ok(None)
 }
 
 /// A node's first positional argument value (the entry with no name).
@@ -1352,17 +1393,17 @@ fn warn_unknown_key(name: &str) {
 }
 
 /// Parse the `separators` node: character child nodes (`segment`/`sub`/`end`/`right-start`/`right-segment`/`right-sub`/`left-tail`/`right-tail`/`gap`), values read as whole strings.
-fn parse_separators(node: &KdlNode) -> Separators {
+fn parse_separators(node: &KdlNode) -> Result<Separators, String> {
     let mut s = Separators::default();
     // `gap-foreground` / `sub-foreground` / `right-sub-foreground` are
     // properties of the separators node (not child nodes).
-    if let Some(c) = named_color(node, "gap-foreground") {
+    if let Some(c) = named_color(node, "gap-foreground")? {
         s.gap_foreground = Some(c);
     }
-    if let Some(c) = named_color(node, "sub-foreground") {
+    if let Some(c) = named_color(node, "sub-foreground")? {
         s.sub_foreground = Some(c);
     }
-    if let Some(c) = named_color(node, "right-sub-foreground") {
+    if let Some(c) = named_color(node, "right-sub-foreground")? {
         s.right_sub_foreground = Some(c);
     }
     if let Some(ch) = node.children() {
@@ -1385,7 +1426,7 @@ fn parse_separators(node: &KdlNode) -> Separators {
             }
         }
     }
-    s
+    Ok(s)
 }
 
 static EMPTY_SEG: Segment = Segment {
@@ -1447,6 +1488,54 @@ fn prop_val(v: &KdlValue) -> Prop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A malformed colour fails the load with the property name and the value. The old
+    /// parser accepted any string and painted it white, and clamped an out-of-range index.
+    #[test]
+    fn invalid_colours_fail_the_load() {
+        let layout = "layout { left { line { dir } } }";
+        for (bad, needle) in [
+            ("defaults fg=999", "fg: colour index is outside 0-255: 999"),
+            ("defaults bg=-1", "bg: colour index is outside 0-255: -1"),
+            ("defaults fg=\"#zzzzzz\"", "fg: invalid colour"),
+            ("defaults fg=\"#12345\"", "fg: invalid colour"),
+            ("defaults fg=\"nope\"", "fg: unknown colour name: nope"),
+            ("defaults fg=#true", "fg: expected a colour"),
+        ] {
+            let src = format!("{layout}\n{bad}");
+            let err = Config::parse(&src).expect_err(&format!("{bad} must fail"));
+            assert!(
+                err.contains(needle),
+                "{bad} should report {needle:?}, got {err:?}"
+            );
+        }
+        // Attached text and the separator colours go through the same parser.
+        let err = Config::parse(
+            "layout { left { line { prompt_char } } }\nsegments { prompt_char { state ERROR fg=999 } }",
+        )
+        .expect_err("a state colour must parse");
+        assert!(
+            err.contains("fg"),
+            "the state error should name fg, got {err:?}"
+        );
+        let err = Config::parse("separators gap-foreground=999")
+            .expect_err("a separator colour must parse");
+        assert!(
+            err.contains("gap-foreground"),
+            "the separator error should name the key, got {err:?}"
+        );
+    }
+
+    /// The accepted colour forms keep their meaning, including uppercase hex and names.
+    #[test]
+    fn valid_colours_are_read() {
+        let d = Config::parse("defaults fg=\"#ABCDEF\" bg=\"red\"").unwrap();
+        assert_eq!(d.defaults.fg, Color::Rgb(0xab, 0xcd, 0xef));
+        assert_eq!(d.defaults.bg, Color::Named("red".into()));
+        let d = Config::parse("defaults fg=196 bg=default").unwrap();
+        assert_eq!(d.defaults.fg, Color::Xterm(196));
+        assert_eq!(d.defaults.bg, Color::Default);
+    }
 
     #[test]
     fn shell_node_is_read_and_round_trips() {
