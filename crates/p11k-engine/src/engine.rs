@@ -206,11 +206,11 @@ pub fn run() -> anyhow::Result<()> {
     // taken it over).
     let mut _st = 0;
     unsafe { libc::waitpid(mid, &mut _st, 0) };
-    // A non-zero middle process means the inner shell failed to start. This used to be
-    // silent, leaving only "the shell produced no output" upstream with no way to tell a
-    // failed spawn from anything else.
+    // A non-zero middle process means the inner shell failed to start. Continuing would run an
+    // engine with no shell: no prompt and no commands, with only "the shell produced no output"
+    // upstream. Report the failure and exit instead of carrying on.
     if _st != 0 {
-        eprintln!("p11k: {}", t("the inner shell failed to start"));
+        anyhow::bail!("{}", t("the inner shell failed to start"));
     }
     drop(pair.slave);
 
@@ -220,6 +220,16 @@ pub fn run() -> anyhow::Result<()> {
         .as_raw_fd()
         .expect("pty master fd is available on unix");
     let mut writer = pair.master.take_writer()?;
+
+    // Signal pipe: signal handlers and the git worker write a byte so poll wakes immediately
+    // instead of on a timeout. Create it and publish the write end before the handlers and the
+    // worker start, so a wake that happens during their setup is not dropped on the floor.
+    let mut signal_pipe = [0i32; 2];
+    // SAFETY: pipe() writes two fds into the array.
+    if unsafe { libc::pipe(signal_pipe.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    crate::wake::install(signal_pipe[1]);
 
     // Catch SIGWINCH on the real terminal so the engine also notices a resize while the
     // prompt is displayed (sync the inner pty → TRAPWINCH announces r → clear and repaint)
@@ -333,14 +343,6 @@ pub fn run() -> anyhow::Result<()> {
     // A read can end in the middle of an announce line; the partial line waits here for the next
     // read instead of being parsed as a truncated message.
     let mut announce_pending: Vec<u8> = Vec::new();
-    // Signal pipe: signal handlers and the git worker write a byte so poll wakes immediately
-    // instead of on a timeout.
-    let mut signal_pipe = [0i32; 2];
-    // SAFETY: pipe() writes two fds into the array.
-    if unsafe { libc::pipe(signal_pipe.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error().into());
-    }
-    crate::wake::install(signal_pipe[1]);
 
     let mut scanner = SignalScanner::new();
 

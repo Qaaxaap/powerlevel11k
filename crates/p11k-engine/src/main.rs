@@ -56,6 +56,37 @@ mod wizard;
 use cli::{Command, apply_log_level, parse, reload_engine};
 use i18n::t;
 
+/// The shell to fall back to after a recursive launch: `$SHELL`, or zsh when it is unset.
+fn clean_shell() -> std::path::PathBuf {
+    std::env::var_os("SHELL")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| "zsh".into())
+}
+
+/// The user's shell started without its startup files, so the recursive bootstrap line in the
+/// rc cannot run again. Each shell spells "skip the startup files" differently.
+fn clean_shell_command(shell: &std::path::Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(shell);
+    match shell.file_name().and_then(|n| n.to_str()).unwrap_or("") {
+        "bash" => {
+            cmd.arg("--noprofile");
+            cmd.arg("--norc");
+        }
+        "fish" => {
+            cmd.arg("--no-config");
+        }
+        "pwsh" => {
+            cmd.arg("-NoProfile");
+            cmd.arg("-NoLogo");
+        }
+        // zsh and any other shell that follows `sh`'s `-f`.
+        _ => {
+            cmd.arg("-f");
+        }
+    }
+    cmd
+}
+
 fn main() -> anyhow::Result<()> {
     // Rust starts every program with SIGPIPE ignored, so a write to a closed pipe comes back
     // as EPIPE and `println!` panics: `p11k --help | head -3` printed a backtrace instead of
@@ -83,18 +114,53 @@ fn main() -> anyhow::Result<()> {
     // again by the inner shell's rc bootstrap (the user rc bootstrap line is unguarded or
     // wrong). Degrade to exec'ing a clean shell and tell the user to fix it.
     if std::env::var_os("P11K_ENGINE").is_some() {
+        let shell = clean_shell();
+        let name = shell
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| shell.display().to_string());
         eprintln!(
             "p11k: {}\n\
              p11k: {}\n\
-             p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k --shell zsh",
+             p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k --shell {}",
             t("recursive launch detected (p11k started inside a p11k session)"),
-            t("make sure the bootstrap line in ~/.zshrc is guarded, e.g.:")
+            t("make sure the bootstrap line in your shell rc is guarded, e.g.:"),
+            name
         );
         use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new("zsh").arg("-f").exec();
-        eprintln!("p11k: {}{err}", t("cannot exec zsh -f: "));
+        let err = clean_shell_command(&shell).exec();
+        eprintln!("p11k: {}{err}", t("cannot exec the shell: "));
         std::process::exit(1);
     }
 
     engine::run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args_for(shell: &str) -> Vec<String> {
+        let cmd = clean_shell_command(std::path::Path::new(shell));
+        cmd.get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn the_clean_fallback_skips_each_shells_startup_files() {
+        assert_eq!(args_for("/bin/zsh"), ["-f"]);
+        assert_eq!(args_for("zsh"), ["-f"]);
+        assert_eq!(args_for("/usr/bin/bash"), ["--noprofile", "--norc"]);
+        assert_eq!(args_for("/usr/bin/fish"), ["--no-config"]);
+        assert_eq!(args_for("/usr/bin/pwsh"), ["-NoProfile", "-NoLogo"]);
+        // An unknown shell gets the portable `-f`.
+        assert_eq!(args_for("/usr/local/bin/dash"), ["-f"]);
+    }
+
+    #[test]
+    fn the_clean_fallback_runs_the_requested_program() {
+        let cmd = clean_shell_command(std::path::Path::new("/usr/bin/fish"));
+        assert_eq!(cmd.get_program(), "/usr/bin/fish");
+    }
 }
