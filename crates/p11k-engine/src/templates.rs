@@ -15,6 +15,11 @@ pub const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap -- protocol layer + 
 _p11k_signal=$'%{\e]1337;p11k;p\a%}'
 _p11k_status=0
 _p11k_pwd=$PWD
+# Last prompt shape from the engine ack, kept across prompts so a dead or stuck engine cannot
+# block the prompt forever: precmd falls back to these values after the ack timeout.
+typeset -g _p11k_rows=1
+typeset -g _p11k_prefix=$P11K_PREFIX_OK
+typeset -g _p11k_fold=1
 
 # Command timing for zsh. Zsh has no CMD_DURATION. A preexec hook records EPOCHREALTIME
 # before the command runs. Precmd turns the difference into milliseconds for the announce.
@@ -44,14 +49,33 @@ _p11k_precmd() {
     _p11k_cmd_start=
   fi
   print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes"$'\t'"$_dur" >> "$P11K_ANNOUNCE"
-  until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
-  # The ack carries the prompt shape: header height on the first line, then the two prefix
-  # strings. Reading them every prompt is what lets a reload change either without a restart.
-  local -a _ack=("${(@f)$(<"$P11K_ACK")}")
-  rm -f "$P11K_ACK"
-  # Third ack line: whether this prompt folds (transient). The hook that folds runs later, after
-  # the ack is gone, so the answer is kept in a global.
-  typeset -g _p11k_fold=${_ack[3]:-1}
+  # Wait at most two seconds for the ack. A dead or stuck engine must not block the shell at
+  # the prompt; the previous prompt shape is reused and the fallback is reported once.
+  local _wait=0
+  until [[ -f "$P11K_ACK" ]]; do
+    sleep 0.005
+    _wait=$(( _wait + 1 ))
+    if (( _wait >= 400 )); then break; fi
+  done
+  if [[ -f "$P11K_ACK" ]]; then
+    # The ack carries the prompt shape: header height on the first line, then the two prefix
+    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    local -a _ack=("${(@f)$(<"$P11K_ACK")}")
+    rm -f "$P11K_ACK"
+    typeset -g _p11k_rows=${_ack[1]:-1}
+    typeset -g _p11k_prefix=${_ack[2]:-$P11K_PREFIX_OK}
+    # Third ack line: whether this prompt folds (transient). The hook that folds runs later,
+    # after the ack is gone, so the answer is kept in a global.
+    typeset -g _p11k_fold=${_ack[3]:-1}
+  elif (( ! ${+_p11k_ack_warned} )); then
+    typeset -g _p11k_ack_warned=1
+    if (( _p11k_status == 0 )); then
+      typeset -g _p11k_prefix=$P11K_PREFIX_OK
+    else
+      typeset -g _p11k_prefix=$P11K_PREFIX_ERR
+    fi
+    print -u2 -- "p11k: the engine did not answer in time; the prompt is drawn without a header"
+  fi
   # The prompt is the blank rows + prompt-ready signal + the prefix for this exit code. The
   # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
   # painting it later would overwrite the first characters on a completion redraw.
@@ -66,13 +90,13 @@ _p11k_precmd() {
   # at all — the header would then be backfilled over the command output above it.
   local _lead=''
   local _i
-  for (( _i = 0; _i < ${_ack[1]:-0}; _i++ )); do
+  for (( _i = 0; _i < ${_p11k_rows:-1}; _i++ )); do
     _lead+=$'\n'
   done
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
   fi
-  PROMPT="$_lead$_p11k_signal${_ack[2]:-$P11K_PREFIX_OK}"
+  PROMPT="$_lead$_p11k_signal${_p11k_prefix:-$P11K_PREFIX_OK}"
 }
 
 # zle calls this when it takes over the input line. The prompt is already on screen by then
@@ -223,6 +247,10 @@ pub const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol 
 # OSC would be counted as visible width and the buffer would start in the wrong column.
 _p11k_signal=$'\e]1337;p11k;p\a'
 PS1="\[$_p11k_signal\]"
+# Last prompt shape from the engine ack, kept across prompts so a dead or stuck engine cannot
+# block the prompt forever: _p11k_prompt_command falls back to these values after the ack timeout.
+_p11k_rows=1
+_p11k_prefix=$P11K_PREFIX_OK
 
 # Command timing for bash. Bash has no CMD_DURATION and no preexec. A DEBUG trap records
 # EPOCHREALTIME before the first simple command after a prompt. `_p11k_cmd_start` is set once
@@ -254,12 +282,31 @@ _p11k_prompt_command() {
     _p11k_cmd_start=
   fi
   printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" "$_dur" >> "$P11K_ANNOUNCE"
-  until [[ -f "$P11K_ACK" ]]; do sleep 0.005; done
-  # The ack carries the prompt shape: header height on the first line, then the two prefix
-  # strings. Reading them every prompt is what lets a reload change either without a restart.
-  local -a _ack
-  mapfile -t _ack < "$P11K_ACK"
-  rm -f "$P11K_ACK"
+  # Wait at most two seconds for the ack. A dead or stuck engine must not block the shell at
+  # the prompt; the previous prompt shape is reused and the fallback is reported once.
+  local _wait=0
+  until [[ -f "$P11K_ACK" ]]; do
+    sleep 0.005
+    _wait=$(( _wait + 1 ))
+    if (( _wait >= 400 )); then break; fi
+  done
+  if [[ -f "$P11K_ACK" ]]; then
+    # The ack carries the prompt shape: header height on the first line, then the two prefix
+    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    local -a _ack
+    mapfile -t _ack < "$P11K_ACK"
+    rm -f "$P11K_ACK"
+    _p11k_rows=${_ack[0]:-1}
+    _p11k_prefix=${_ack[1]:-$P11K_PREFIX_OK}
+  elif [[ -z "${_p11k_ack_warned:-}" ]]; then
+    _p11k_ack_warned=1
+    if (( _st == 0 )); then
+      _p11k_prefix=$P11K_PREFIX_OK
+    else
+      _p11k_prefix=$P11K_PREFIX_ERR
+    fi
+    printf 'p11k: %s\n' "the engine did not answer in time; the prompt is drawn without a header" >&2
+  fi
   # The prefix belongs in PS1: readline draws the buffer right after it, and painting it later
   # would overwrite the first characters on a completion redraw.
   #
@@ -273,12 +320,12 @@ _p11k_prompt_command() {
     unset P11K_INSTANT
   fi
   local _i
-  for (( _i = 0; _i < ${_ack[0]:-0}; _i++ )); do
+  for (( _i = 0; _i < ${_p11k_rows:-1}; _i++ )); do
     _lead+=$'\n'
   done
   # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
   # before the shell starts, and without this readline would append the prompt after it.
-  PS1='\r'"$_lead\[$_p11k_signal\]${_ack[1]:-$P11K_PREFIX_OK}"
+  PS1='\r'"$_lead\[$_p11k_signal\]${_p11k_prefix:-$P11K_PREFIX_OK}"
 }
 PROMPT_COMMAND=_p11k_prompt_command
 
@@ -360,15 +407,32 @@ function fish_prompt
         set _cmd_ms $CMD_DURATION
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
+    # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
+    # the previous prompt shape is reused and the fallback is reported once.
+    set -l _wait 0
     while not test -f $P11K_ACK
         sleep 0.005
+        set _wait (math $_wait + 1)
+        if test $_wait -ge 400
+            break
+        end
     end
-    # The ack carries the prompt shape: header height on the first line, then the two prefix
-    # strings. Reading them every prompt is what lets a reload change either without a restart.
-    set -l _ack (cat $P11K_ACK)
-    rm -f $P11K_ACK
-    set -g _p11k_rows $_ack[1]
-    set -g _p11k_prefix $_ack[2]
+    if test -f $P11K_ACK
+        # The ack carries the prompt shape: header height on the first line, then the two prefix
+        # strings. Reading them every prompt is what lets a reload change either without a restart.
+        set -l _ack (cat $P11K_ACK)
+        rm -f $P11K_ACK
+        set -g _p11k_rows $_ack[1]
+        set -g _p11k_prefix $_ack[2]
+    else if not set -q _p11k_ack_warned
+        set -g _p11k_ack_warned 1
+        if test $_st -eq 0
+            set -g _p11k_prefix $P11K_PREFIX_OK
+        else
+            set -g _p11k_prefix $P11K_PREFIX_ERR
+        end
+        echo "p11k: the engine did not answer in time; the prompt is drawn without a header" >&2
+    end
     # Print the blank header rows directly: `string collect` drops the final newline, so a
     # single row would become an empty string and the engine would cover one row too many.
     printf '\r'
@@ -427,15 +491,32 @@ function fish_prompt
         set _cmd_ms $CMD_DURATION
     end
     printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
+    # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
+    # the previous prompt shape is reused and the fallback is reported once.
+    set -l _wait 0
     while not test -f $P11K_ACK
         sleep 0.005
+        set _wait (math $_wait + 1)
+        if test $_wait -ge 400
+            break
+        end
     end
-    # The ack carries the prompt shape: header height on the first line, then the two prefix
-    # strings. Reading them every prompt is what lets a reload change either without a restart.
-    set -l _ack (cat $P11K_ACK)
-    rm -f $P11K_ACK
-    set -g _p11k_rows $_ack[1]
-    set -g _p11k_prefix $_ack[2]
+    if test -f $P11K_ACK
+        # The ack carries the prompt shape: header height on the first line, then the two prefix
+        # strings. Reading them every prompt is what lets a reload change either without a restart.
+        set -l _ack (cat $P11K_ACK)
+        rm -f $P11K_ACK
+        set -g _p11k_rows $_ack[1]
+        set -g _p11k_prefix $_ack[2]
+    else if not set -q _p11k_ack_warned
+        set -g _p11k_ack_warned 1
+        if test $_st -eq 0
+            set -g _p11k_prefix $P11K_PREFIX_OK
+        else
+            set -g _p11k_prefix $P11K_PREFIX_ERR
+        end
+        echo "p11k: the engine did not answer in time; the prompt is drawn without a header" >&2
+    end
     # Print the blank header rows directly: `string collect` drops the final newline, so a
     # single row would become an empty string and the engine would cover one row too many.
     printf '\r'
@@ -456,6 +537,10 @@ end
 pub const PWSH_TEMPLATE: &str = r#"# p11k engine bootstrap (pwsh) -- protocol layer + user config.
 $P11kAnnounce = $env:P11K_ANNOUNCE
 $P11kAck = $env:P11K_ACK
+# Last prompt shape from the engine ack; reused when the engine does not answer (ack timeout).
+$script:P11kHeaderRows = 1
+$script:P11kPrefix = $env:P11K_PREFIX_OK
+$script:P11kAckWarned = $false
 $script:P11kCols = $Host.UI.RawUI.WindowSize.Width
 $script:P11kRows = $Host.UI.RawUI.WindowSize.Height
 
@@ -484,14 +569,30 @@ function global:P11kEnginePrompt {
         [int]($P11kLast.EndExecutionTime - $P11kLast.StartExecutionTime).TotalMilliseconds
     } else { '' }
     [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`t$P11kExecMs`n")
-    # Wait for the engine ack: the prompt string is printed first, the header is backfilled after.
-    while (-not [IO.File]::Exists($script:P11kAck)) { Start-Sleep -Milliseconds 5 }
-    # The ack carries the prompt shape: header height on the first line, then the two prefix
-    # strings. Reading them every prompt is what lets a reload change either without a restart.
-    $P11kAckLines = @(Get-Content $script:P11kAck)
-    [IO.File]::Delete($script:P11kAck)
-    $P11kHeaderRows = [int]$P11kAckLines[0]
-    $P11kPrefix = $P11kAckLines[1]
+    # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
+    # the previous prompt shape is reused and the fallback is reported once.
+    $P11kWait = 0
+    while (-not [IO.File]::Exists($script:P11kAck)) {
+        Start-Sleep -Milliseconds 5
+        $P11kWait++
+        if ($P11kWait -ge 400) { break }
+    }
+    if ([IO.File]::Exists($script:P11kAck)) {
+        # The ack carries the prompt shape: header height on the first line, then the two prefix
+        # strings. Reading them every prompt is what lets a reload change either without a restart.
+        $P11kAckLines = @(Get-Content $script:P11kAck)
+        [IO.File]::Delete($script:P11kAck)
+        $script:P11kHeaderRows = [int]$P11kAckLines[0]
+        $script:P11kPrefix = $P11kAckLines[1]
+    } elseif (-not $script:P11kAckWarned) {
+        $script:P11kAckWarned = $true
+        if ($P11kCode -eq 0) {
+            $script:P11kPrefix = $env:P11K_PREFIX_OK
+        } else {
+            $script:P11kPrefix = $env:P11K_PREFIX_ERR
+        }
+        [Console]::Error.WriteLine("p11k: the engine did not answer in time; the prompt is drawn without a header")
+    }
     # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
@@ -501,8 +602,8 @@ function global:P11kEnginePrompt {
     if ($env:P11K_INSTANT) {
         Remove-Item Env:P11K_INSTANT -ErrorAction SilentlyContinue
     }
-    $P11kLead = "`n" * $P11kHeaderRows
-    "$P11kLead`e]1337;p11k;p`a$P11kPrefix"
+    $P11kLead = "`n" * $script:P11kHeaderRows
+    "$P11kLead`e]1337;p11k;p`a$($script:P11kPrefix)"
 }
 
 function global:prompt { P11kEnginePrompt }
