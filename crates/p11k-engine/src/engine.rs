@@ -562,7 +562,17 @@ pub fn run() -> anyhow::Result<()> {
                             &info.cwd,
                         );
                         last_prompt_cwd = Some(info.cwd.clone());
-                        write_ack(&state.ack, geometry.header_rows, &prefix, transient_on)?;
+                        // Without the ack the shell falls back to the last prompt shape after
+                        // its timeout: the session stays usable. The log says why the header is
+                        // missing, instead of the engine exiting mid-session.
+                        if let Err(e) =
+                            write_ack(&state.ack, geometry.header_rows, &prefix, transient_on)
+                        {
+                            crate::log::log(
+                                crate::log::Level::Error,
+                                &format!("cannot write the prompt ack: {e}"),
+                            );
+                        }
                         // Compute git in the background and repaint the header asynchronously when
                         // it finishes.
                         git_gen += 1;
@@ -896,7 +906,16 @@ fn rewrite_pwsh_prefix(data: &[u8], shell: Shell, prefix: Option<&(String, Strin
 /// Write the ack atomically. The shell polls for the file and reads it the moment it exists, so
 /// a half-written file would give it the wrong prompt shape. Write a sibling temp file and rename
 /// it into place; the rename is atomic within the directory.
+/// Write the ack the shell waits for. The ack is line-oriented: header height, prefix, fold
+/// flag. A prefix with a line break would shift the following values into the wrong lines, so
+/// it is rejected instead of producing an ack the shell reads incorrectly.
 fn write_ack(path: &std::path::Path, rows: usize, prefix: &str, fold: bool) -> io::Result<()> {
+    if prefix.contains(['\n', '\r']) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "the prompt prefix contains a line break; the ack is line oriented",
+        ));
+    }
     let tmp = path.with_extension("tmp");
     {
         let mut file = File::create(&tmp)?;
@@ -1003,6 +1022,24 @@ mod tests {
 
         write_ack(&path, 1, "❯ ", false).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "1\n❯ \n0\n");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A prefix with a line break would shift the fold flag into another line, so the ack is
+    /// rejected instead of written in a shape the shell would misread.
+    #[test]
+    fn ack_rejects_a_prefix_with_a_line_break() {
+        let dir = std::env::temp_dir().join(format!("p11k-ack-break-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ack");
+
+        for prefix in ["a\nb", "a\rb", "\n"] {
+            let err = write_ack(&path, 1, prefix, false).expect_err("a line break is invalid");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "prefix {prefix:?}");
+            assert!(!path.exists(), "no ack file for prefix {prefix:?}");
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -7,7 +7,9 @@ use crate::model::HeaderInfo;
 pub enum AnnMsg {
     /// `h\t<exit>\t<cwd>[\t<jobs>][\t<history>][\t<pipestatus>][\t<exec_ms>]`: precmd
     /// announce. It draws the header. `<pipestatus>` is the pipeline status string.
-    /// `<exec_ms>` is the shell's own command duration in milliseconds.
+    /// `<exec_ms>` is the shell's own command duration in milliseconds. `<cwd>` is escaped:
+    /// `\\`, `\t`, `\n` and `\r` stand for the literal characters, so a directory name cannot
+    /// break the tab-separated line.
     Header(HeaderInfo),
     /// `r`: resize announce (zsh's TRAPWINCH, bash's trap WINCH, fish's `--on-signal
     /// WINCH`, pwsh compares the window size inside prompt); resize the pty + repaint.
@@ -15,6 +17,33 @@ pub enum AnnMsg {
     /// `v\t<keymap>`: zle-keymap-select announce, updates the editing mode and repaints the
     /// header.
     VimMode(String),
+}
+
+/// Undo the escaping the shell applies to the `cwd` field of an `h` line: `\\` → `\`,
+/// `\t` → tab, `\n` → newline, `\r` → CR. An unknown escape stays as written, and so does a
+/// trailing lone backslash. Every shell template writes this form, so a directory name with a
+/// tab or a newline keeps its one field.
+fn unescape_field(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => out.push('\\'),
+            Some('t') => out.push('\t'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Read pending lines from the announce FIFO and parse them into prompt messages.
@@ -88,7 +117,7 @@ fn parse_announce_lines(buf: &[u8]) -> Vec<AnnMsg> {
                 let code = parts.next().and_then(|s| s.trim().parse::<i32>().ok());
                 let cwd = parts
                     .next()
-                    .map(|s| s.trim().to_string())
+                    .map(|s| unescape_field(s.trim()))
                     .unwrap_or_default();
                 let jobs = parts
                     .next()
@@ -361,5 +390,30 @@ mod tests {
             pending.is_empty(),
             "a runaway line must not grow the buffer"
         );
+    }
+
+    #[test]
+    fn escaped_paths_round_trip() {
+        assert_eq!(unescape_field(r"/tmp/a\tb"), "/tmp/a\tb");
+        assert_eq!(unescape_field(r"/tmp/a\nb"), "/tmp/a\nb");
+        assert_eq!(unescape_field(r"/tmp/a\rb"), "/tmp/a\rb");
+        assert_eq!(unescape_field(r"/tmp/a\\b"), r"/tmp/a\b");
+        // A plain path is unchanged.
+        assert_eq!(unescape_field("/tmp/plain"), "/tmp/plain");
+        // Unknown escapes and a trailing backslash stay as written.
+        assert_eq!(unescape_field(r"/tmp/\q"), r"/tmp/\q");
+        assert_eq!(unescape_field(r"/tmp/a\"), r"/tmp/a\");
+    }
+
+    /// A directory name with a tab and a backslash arrives as one field and comes back whole.
+    #[test]
+    fn the_header_parses_an_escaped_cwd() {
+        let mut pending = Vec::new();
+        // The shell writes `h`, the exit code, then the cwd with `\t` and `\\`.
+        let msgs = push_announce(&mut pending, b"h\t0\t/tmp/a\\tb\\\\c\n");
+        let AnnMsg::Header(info) = &msgs[0] else {
+            panic!("expected a header announce");
+        };
+        assert_eq!(info.cwd, "/tmp/a\tb\\c");
     }
 }

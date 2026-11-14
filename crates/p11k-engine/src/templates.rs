@@ -48,7 +48,13 @@ _p11k_precmd() {
     (( _dur = ( _now_s * 1000000 + 10#${_now_f:0:6} - _start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
     _p11k_cmd_start=
   fi
-  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_p11k_pwd"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes"$'\t'"$_dur" >> "$P11K_ANNOUNCE"
+  # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
+  # a newline or a backslash, which would split or merge fields.
+  local _pwd_esc=${_p11k_pwd//\\/\\\\}
+  _pwd_esc=${_pwd_esc//$'\t'/\\t}
+  _pwd_esc=${_pwd_esc//$'\n'/\\n}
+  _pwd_esc=${_pwd_esc//$'\r'/\\r}
+  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_pwd_esc"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes"$'\t'"$_dur" >> "$P11K_ANNOUNCE"
   # Wait at most two seconds for the ack. A dead or stuck engine must not block the shell at
   # the prompt; the previous prompt shape is reused and the fallback is reported once.
   local _wait=0
@@ -281,7 +287,13 @@ _p11k_prompt_command() {
     (( _dur = (_now - _start) / 1000 ))
     _p11k_cmd_start=
   fi
-  printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$PWD" "$(jobs -p | wc -l)" "" "$_pipes" "$_dur" >> "$P11K_ANNOUNCE"
+  # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
+  # a newline or a backslash, which would split or merge fields.
+  local _pwd_esc=${PWD//\\/\\\\}
+  _pwd_esc=${_pwd_esc//$'\t'/\\t}
+  _pwd_esc=${_pwd_esc//$'\n'/\\n}
+  _pwd_esc=${_pwd_esc//$'\r'/\\r}
+  printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$_pwd_esc" "$(jobs -p | wc -l)" "" "$_pipes" "$_dur" >> "$P11K_ANNOUNCE"
   # Wait at most two seconds for the ack. A dead or stuck engine must not block the shell at
   # the prompt; the previous prompt shape is reused and the fallback is reported once.
   local _wait=0
@@ -406,7 +418,20 @@ function fish_prompt
     if set -q CMD_DURATION
         set _cmd_ms $CMD_DURATION
     end
-    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
+    # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
+    # a newline or a backslash, which would split or merge fields.
+    # The two-line quoted string is exactly one newline. Command substitution strips trailing
+    # newlines, so the pattern cannot come from printf; the closing quote stays in column 1.
+    set -l _nl '
+'
+    set -l _pwd_esc $PWD
+    # `string collect` keeps the newline: command substitution splits a multi-line result into
+    # a list, which would drop the newline from the escaped path.
+    set _pwd_esc (string replace -a '\\' '\\\\' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a (printf '\t') '\t' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a $_nl '\n' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a (printf '\r') '\r' -- $_pwd_esc | string collect)
+    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $_pwd_esc (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
     # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
     # the previous prompt shape is reused and the fallback is reported once.
     set -l _wait 0
@@ -490,7 +515,20 @@ function fish_prompt
     if set -q CMD_DURATION
         set _cmd_ms $CMD_DURATION
     end
-    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $PWD (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
+    # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
+    # a newline or a backslash, which would split or merge fields.
+    # The two-line quoted string is exactly one newline. Command substitution strips trailing
+    # newlines, so the pattern cannot come from printf; the closing quote stays in column 1.
+    set -l _nl '
+'
+    set -l _pwd_esc $PWD
+    # `string collect` keeps the newline: command substitution splits a multi-line result into
+    # a list, which would drop the newline from the escaped path.
+    set _pwd_esc (string replace -a '\\' '\\\\' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a (printf '\t') '\t' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a $_nl '\n' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a (printf '\r') '\r' -- $_pwd_esc | string collect)
+    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $_pwd_esc (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
     # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
     # the previous prompt shape is reused and the fallback is reported once.
     set -l _wait 0
@@ -568,7 +606,10 @@ function global:P11kEnginePrompt {
     $P11kExecMs = if ($P11kLast.StartExecutionTime -and $P11kLast.EndExecutionTime) {
         [int]($P11kLast.EndExecutionTime - $P11kLast.StartExecutionTime).TotalMilliseconds
     } else { '' }
-    [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`t$P11kExecMs`n")
+    # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
+    # a newline or a backslash, which would split or merge fields.
+    $P11kPwdEsc = $PWD.Path.Replace('\', '\\').Replace("`t", '\t').Replace("`n", '\n').Replace("`r", '\r')
+    [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$P11kPwdEsc`t$P11kJobs`t$P11kHist`t$P11kExecMs`n")
     # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
     # the previous prompt shape is reused and the fallback is reported once.
     $P11kWait = 0
@@ -666,7 +707,18 @@ mod tests {
             t.contains("P11kEnginePrompt"),
             "prompt must forward to the engine implementation"
         );
-        assert!(t.contains(r#""h`t$P11kCode`t$($PWD.Path)`t$P11kJobs`t$P11kHist`t$P11kExecMs`n""#));
+        assert!(
+            t.contains(r#""h`t$P11kCode`t$P11kPwdEsc`t$P11kJobs`t$P11kHist`t$P11kExecMs`n""#),
+            "must announce the escaped cwd for the header"
+        );
+        assert!(
+            t.contains("Replace('\\', '\\\\')"),
+            "must escape a backslash in the cwd, otherwise a tab or a newline splits the announce line"
+        );
+        assert!(
+            t.contains(".Replace(\"`t\", '\\t')") && t.contains(".Replace(\"`n\", '\\n')"),
+            "must escape a tab and a newline in the cwd"
+        );
         assert!(t.contains(r#""r`n""#), "resize must announce r");
         assert!(
             t.contains("while (-not [IO.File]::Exists($script:P11kAck))"),
