@@ -76,9 +76,8 @@ version in sync. Terminology follows docs/glossary.md.
       check did not run.
 - [ ] For a change to `docs/images/`, I did the human check in `CONTRIBUTING.md`
       and recorded the result; or this PR changes no generated file.
-- [ ] I ran `tools/i18n.sh extract` and `tools/i18n.sh update` if this PR
-      changed user-facing English text; the Chinese wording is the maintainer's
-      to fill in.
+- [ ] I updated `locales/en.ftl` and `locales/zh-CN.ftl` if this PR changed
+      user-facing text; the Chinese wording is the maintainer's to fill in.
 - [ ] A translation into a language other than English or Chinese is its own,
       translation-only PR with no code changes in it, or this PR adds none.
 - [ ] I updated `docs/config-language.md` for config changes, or this PR does
