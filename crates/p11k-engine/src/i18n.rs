@@ -310,7 +310,7 @@ mod tests {
     fn chinese_messages_load_and_english_falls_back() {
         let loader = chinese_loader();
         let zh: LanguageIdentifier = fluent_templates::langid!("zh-CN");
-        assert_eq!(loader.lookup(&zh, "wizard-yes"), "是。");
+        assert_eq!(loader.lookup(&zh, "wizard-yes"), "是");
         assert_eq!(
             loader.lookup(&zh, "main-recursive-launch"),
             "检测到递归启动（在 p11k 会话内再次启动 p11k）"
