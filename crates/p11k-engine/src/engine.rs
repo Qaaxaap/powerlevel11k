@@ -525,14 +525,9 @@ pub fn run() -> anyhow::Result<()> {
                         prompt = PromptState::Running; // the next signal paints the input line
                         // The instant header stays flagged until the first signal arrives: that is
                         // where the real header replaces it in place.
-                        if !instant_drawn && config.layout.prompt_add_newline > 0 {
-                            // Relaxed layout: leave N blank rows between consecutive prompts
-                            // (blanked before the header). One CRLF is one blank row; the shell has
-                            // already moved the cursor off the command's output row.
-                            for _ in 0..config.layout.prompt_add_newline {
-                                write!(stdout, "\r\n")?;
-                            }
-                        }
+                        // The relaxed-layout blank rows are part of the shell's prompt string:
+                        // the ack tells the shell how many blank rows to print, so every redraw
+                        // carries them.
                         // Emit the prompt-start marker before the shell prints the prompt string;
                         // the header is not drawn here, the signal that follows the blank rows is
                         // what draws it.
@@ -565,9 +560,17 @@ pub fn run() -> anyhow::Result<()> {
                         // Without the ack the shell falls back to the last prompt shape after
                         // its timeout: the session stays usable. The log says why the header is
                         // missing, instead of the engine exiting mid-session.
-                        if let Err(e) =
-                            write_ack(&state.ack, geometry.header_rows, &prefix, transient_on)
-                        {
+                        if let Err(e) = write_ack(
+                            &state.ack,
+                            geometry.header_rows
+                                + if instant_drawn {
+                                    0
+                                } else {
+                                    config.layout.prompt_add_newline
+                                },
+                            &prefix,
+                            transient_on,
+                        ) {
                             crate::log::log(
                                 crate::log::Level::Error,
                                 &format!("cannot write the prompt ack: {e}"),

@@ -668,6 +668,73 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
 /// Only the marker reprinted after the notification is asserted here: the first prompt of a
 /// cycle is painted by the `p` announce, and zle's own bytes (bracketed paste, cursor keys)
 /// sit between its marker and the paint that covers it.
+/// `prompt-add-newline` is written by the header announce path, so a completion redraw (which
+/// reprints the prompt without an announce) has to insert the blank row itself. Without that,
+/// the relaxed layout disappears the first time the user presses Tab.
+#[test]
+fn prompt_add_newline_survives_a_completion_redraw() {
+    let home = std::env::temp_dir().join(format!("p11k-newline-redraw-{}", std::process::id()));
+    let config_home = home.join("config");
+    let probe = home.join("probe");
+    let _ = std::fs::remove_dir_all(&home);
+    for name in ["probe-alpha", "probe-beta", "probe-gamma"] {
+        std::fs::create_dir_all(probe.join(name)).unwrap();
+    }
+    std::fs::create_dir_all(config_home.join("p11k")).unwrap();
+    std::fs::write(
+        config_home.join("p11k").join("p11k.kdl"),
+        "layout {\n    prompt-add-newline #true\n    left {\n        line { dir }\n    }\n    right {\n        line { status }\n    }\n}\n",
+    )
+    .unwrap();
+
+    let mut eng = EngineSpec::new()
+        .shell("bash")
+        .config_home(config_home.to_str().unwrap())
+        .start();
+    let _ = read_until(&eng.master, "❯", Duration::from_secs(10));
+    // Run one command first: the relaxed-layout rows are part of the prompt string, and the
+    // first prompt (before any command) carries none of them, like the startup prompt.
+    eng.writer.write_all(b"echo ready\n").unwrap();
+    eng.writer.flush().unwrap();
+    let _ = try_read_until(&eng.master, "❯", Duration::from_secs(5));
+    eng.writer
+        .write_all(format!("cd {}/probe-\t\t", probe.display()).as_bytes())
+        .unwrap();
+    eng.writer.flush().unwrap();
+    let _ = read_until(&eng.master, "probe-gamma", Duration::from_secs(5));
+    std::thread::sleep(Duration::from_millis(500));
+    let screen = eng.master.screen();
+    let _ = std::fs::remove_dir_all(&home);
+
+    let mut after_completion = false;
+    let mut blank = false;
+    let mut header = false;
+    for line in screen.lines() {
+        if line.contains("probe-gamma") {
+            after_completion = true;
+            continue;
+        }
+        if !after_completion {
+            continue;
+        }
+        if line.trim().is_empty() {
+            blank = true;
+        } else if line.contains('\u{f115}') || line.contains('❯') {
+            header = true;
+            break;
+        }
+    }
+    assert!(
+        after_completion,
+        "the completion list should be on screen: {screen:?}"
+    );
+    assert!(header, "the prompt header should be on screen: {screen:?}");
+    assert!(
+        blank,
+        "the completion redraw lost the prompt-add-newline row: {screen:?}"
+    );
+}
+
 #[test]
 fn zsh_job_notification_reprint_is_covered() {
     let mut eng = EngineSpec::new().start();
