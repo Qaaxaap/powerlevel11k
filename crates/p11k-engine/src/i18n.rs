@@ -6,10 +6,13 @@
 //! an unset or unparsable value falls back to English.
 //!
 //! `P11K_LOCALEDIR` can point at a directory of `.ftl` files to override the embedded
-//! resources. Tests and translators use it; a release binary needs no data files.
+//! resources. The directory must carry `en.ftl` as the fallback language, or the external
+//! catalogue is rejected with a warning and the embedded one stays in use. Tests and
+//! translators use it; a release binary needs no data files.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use fluent_bundle::FluentValue;
@@ -70,15 +73,34 @@ fn lookup(id: &str, args: Option<&HashMap<Cow<'static, str>, FluentValue<'_>>>) 
     EMBEDDED.lookup_complete(&language, id, args)
 }
 
+/// Whether `dir` is a usable external catalogue. The fallback language has to be present:
+/// without `en.ftl` a language that has no translation would render raw message ids.
+fn external_catalogue_ready(dir: &Path) -> bool {
+    dir.join("en.ftl").is_file()
+}
+
 fn load_external() -> Option<ArcLoader> {
-    let dir = std::path::PathBuf::from(std::env::var_os("P11K_LOCALEDIR")?);
-    if !dir.is_dir() {
+    let dir = PathBuf::from(std::env::var_os("P11K_LOCALEDIR")?);
+    if !external_catalogue_ready(&dir) {
+        eprintln!(
+            "p11k: P11K_LOCALEDIR {} has no en.ftl; using the embedded catalogue",
+            dir.display()
+        );
         return None;
     }
-    ArcLoader::builder(&dir, EN.clone())
+    match ArcLoader::builder(&dir, EN.clone())
         .customize(|bundle| bundle.set_use_isolating(false))
         .build()
-        .ok()
+    {
+        Ok(loader) => Some(loader),
+        Err(error) => {
+            eprintln!(
+                "p11k: cannot load the external catalogue from {}: {error}; using the embedded catalogue",
+                dir.display()
+            );
+            None
+        }
+    }
 }
 
 /// Pick the language from the environment.
@@ -318,6 +340,21 @@ mod tests {
         // A language with no bundle falls back to English.
         let fr: LanguageIdentifier = fluent_templates::langid!("fr");
         assert_eq!(loader.lookup(&fr, "wizard-yes"), "Yes.");
+    }
+
+    /// A directory without the fallback language would render raw message ids for languages
+    /// that have no translation, so the external catalogue requires `en.ftl`.
+    #[test]
+    fn an_external_catalogue_needs_the_fallback_language() {
+        let dir = std::env::temp_dir().join(format!("p11k-locale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create the locale dir");
+        assert!(!external_catalogue_ready(&dir));
+        std::fs::write(dir.join("zh-CN.ftl"), "wizard-yes = 是\n").expect("write zh-CN");
+        assert!(!external_catalogue_ready(&dir));
+        std::fs::write(dir.join("en.ftl"), "wizard-yes = Yes\n").expect("write en");
+        assert!(external_catalogue_ready(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
