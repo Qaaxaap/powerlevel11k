@@ -693,13 +693,28 @@ fn prompt_add_newline_survives_a_completion_redraw() {
         .start();
     let _ = read_until(&eng.master, "❯", Duration::from_secs(10));
     // The first prompt of a session carries no relaxed-layout rows: the header starts the
-    // screen.
+    // screen and every header is followed directly by its input line.
     let startup = screen_settled(&eng.master, Duration::from_secs(2));
-    let first = startup.lines().find(|line| !line.trim().is_empty());
+    let lines: Vec<&str> = startup.lines().collect();
     assert!(
-        first.is_some_and(|line| line.contains('\u{f115}')),
-        "the startup prompt should start with the header and no blank row: {startup:?}"
+        lines.first().is_some_and(|line| line.contains('\u{f115}')),
+        "the startup screen should start with the header: {startup:?}"
     );
+    for (index, line) in lines.iter().enumerate() {
+        if !line.contains('\u{f115}') {
+            continue;
+        }
+        if index > 0 {
+            assert!(
+                !lines[index - 1].trim().is_empty(),
+                "a startup prompt has a blank row before the header: {startup:?}"
+            );
+        }
+        assert!(
+            lines.get(index + 1).is_some_and(|next| next.contains('❯')),
+            "a startup prompt has a blank row between the header and the input line: {startup:?}"
+        );
+    }
     // Run one command first: the relaxed-layout rows are part of the prompt string, and the
     // first prompt (before any command) carries none of them, like the startup prompt.
     eng.writer.write_all(b"echo ready\n").unwrap();
@@ -710,38 +725,20 @@ fn prompt_add_newline_survives_a_completion_redraw() {
         .unwrap();
     eng.writer.flush().unwrap();
     let _ = read_until(&eng.master, "probe-gamma", Duration::from_secs(5));
-    // Wait for the redrawn prompt instead of a fixed sleep: on a loaded runner the list can
-    // arrive before the prompt is repainted.
-    let _ = try_read_until(&eng.master, "❯", Duration::from_secs(5));
-    let screen = screen_settled(&eng.master, Duration::from_secs(2));
+    // Read the reprint up to the paint: the shell prints the prompt string as blank rows
+    // before the engine paints the header, so the byte stream pins the row count without
+    // depending on how the terminal emulator settles.
+    let reprint = try_read_until(&eng.master, "\x1b7", Duration::from_secs(5));
     let _ = std::fs::remove_dir_all(&home);
 
-    let mut after_completion = false;
-    let mut blank_rows = 0usize;
-    let mut header = false;
-    for line in screen.lines() {
-        if line.contains("probe-gamma") {
-            after_completion = true;
-            continue;
-        }
-        if !after_completion {
-            continue;
-        }
-        if line.trim().is_empty() {
-            blank_rows += 1;
-        } else if line.contains('\u{f115}') || line.contains('❯') {
-            header = true;
-            break;
-        }
-    }
-    assert!(
-        after_completion,
-        "the completion list should be on screen: {screen:?}"
-    );
-    assert!(header, "the prompt header should be on screen: {screen:?}");
+    let lead = reprint
+        .split_once("\r\n")
+        .map(|(_, rest)| rest)
+        .unwrap_or("");
+    let lead_rows = lead.matches("\r\n").count();
     assert_eq!(
-        blank_rows, 1,
-        "the completion redraw should leave exactly one prompt-add-newline row: {screen:?}"
+        lead_rows, 2,
+        "the completion redraw should print the header row and one blank row: {reprint:?}"
     );
 }
 
