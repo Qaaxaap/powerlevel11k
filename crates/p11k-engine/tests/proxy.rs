@@ -660,17 +660,9 @@ fn bash_prompt_reprint_keeps_the_placeholder_covered() {
     );
 }
 
-/// A background job finishing while the prompt sits idle makes zsh print the notification and
-/// redraw the prompt: `PROMPT` (blank rows + marker) goes out again, and no announce covers it
-/// — zle-line-init only runs when the input line is entered, not when it is redrawn. The
-/// marker matching therefore has to run for zsh too, for as long as the input line is idle.
-///
-/// Only the marker reprinted after the notification is asserted here: the first prompt of a
-/// cycle is painted by the `p` announce, and zle's own bytes (bracketed paste, cursor keys)
-/// sit between its marker and the paint that covers it.
-/// `prompt-add-newline` is written by the header announce path, so a completion redraw (which
-/// reprints the prompt without an announce) has to insert the blank row itself. Without that,
-/// the relaxed layout disappears the first time the user presses Tab.
+/// `prompt-add-newline` rows are part of the shell's prompt string, so a completion redraw
+/// reprints them. Without that, the relaxed layout would disappear the first time the user
+/// presses Tab.
 #[test]
 fn prompt_add_newline_survives_a_completion_redraw() {
     let home = std::env::temp_dir().join(format!("p11k-newline-redraw-{}", std::process::id()));
@@ -742,6 +734,14 @@ fn prompt_add_newline_survives_a_completion_redraw() {
     );
 }
 
+/// A background job finishing while the prompt sits idle makes zsh print the notification and
+/// redraw the prompt: `PROMPT` (blank rows + marker) goes out again, and no announce covers it
+/// — zle-line-init only runs when the input line is entered, not when it is redrawn. The
+/// marker matching therefore has to run for zsh too, for as long as the input line is idle.
+///
+/// Only the marker reprinted after the notification is asserted here: the first prompt of a
+/// cycle is painted by the `p` announce, and zle's own bytes (bracketed paste, cursor keys)
+/// sit between its marker and the paint that covers it.
 #[test]
 fn zsh_job_notification_reprint_is_covered() {
     let mut eng = EngineSpec::new().start();
