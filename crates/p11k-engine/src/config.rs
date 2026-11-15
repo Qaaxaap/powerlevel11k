@@ -70,9 +70,9 @@ impl Color {
             {
                 return Ok(Color::Rgb(r, g, b));
             }
-            return Err(format!(
-                "{key}: {}",
-                t_args("config-invalid-hex-colour", &[("value", s)])
+            return Err(t_args(
+                "config-invalid-hex-colour",
+                &[("key", key), ("value", s)],
             ));
         }
         if s == "default" {
@@ -81,10 +81,10 @@ impl Color {
         if Self::NAMES.contains(&s) {
             return Ok(Color::Named(s.to_string()));
         }
-        Err(format!(
-            "{key}: {}; {}",
-            t_args("config-unknown-colour-name", &[("name", s)]),
-            t("config-colour-help")
+        let help = t("config-colour-help");
+        Err(t_args(
+            "config-unknown-colour-name",
+            &[("key", key), ("name", s), ("help", &help)],
         ))
     }
 
@@ -93,15 +93,13 @@ impl Color {
         match v {
             KdlValue::String(s) => Color::from_str(s, key),
             KdlValue::Integer(n) => u8::try_from(*n).map(Color::Xterm).map_err(|_| {
-                format!(
-                    "{key}: {}",
-                    t_args(
-                        "config-colour-index-out-of-range",
-                        &[("index", &n.to_string())]
-                    )
+                let index = n.to_string();
+                t_args(
+                    "config-colour-index-out-of-range",
+                    &[("key", key), ("index", &index)],
                 )
             }),
-            _ => Err(format!("{key}: {}", t("config-expected-colour"))),
+            _ => Err(t_args("config-expected-colour", &[("key", key)])),
         }
     }
 }
