@@ -552,3 +552,87 @@ fn a_failed_inner_shell_is_reported() {
     );
     let _ = tmux(&sandbox.socket, &["kill-server"]);
 }
+
+/// Poll the announce file until it has at least `min` records or the timeout expires.
+fn wait_for_announce(path: &Path, min: usize, timeout: Duration) -> Vec<String> {
+    let start = Instant::now();
+    loop {
+        let records: Vec<String> = std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        if records.len() >= min || start.elapsed() >= timeout {
+            return records;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The command duration must not depend on the locale's fraction separator. Bash and zsh print
+/// `EPOCHREALTIME` with the separator from `LC_NUMERIC`: a comma in `it_IT`, another character in
+/// other locales. The templates parse that string, so a separator they do not expect either
+/// aborts the arithmetic (bash) or produces a wrong number (zsh).
+#[test]
+fn a_locale_separator_does_not_break_the_command_duration() {
+    const SEPARATORS: [&str; 3] = [".", ",", "\u{066b}"];
+    let mut failures = Vec::new();
+    for shell in ["bash", "zsh"] {
+        // Digits printed after the separator: bash uses six (microseconds), zsh ten.
+        let fraction = if shell == "bash" {
+            "000000"
+        } else {
+            "0000000000"
+        };
+        let mut sandbox = Sandbox::new(&format!("duration-{shell}"));
+        sandbox.copy_engine_rc(shell);
+        sandbox.start_shell_with_ack(shell);
+        screen_until(&sandbox.socket, "ACK>", 1, Duration::from_secs(10));
+        if shell == "zsh" {
+            // The preexec hook sets the start on every command; remove it so the test can plant
+            // a start value that the next command would otherwise overwrite.
+            send_keys(&sandbox.socket, "add-zsh-hook -d preexec _p11k_preexec");
+            screen_until(&sandbox.socket, "ACK>", 2, Duration::from_secs(5));
+        }
+        for separator in SEPARATORS {
+            std::fs::write(&sandbox.announce, "").expect("clear the announce file");
+            // The sandbox has no engine, so plant an ack for every prompt: otherwise each round
+            // waits out the ack timeout and the screen fills with that warning.
+            std::fs::write(&sandbox.ack, "1\nACK> \n1\n").expect("write the ack");
+            // The start lies five seconds in the past, so a working calculation reports about
+            // 5000 ms. The separator is the only difference between the rounds.
+            let command =
+                format!("_p11k_cmd_start=\"$(( $(date +%s) - 5 )){separator}{fraction}\"; :");
+            send_keys(&sandbox.socket, &command);
+            let records = wait_for_announce(&sandbox.announce, 1, Duration::from_secs(5));
+            let Some(record) = records.iter().rev().find(|line| line.starts_with("h\t")) else {
+                failures.push(format!(
+                    "{shell} with {separator:?}: no announce record; records: {records:?}; \
+                     screen: {:?}",
+                    screen(&sandbox.socket)
+                ));
+                continue;
+            };
+            let exec = record
+                .split('\t')
+                .nth(6)
+                .and_then(|v| v.parse::<u64>().ok());
+            match exec {
+                Some(ms) if (4000..=6500).contains(&ms) => {}
+                other => failures.push(format!(
+                    "{shell} with {separator:?}: exec_ms {other:?} (expected about 5000); \
+                     record: {record:?}; screen: {:?}",
+                    screen(&sandbox.socket)
+                )),
+            }
+            let text = screen(&sandbox.socket);
+            if text.contains("value too great") || text.contains("bad math expression") {
+                failures.push(format!(
+                    "{shell} with {separator:?}: the shell reported an error: {text:?}"
+                ));
+            }
+        }
+        let _ = tmux(&sandbox.socket, &["kill-server"]);
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
