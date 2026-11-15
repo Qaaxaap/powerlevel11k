@@ -56,7 +56,7 @@ p11k (powerlevel11k) is a prompt engine written in Rust. The engine runs as a lo
 - The maintainer maintains the Chinese documentation and the Chinese interface in sync with the English text. Do not change the Chinese versions.
 - Terminology follows `docs/glossary.md`.
 - Comments explain causes, constraints, units and failure modes. Do not restate what the code already says.
-- User-facing strings follow the gettext msgid style: lowercase start, no closing period, details after a colon.
+- User-facing strings are Fluent messages: keys live in `crates/p11k-engine/locales/en.ftl` and `locales/zh-CN.ftl`. The English value follows the old msgid style: lowercase start, no closing period, details after a colon.
 - When the English text disagrees with the code's behaviour, the code wins. Point out the mismatch in the pull request.
 
 ## Pull request and commit text
