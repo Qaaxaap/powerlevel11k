@@ -121,14 +121,12 @@ msgid "recursive launch detected (p11k started inside a p11k session)"
 msgstr "检测到递归启动（在 p11k 会话内再次启动 p11k）"
 
 #: crates/p11k-engine/src/main.rs:127
-#, fuzzy
 msgid "make sure the bootstrap line in your shell rc is guarded, e.g.:"
-msgstr "请确认 ~/.zshrc 中的引导行包含递归判断，例如："
+msgstr "请确认 shell 启动文件中的引导行带有保护条件，例如："
 
 #: crates/p11k-engine/src/main.rs:132
-#, fuzzy
 msgid "cannot exec the shell: "
-msgstr "exec zsh -f 失败: "
+msgstr "无法启动 shell："
 
 # ---- wizard：选项 ----
 #: crates/p11k-engine/src/presets.rs:431
