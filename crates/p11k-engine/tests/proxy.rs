@@ -692,6 +692,14 @@ fn prompt_add_newline_survives_a_completion_redraw() {
         .config_home(config_home.to_str().unwrap())
         .start();
     let _ = read_until(&eng.master, "❯", Duration::from_secs(10));
+    // The first prompt of a session carries no relaxed-layout rows: the header starts the
+    // screen.
+    let startup = screen_settled(&eng.master, Duration::from_secs(2));
+    let first = startup.lines().find(|line| !line.trim().is_empty());
+    assert!(
+        first.is_some_and(|line| line.contains('\u{f115}')),
+        "the startup prompt should start with the header and no blank row: {startup:?}"
+    );
     // Run one command first: the relaxed-layout rows are part of the prompt string, and the
     // first prompt (before any command) carries none of them, like the startup prompt.
     eng.writer.write_all(b"echo ready\n").unwrap();
@@ -702,12 +710,14 @@ fn prompt_add_newline_survives_a_completion_redraw() {
         .unwrap();
     eng.writer.flush().unwrap();
     let _ = read_until(&eng.master, "probe-gamma", Duration::from_secs(5));
-    std::thread::sleep(Duration::from_millis(500));
-    let screen = eng.master.screen();
+    // Wait for the redrawn prompt instead of a fixed sleep: on a loaded runner the list can
+    // arrive before the prompt is repainted.
+    let _ = try_read_until(&eng.master, "❯", Duration::from_secs(5));
+    let screen = screen_settled(&eng.master, Duration::from_secs(2));
     let _ = std::fs::remove_dir_all(&home);
 
     let mut after_completion = false;
-    let mut blank = false;
+    let mut blank_rows = 0usize;
     let mut header = false;
     for line in screen.lines() {
         if line.contains("probe-gamma") {
@@ -718,7 +728,7 @@ fn prompt_add_newline_survives_a_completion_redraw() {
             continue;
         }
         if line.trim().is_empty() {
-            blank = true;
+            blank_rows += 1;
         } else if line.contains('\u{f115}') || line.contains('❯') {
             header = true;
             break;
@@ -729,9 +739,9 @@ fn prompt_add_newline_survives_a_completion_redraw() {
         "the completion list should be on screen: {screen:?}"
     );
     assert!(header, "the prompt header should be on screen: {screen:?}");
-    assert!(
-        blank,
-        "the completion redraw lost the prompt-add-newline row: {screen:?}"
+    assert_eq!(
+        blank_rows, 1,
+        "the completion redraw should leave exactly one prompt-add-newline row: {screen:?}"
     );
 }
 
