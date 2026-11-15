@@ -24,6 +24,8 @@ strip-ansi-escapes = "0.2"
 wait-timeout = "0.2"
 walkdir = "2"
 globset = "0.4"
+fluent-templates = "0.15"
+fluent-bundle = "0.16"
 insta = "1"
 
 [profile.release]

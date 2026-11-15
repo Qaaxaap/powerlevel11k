@@ -9,7 +9,6 @@
 use crate::config::{
     Color, Config, Element, Frame, FramePiece, Prop, Segment, Separators, StateSpec, Style,
 };
-use crate::i18n::msgid;
 
 /// Four classic segment backgrounds (Lightest/Light/Dark/Darkest).
 pub const BG_COLORS: [u8; 4] = [240, 238, 236, 234];
@@ -428,10 +427,10 @@ impl PresetKind {
     /// Style name shown in the wizard (aligns with p10k `ask_style`'s wording).
     pub fn title(self) -> &'static str {
         match self {
-            PresetKind::Lean => msgid("Lean."),
-            PresetKind::Classic => msgid("Classic."),
-            PresetKind::Rainbow => msgid("Rainbow."),
-            PresetKind::Pure => msgid("Pure."),
+            PresetKind::Lean => "preset-lean",
+            PresetKind::Classic => "preset-classic",
+            PresetKind::Rainbow => "preset-rainbow",
+            PresetKind::Pure => "preset-pure",
         }
     }
 

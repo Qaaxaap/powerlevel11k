@@ -194,8 +194,8 @@ pub fn run() -> anyhow::Result<()> {
     if mid == 0 {
         // Middle process: spawn the inner shell (parent = this process), then exit at once
         // so it is orphaned. Only async-signal-safe work is allowed here: the engine is
-        // multi-threaded, so calling malloc after fork (println/gettext both do) risks
-        // deadlock. The error code goes back to the parent to print.
+        // multi-threaded, so calling malloc after fork (println and the translation lookup
+        // both do) risks deadlock. The error code goes back to the parent to print.
         let status = match pair.slave.spawn_command(cmd) {
             Ok(_) => 0,
             Err(_) => 1,
@@ -210,7 +210,7 @@ pub fn run() -> anyhow::Result<()> {
     // engine with no shell: no prompt and no commands, with only "the shell produced no output"
     // upstream. Report the failure and exit instead of carrying on.
     if _st != 0 {
-        anyhow::bail!("{}", t("the inner shell failed to start"));
+        anyhow::bail!("{}", t("engine-inner-shell-failed"));
     }
     drop(pair.slave);
 

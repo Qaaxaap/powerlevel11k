@@ -17,7 +17,7 @@ mod write;
 use std::io::{self, Write};
 
 use crate::config::IconMode;
-use crate::i18n::{msgid, t};
+use crate::i18n::t;
 use crate::presets::PresetKind;
 
 use self::input::{Input, StdinInput};
@@ -51,7 +51,7 @@ pub fn run() -> anyhow::Result<()> {
     // The wizard reads single keystrokes; without a terminal there is nothing to read and the
     // raw-mode switch cannot apply. Fail instead of reading EOF as an answer.
     if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
-        anyhow::bail!("{}", t("p11k configure needs an interactive terminal"));
+        anyhow::bail!("{}", t("wizard-needs-terminal"));
     }
     let _raw = crate::state::RawTerminal::enter(libc::STDIN_FILENO)?;
     let mut out = io::stdout();
@@ -109,9 +109,9 @@ fn flow(out: &mut dyn Write, input: &mut dyn Input) -> Answer<()> {
     if !ask_yn(
         out,
         input,
-        msgid("Use this theme?"),
-        msgid("Yes, write the config."),
-        msgid("No."),
+        "wizard-use-theme",
+        "wizard-yes-write-config",
+        "wizard-no",
         None,
     )? {
         return Err(Control::Quit);
@@ -123,7 +123,7 @@ fn flow(out: &mut dyn Write, input: &mut dyn Input) -> Answer<()> {
 
 fn goodbye(out: &mut dyn Write) -> anyhow::Result<()> {
     let _ = line(out, "");
-    let _ = line(out, &t("p11k configuration wizard has been aborted."));
-    let _ = line(out, &t("Nothing was written."));
+    let _ = line(out, &t("wizard-aborted"));
+    let _ = line(out, &t("wizard-nothing-written"));
     Ok(())
 }

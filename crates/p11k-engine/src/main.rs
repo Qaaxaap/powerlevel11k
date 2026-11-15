@@ -54,7 +54,7 @@ mod window;
 mod wizard;
 
 use cli::{Command, apply_log_level, parse, reload_engine};
-use i18n::t;
+use i18n::{t, t_args};
 
 /// The shell to fall back to after a recursive launch: `$SHELL`, or zsh when it is unset.
 fn clean_shell() -> std::path::PathBuf {
@@ -93,7 +93,7 @@ fn main() -> anyhow::Result<()> {
     // just stopping. Dying on the signal is what every other Unix tool does, and the engine's
     // own stdout is a terminal, which is not affected either way.
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    // Text is translated by locale (English by default; Chinese in po/zh_CN.po).
+    // Text is translated by locale (English by default; Chinese in locales/zh-CN.ftl).
     i18n::init();
     // clap parses once here. `--version` and `--help` are handled before any terminal state is
     // touched, so they work in pipes and environments without a tty (CI, version checks).
@@ -123,13 +123,16 @@ fn main() -> anyhow::Result<()> {
             "p11k: {}\n\
              p11k: {}\n\
              p11k:   [[ -z \"$P11K_ENGINE\" ]] && exec p11k --shell {}",
-            t("recursive launch detected (p11k started inside a p11k session)"),
-            t("make sure the bootstrap line in your shell rc is guarded, e.g.:"),
+            t("main-recursive-launch"),
+            t("main-bootstrap-hint"),
             name
         );
         use std::os::unix::process::CommandExt;
         let err = clean_shell_command(&shell).exec();
-        eprintln!("p11k: {}{err}", t("cannot exec the shell: "));
+        eprintln!(
+            "p11k: {}",
+            t_args("main-cannot-exec-shell", &[("detail", &err.to_string())])
+        );
         std::process::exit(1);
     }
 

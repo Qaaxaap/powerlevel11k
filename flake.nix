@@ -111,7 +111,6 @@
           packages = with pkgs; [
             (rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
             rust-analyzer
-            gettext
             zsh
             # The engine's bash tests drive readline: the placeholder protocol, clear-screen and
             # the completion pager. nixpkgs' default `bash` is the non-interactive build (no
@@ -221,7 +220,6 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             cmake
-            gettext
             git
           ];
           nativeCheckInputs = with pkgs; [
@@ -261,17 +259,8 @@
           nativeBuildInputs = with pkgs; [
             pkg-config
             cmake
-            gettext
           ];
           doCheck = false;
-          P11K_LOCALEDIR = "${placeholder "out"}/share/locale";
-          postInstall = ''
-            for po in crates/p11k-engine/po/*.po; do
-              lang=$(basename "$po" .po)
-              mkdir -p "$out/share/locale/$lang/LC_MESSAGES"
-              msgfmt -o "$out/share/locale/$lang/LC_MESSAGES/p11k.mo" "$po"
-            done
-          '';
           meta = {
             description = "powerlevel10k-compatible prompt engine (pty host + gitstatusd-compatible daemon)";
             homepage = "https://github.com/Qaaxaap/powerlevel11k";

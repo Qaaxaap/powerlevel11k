@@ -3,7 +3,7 @@
 use std::io::Write;
 
 use crate::config::{Config, Element};
-use crate::i18n::{msgid, t};
+use crate::i18n::{t, t_args};
 
 use super::Answer;
 use super::input::Input;
@@ -44,14 +44,11 @@ pub(super) fn set_prefix(cfg: &mut Config, name: &str, prefix: &str) {
 
 pub(super) fn write_config(out: &mut dyn Write, input: &mut dyn Input, cfg: &Config) -> Answer<()> {
     let path = crate::config::default_config_path();
-    let p = path.display();
+    let p = path.display().to_string();
     if path.exists() {
         // p10k: `p11k config file already exists. Overwrite <path>?`
-        let title = format!(
-            "{} {p}?",
-            t(msgid("p11k config file already exists. Overwrite"))
-        );
-        if !ask_yn_title(out, input, &title, msgid("Yes."), msgid("No."), None)? {
+        let title = t_args("wizard-overwrite", &[("path", &p)]);
+        if !ask_yn_title(out, input, &title, "wizard-yes", "wizard-no", None)? {
             return Err(super::Control::Quit);
         }
     }
@@ -64,9 +61,9 @@ pub(super) fn write_config(out: &mut dyn Write, input: &mut dyn Input, cfg: &Con
         .unwrap_or_else(|_| "p11k".into());
     line(out, "")?;
     // p10k: `New config: <path>.`
-    line(out, &format!("{} {p}.", t("New config:")))?;
+    line(out, &format!("{} {p}.", t("wizard-new-config")))?;
     line(out, "")?;
-    line(out, &t("Add one of these to your shell rc:"))?;
+    line(out, &t("wizard-add-to-rc"))?;
     line(
         out,
         &format!("  zsh:  [[ -z \"$P11K_ENGINE\" ]] && exec {exe} --shell zsh --config {p}"),
@@ -87,11 +84,6 @@ pub(super) fn write_config(out: &mut dyn Write, input: &mut dyn Input, cfg: &Con
         ),
     )?;
     line(out, "")?;
-    line(
-        out,
-        &t(
-            "The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise they will stack.",
-        ),
-    )?;
+    line(out, &t("wizard-engine-is-theme"))?;
     Ok(())
 }

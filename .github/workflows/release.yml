@@ -40,14 +40,13 @@ jobs:
       - name: Install Rust
         run: |
           apt-get update
-          apt-get install -y curl cmake pkg-config gettext
+          apt-get install -y curl cmake pkg-config
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
             sh -s -- -y --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Build
         run: |
-          export P11K_LOCALEDIR=/usr/share/locale
           cargo build --release --locked
 
       - name: Stage
@@ -66,20 +65,14 @@ jobs:
           tarball="p11k-$version-x86_64-linux"
           stage="$tarball"
           rm -rf "$stage" debroot
-          mkdir -p "$stage/bin" "$stage/share/locale/zh_CN/LC_MESSAGES"
+          mkdir -p "$stage/bin"
           cp target/release/p11k target/release/p11k-d "$stage/bin/"
           cp README.md README.zh.md COPYING COPYING.LESSER "$stage/"
-          msgfmt -o "$stage/share/locale/zh_CN/LC_MESSAGES/p11k.mo" \
-            crates/p11k-engine/po/zh_CN.po
           tar czf "$tarball.tar.gz" "$stage"
 
           root=debroot
-          mkdir -p "$root/DEBIAN" "$root/usr/bin" \
-            "$root/usr/share/locale/zh_CN/LC_MESSAGES" \
-            "$root/usr/share/doc/p11k"
+          mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/share/doc/p11k"
           cp target/release/p11k target/release/p11k-d "$root/usr/bin/"
-          cp "$stage/share/locale/zh_CN/LC_MESSAGES/p11k.mo" \
-            "$root/usr/share/locale/zh_CN/LC_MESSAGES/"
           gzip -9 -c README.md > "$root/usr/share/doc/p11k/README.md.gz"
           # Debian packages must carry the license under /usr/share/doc/<package>/copyright.
           cp COPYING COPYING.LESSER "$root/usr/share/doc/p11k/"

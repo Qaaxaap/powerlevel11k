@@ -21,11 +21,10 @@ just build         # the binaries: p11k and p11k-d
 
 - `just deny`: dependency licences, bans and advisories
 - `just spell`: typos
-- `just i18n`: regenerate the gettext template
 - `just changelog`: regenerate `CHANGELOG.md` from the commit history
 - `just demo`: re-record `docs/images/`
 
-The devShell exports `LOCALE_ARCHIVE`. Without it, `setlocale("zh_CN.UTF-8")` fails and the i18n test has to skip.
+The devShell exports `LOCALE_ARCHIVE` so the proxy tests can run under `C.UTF-8`.
 
 To run the engine straight from a build:
 
@@ -91,18 +90,15 @@ English is the working language of this repository: code, comments, commit messa
 
 The author is not a native English speaker, so the English text may contain translation errors. When the English text disagrees with the code's behaviour, the code wins. Point out the mismatch in a pull request or issue.
 
-User-facing text uses gettext: English msgids in the code, catalogs in `crates/p11k-engine/po/`. When adding, removing or rewording user-facing text:
+User-facing text uses Fluent: message ids in the code, messages in `crates/p11k-engine/locales/`. When adding, removing or rewording user-facing text:
 
-```bash
-tools/i18n.sh extract   # xgettext -> po/p11k.pot
-tools/i18n.sh update    # msgmerge the new entries into every po/*.po
-```
+1. Add or update the message in `locales/en.ftl`. The id is stable and the value is the English text. Write it like a message id: lowercase start, no closing period, details after a colon.
+2. Add the same id to `locales/zh-CN.ftl` with the Chinese text.
+3. Use the id at the call site: `t("wizard-yes")`. A message with variables takes them from the call site: `t_args("cli-unknown-shell", &[("shell", name)])`; the `.ftl` value places `{ $shell }`.
+4. `cargo test -p p11k-engine` fails when the two catalogues disagree, when a source references an id that `en.ftl` does not define, or when a message is not referenced anywhere.
+5. Adding a language: create `locales/<lang>.ftl` with the same ids. The language is chosen from `P11K_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG` and `LANGUAGE`; English is the fallback. `P11K_LOCALEDIR` can point at a directory of `.ftl` files to test a catalogue without rebuilding.
 
-Then fill in the new `msgstr`s. Three rules are enforced by the test suite:
-
-- Text translated where it is written uses `t("…")`. Text collected and translated later (wizard question titles and options) must be wrapped in `msgid("…")` so the extractor sees it. Both must be plain string literals.
-- `cargo test -p p11k-engine` fails if the sources, `po/p11k.pot` and the catalogs disagree in either direction. A missing extract or update, or a stale entry, cannot pass.
-- Adding a language: copy `po/zh_CN.po` to `po/<lang>.po`, translate the `msgstr`s and rebuild. The nix package compiles everything under `po/`, so `flake.nix` needs no change.
+The catalogues are embedded in the binary: a release needs no data files and no external translation tools.
 
 ## AI policy
 

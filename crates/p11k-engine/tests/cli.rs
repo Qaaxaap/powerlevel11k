@@ -12,7 +12,7 @@ static SESSION_SEQ: AtomicU32 = AtomicU32::new(0);
 fn p11k(args: &[&str]) -> (String, String, i32) {
     let out = Command::new(env!("CARGO_BIN_EXE_p11k"))
         .args(args)
-        // The assertions check English text, while help goes through gettext: a host locale
+        // The assertions check English text, while help is translated: a host locale
         // (especially LC_MESSAGES, which outranks LANG) set to zh_CN would print Chinese.
         .env("LC_ALL", "C")
         .env_remove("LANGUAGE")

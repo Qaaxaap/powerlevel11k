@@ -63,9 +63,9 @@ fn ask_yn_scripted(bytes: &[u8]) -> Answer<bool> {
     ask_yn(
         &mut Vec::new(),
         &mut FakeInput::new(bytes),
-        "Question?",
-        "Yes.",
-        "No.",
+        "wizard-use-theme",
+        "wizard-yes",
+        "wizard-no",
         None,
     )
 }
@@ -95,7 +95,14 @@ fn run_question<T>(
 #[test]
 fn ask_yn_title_uses_the_dynamic_title() {
     let (answer, screen) = run_question(b"y", |out, input| {
-        ask_yn_title(out, input, "Overwrite ./p11k.kdl?", "Yes.", "No.", None)
+        ask_yn_title(
+            out,
+            input,
+            "Overwrite ./p11k.kdl?",
+            "wizard-yes",
+            "wizard-no",
+            None,
+        )
     });
     assert!(matches!(answer, Ok(true)));
     assert!(
@@ -382,18 +389,27 @@ fn prefixes_and_transient_options() {
     );
 }
 
-/// apply applies the same edit that the preview showed, on a clone.
 #[test]
 fn ask_apply_edits_the_real_config() {
     let mut cfg = presets::lean(false);
     let (answer, screen) = run_question(b"2", |o, i| {
-        ask_apply(o, i, "Pick.", &["A.", "B."], &mut cfg, |c, n| {
-            c.layout.prompt_add_newline = n;
-        })
+        ask_apply(
+            o,
+            i,
+            "wizard-use-theme",
+            &["wizard-yes", "wizard-no"],
+            &mut cfg,
+            |c, n| {
+                c.layout.prompt_add_newline = n;
+            },
+        )
     });
     assert!(matches!(answer, Ok(())));
     assert_eq!(cfg.layout.prompt_add_newline, 1);
-    assert!(screen.contains("Pick."), "screen: {screen:?}");
+    assert!(
+        screen.contains("Use this theme?") && screen.contains("Yes."),
+        "screen: {screen:?}"
+    );
     // The questions offer restart and quit on every screen.
     assert!(
         screen.contains("(r)") && screen.contains("(q)"),
@@ -414,7 +430,7 @@ fn choice_scripted(bytes: &[u8], options: &[&str]) -> Answer<usize> {
     ask_choice_preview(
         &mut Vec::new(),
         &mut FakeInput::new(bytes),
-        "Pick.",
+        "wizard-use-theme",
         options,
         |_| Vec::new(),
     )
