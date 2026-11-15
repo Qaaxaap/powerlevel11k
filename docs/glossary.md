@@ -80,7 +80,7 @@ The Fixed form column gives the form to use, and the forms to avoid. The Chinese
 | Conventional Commits | 约定式提交 | The commit title format | Do not write “regular commits” |
 | message id | 消息 id | The Fluent key in `crates/p11k-engine/locales/*.ftl` | Do not translate |
 | translation catalogue | 翻译词条文件 | `crates/p11k-engine/locales/<lang>.ftl` | Do not write “translation library” |
-| prompt heads / prompt tails | 提示符首端符 / 尾端符 | The cap glyphs at the head and tail of a prompt line | Keep “heads” / “tails” in brackets when the wizard label is translated |
+| prompt heads / prompt tails | 提示符首端符 / 尾端符 | The cap glyphs at the head and tail of a prompt line | The English words “heads” / “tails” may follow in brackets |
 | prompt colours | 提示符配色 | The “Prompt Colors” wizard option for the whole prompt | Use “提示符颜色” only for the singular “Prompt Color” |
 | squash | 压缩合并 | Merging a pull request as one commit | Do not write “squeeze” |
 | pull request / PR | 拉取请求 | The change submission flow | Write “拉取请求（PR）” at first mention in Chinese, then PR |
