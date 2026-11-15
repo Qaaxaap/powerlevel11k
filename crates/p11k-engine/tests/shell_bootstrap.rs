@@ -273,9 +273,18 @@ impl Sandbox {
     /// The command line that starts `shell` with the copied rc, a fake announce path and this
     /// sandbox's ack path.
     fn shell_cmd(&self, shell: &str) -> String {
+        self.shell_cmd_env(shell, &[])
+    }
+
+    /// Like [`Self::shell_cmd`] with extra environment entries, such as a locale.
+    fn shell_cmd_env(&self, shell: &str, extra: &[(&str, &str)]) -> String {
+        let extra: String = extra
+            .iter()
+            .map(|(key, value)| format!("{key}='{value}' "))
+            .collect();
         match shell {
             "zsh" => format!(
-                "cd '{}' && env ZDOTDIR='{}' P11K_ANNOUNCE='{}' P11K_ACK='{}' \
+                "cd '{}' && env {extra}ZDOTDIR='{}' P11K_ANNOUNCE='{}' P11K_ACK='{}' \
                  P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' P11K_USER_ZSHRC=/dev/null \
                  zsh -i",
                 self.dir.path().display(),
@@ -284,7 +293,7 @@ impl Sandbox {
                 self.ack.display(),
             ),
             "bash" => format!(
-                "cd '{}' && env P11K_ANNOUNCE='{}' P11K_ACK='{}' \
+                "cd '{}' && env {extra}P11K_ANNOUNCE='{}' P11K_ACK='{}' \
                  P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' P11K_USER_ZSHRC=/dev/null \
                  bash --rcfile '{}' -i",
                 self.dir.path().display(),
@@ -293,7 +302,7 @@ impl Sandbox {
                 self.rc.join(".bashrc").display(),
             ),
             "fish" => format!(
-                "cd '{}' && env XDG_CONFIG_HOME='{}' P11K_ANNOUNCE='{}' P11K_ACK='{}' \
+                "cd '{}' && env {extra}XDG_CONFIG_HOME='{}' P11K_ANNOUNCE='{}' P11K_ACK='{}' \
                  P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' fish -i",
                 self.dir.path().display(),
                 self.rc.display(),
@@ -635,4 +644,72 @@ fn a_locale_separator_does_not_break_the_command_duration() {
         let _ = tmux(&sandbox.socket, &["kill-server"]);
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Whether the host can switch to `it_IT.UTF-8`. The flake provides it in the devShell and in
+/// the checks through `localesOf`; a host without it skips the test, because the
+/// injected-separator test covers the parser on its own.
+fn comma_locale_available() -> bool {
+    let output = Command::new("bash")
+        .args(["-c", "printf %s \"$EPOCHREALTIME\""])
+        .env("LC_ALL", "it_IT.UTF-8")
+        .env("LANG", "it_IT.UTF-8")
+        .output();
+    // A working comma locale puts a comma in EPOCHREALTIME. A missing locale keeps the previous
+    // locale or reports the failure on stderr, and leaves no comma in the value.
+    output.is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains(','))
+}
+
+/// The runtime path from the bug report: bash takes the EPOCHREALTIME fraction separator from
+/// `LC_NUMERIC`, so a comma locale has to produce the same duration as the dot locale. Zsh
+/// prints a dot under the same locale in this version, so its case checks the duration under
+/// the locale; the comma branch stays covered by the injected-separator test.
+#[test]
+fn a_real_comma_locale_reports_the_command_duration() {
+    if !comma_locale_available() {
+        // The devShell and the flake checks carry it_IT.UTF-8 (flake.nix, `localesOf`), so this
+        // test runs there. A host without the locale skips it.
+        eprintln!("skipping: it_IT.UTF-8 is not available on this host");
+        return;
+    }
+    for shell in ["bash", "zsh"] {
+        let mut sandbox = Sandbox::new(&format!("comma-locale-{shell}"));
+        sandbox.copy_engine_rc(shell);
+        std::fs::write(&sandbox.ack, "1\nOK> \n1\n").expect("write the ack");
+        new_session(
+            &sandbox.socket,
+            &sandbox.shell_cmd_env(shell, &[("LC_ALL", "it_IT.UTF-8"), ("LANG", "it_IT.UTF-8")]),
+        );
+        let text = screen_until(&sandbox.socket, "OK>", 1, Duration::from_secs(10));
+        assert!(
+            text.contains("OK>"),
+            "{shell}: the prompt did not appear; screen: {text:?}"
+        );
+        std::fs::write(&sandbox.announce, "").expect("clear the announce file");
+        std::fs::write(&sandbox.ack, "1\nOK> \n1\n").expect("write the ack");
+        // A real command: the shell measures it with its own timestamps under the locale.
+        send_keys(&sandbox.socket, "sleep 2");
+        let records = wait_for_announce(&sandbox.announce, 1, Duration::from_secs(10));
+        let Some(record) = records.iter().rev().find(|line| line.starts_with("h\t")) else {
+            panic!(
+                "{shell}: no announce record; records: {records:?}; screen: {:?}",
+                screen(&sandbox.socket)
+            );
+        };
+        let exec = record
+            .split('\t')
+            .nth(6)
+            .and_then(|v| v.parse::<u64>().ok());
+        assert!(
+            matches!(exec, Some(ms) if (1500..=2600).contains(&ms)),
+            "{shell}: exec_ms {exec:?} (expected about 2000); record: {record:?}; screen: {:?}",
+            screen(&sandbox.socket)
+        );
+        let text = screen(&sandbox.socket);
+        assert!(
+            !text.contains("value too great") && !text.contains("bad math expression"),
+            "{shell}: the shell reported an arithmetic error: {text:?}"
+        );
+        let _ = tmux(&sandbox.socket, &["kill-server"]);
+    }
 }
