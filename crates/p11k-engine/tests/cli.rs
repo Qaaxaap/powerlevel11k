@@ -12,10 +12,13 @@ static SESSION_SEQ: AtomicU32 = AtomicU32::new(0);
 fn p11k(args: &[&str]) -> (String, String, i32) {
     let out = Command::new(env!("CARGO_BIN_EXE_p11k"))
         .args(args)
-        // The assertions check English text, while help is translated: a host locale
-        // (especially LC_MESSAGES, which outranks LANG) set to zh_CN would print Chinese.
+        // The assertions check English text, while help and the engine messages are translated:
+        // a host locale (especially LC_MESSAGES, which outranks LANG) set to zh_CN, or a host
+        // P11K_LANG, would print Chinese. P11K_LOCALEDIR would replace the embedded catalogue.
         .env("LC_ALL", "C")
         .env_remove("LANGUAGE")
+        .env_remove("P11K_LANG")
+        .env_remove("P11K_LOCALEDIR")
         .output()
         .expect("run p11k");
     (
@@ -43,6 +46,8 @@ fn reload_command(session: &std::path::Path, token: &str, pid: &str) -> Command 
     cmd.arg("reload")
         .env("LC_ALL", "C")
         .env_remove("LANGUAGE")
+        .env_remove("P11K_LANG")
+        .env_remove("P11K_LOCALEDIR")
         .env("P11K_ENGINE_PID", pid)
         .env("P11K_ENGINE_SESSION", session)
         .env("P11K_ENGINE_TOKEN", token);
@@ -114,6 +119,8 @@ fn reload_refuses_to_run_outside_a_session() {
         .arg("reload")
         .env("LC_ALL", "C")
         .env_remove("LANGUAGE")
+        .env_remove("P11K_LANG")
+        .env_remove("P11K_LOCALEDIR")
         .env_remove("P11K_ENGINE_PID")
         .env_remove("P11K_ENGINE_SESSION")
         .env_remove("P11K_ENGINE_TOKEN")
@@ -148,6 +155,8 @@ fn reload_rejects_a_missing_session_token() {
         .arg("reload")
         .env("LC_ALL", "C")
         .env_remove("LANGUAGE")
+        .env_remove("P11K_LANG")
+        .env_remove("P11K_LOCALEDIR")
         .env("P11K_ENGINE_PID", "1")
         .env("P11K_ENGINE_SESSION", &session)
         .env_remove("P11K_ENGINE_TOKEN")

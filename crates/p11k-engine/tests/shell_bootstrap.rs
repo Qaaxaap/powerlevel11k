@@ -226,8 +226,9 @@ impl Sandbox {
         let work = self.dir.path().join("engine");
         std::fs::create_dir_all(&work).expect("engine work dir");
         let cmd = format!(
-            "sleep 0.3; cd '{}' && XDG_STATE_HOME='{}' XDG_CONFIG_HOME='{}' \
-             P11K_USER_ZSHRC=/dev/null P11K_USER_PROFILE=/dev/null exec '{}' --shell {shell}",
+            "unset P11K_LANG P11K_LOCALEDIR; sleep 0.3; cd '{}' && XDG_STATE_HOME='{}' \
+             XDG_CONFIG_HOME='{}' P11K_USER_ZSHRC=/dev/null P11K_USER_PROFILE=/dev/null \
+             exec '{}' --shell {shell}",
             work.display(),
             self.state.display(),
             self.config.display(),
@@ -284,26 +285,27 @@ impl Sandbox {
             .collect();
         match shell {
             "zsh" => format!(
-                "cd '{}' && env {extra}ZDOTDIR='{}' P11K_ANNOUNCE='{}' P11K_ACK='{}' \
-                 P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' P11K_USER_ZSHRC=/dev/null \
-                 zsh -i",
+                "unset P11K_LANG P11K_LOCALEDIR; cd '{}' && env {extra}ZDOTDIR='{}' \
+                 P11K_ANNOUNCE='{}' P11K_ACK='{}' P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' \
+                 P11K_USER_ZSHRC=/dev/null zsh -i",
                 self.dir.path().display(),
                 self.rc.display(),
                 self.announce.display(),
                 self.ack.display(),
             ),
             "bash" => format!(
-                "cd '{}' && env {extra}P11K_ANNOUNCE='{}' P11K_ACK='{}' \
-                 P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' P11K_USER_ZSHRC=/dev/null \
-                 bash --rcfile '{}' -i",
+                "unset P11K_LANG P11K_LOCALEDIR; cd '{}' && env {extra}P11K_ANNOUNCE='{}' \
+                 P11K_ACK='{}' P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' \
+                 P11K_USER_ZSHRC=/dev/null bash --rcfile '{}' -i",
                 self.dir.path().display(),
                 self.announce.display(),
                 self.ack.display(),
                 self.rc.join(".bashrc").display(),
             ),
             "fish" => format!(
-                "cd '{}' && env {extra}XDG_CONFIG_HOME='{}' P11K_ANNOUNCE='{}' P11K_ACK='{}' \
-                 P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' fish -i",
+                "unset P11K_LANG P11K_LOCALEDIR; cd '{}' && env {extra}XDG_CONFIG_HOME='{}' \
+                 P11K_ANNOUNCE='{}' P11K_ACK='{}' P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' \
+                 fish -i",
                 self.dir.path().display(),
                 self.rc.display(),
                 self.announce.display(),
@@ -442,8 +444,9 @@ fn a_cwd_with_control_characters_keeps_the_prompt_alive() {
     let newlined = work.join("line\nbreak");
     std::fs::create_dir_all(&newlined).expect("newline dir");
     let cmd = format!(
-        "sleep 0.3; cd '{}' && XDG_STATE_HOME='{}' XDG_CONFIG_HOME='{}' \
-         P11K_USER_ZSHRC=/dev/null P11K_USER_PROFILE=/dev/null exec '{}' --shell zsh",
+        "unset P11K_LANG P11K_LOCALEDIR; sleep 0.3; cd '{}' && XDG_STATE_HOME='{}' \
+         XDG_CONFIG_HOME='{}' P11K_USER_ZSHRC=/dev/null P11K_USER_PROFILE=/dev/null \
+         exec '{}' --shell zsh",
         work.display(),
         sandbox.state.display(),
         sandbox.config.display(),
@@ -501,7 +504,10 @@ fn a_recursive_launch_reports_and_exits() {
     assert_on_path("tmux");
     let sandbox = Sandbox::new("recursive");
     let capture = sandbox.dir.path().join("capture");
-    let cmd = format!("env P11K_ENGINE=1 SHELL=/bin/true '{}'", Sandbox::bin());
+    let cmd = format!(
+        "env -u P11K_LANG -u P11K_LOCALEDIR P11K_ENGINE=1 SHELL=/bin/true '{}'",
+        Sandbox::bin()
+    );
     new_session(&sandbox.socket, &cmd);
     pipe_pane(&sandbox.socket, &capture);
     let text = capture_until(
@@ -535,7 +541,8 @@ fn a_failed_inner_shell_is_reported() {
     let capture = sandbox.dir.path().join("capture");
     // The shell wrapping the engine prints the exit status after the engine has exited.
     let cmd = format!(
-        "env PATH=/nonexistent XDG_STATE_HOME='{}' '{}' --shell zsh; echo EXIT:$?",
+        "env -u P11K_LANG -u P11K_LOCALEDIR PATH=/nonexistent XDG_STATE_HOME='{}' \
+         '{}' --shell zsh; echo EXIT:$?",
         sandbox.state.display(),
         Sandbox::bin()
     );
