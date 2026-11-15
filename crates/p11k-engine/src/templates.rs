@@ -40,12 +40,14 @@ _p11k_precmd() {
   # uses its Enter → precmd timing.
   local _dur=
   if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
-    # EPOCHREALTIME has more digits than a 64-bit integer can hold when the dot is removed.
-    # Keep microseconds. Use seconds * 1e6 plus the first six fractional digits.
+    # The fraction separator follows LC_NUMERIC: it_IT prints a comma, other locales print
+    # other characters. Do not assume one: split on the first non-digit and keep the digits.
+    # The fractional part is longer than six digits; the first six are the microseconds.
     local _start=$_p11k_cmd_start _now=$EPOCHREALTIME
-    local _start_s=${_start%%.*} _start_f=${_start#*.}
-    local _now_s=${_now%%.*} _now_f=${_now#*.}
-    (( _dur = ( _now_s * 1000000 + 10#${_now_f:0:6} - _start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
+    local _start_s=${_start%%[^0-9]*} _start_f=${_start#*[^0-9]}
+    local _now_s=${_now%%[^0-9]*} _now_f=${_now#*[^0-9]}
+    _start_f=${_start_f//[^0-9]/} _now_f=${_now_f//[^0-9]/}
+    (( _dur = ( 10#$_now_s * 1000000 + 10#${_now_f:0:6} - 10#$_start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
     _p11k_cmd_start=
   fi
   # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
@@ -283,8 +285,14 @@ _p11k_prompt_command() {
   # falls back to its own timing.
   local _dur=
   if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
-    local _start=${_p11k_cmd_start//./} _now=${EPOCHREALTIME//./}
-    (( _dur = (_now - _start) / 1000 ))
+    # The fraction separator follows LC_NUMERIC: it_IT prints a comma, other locales print
+    # other characters. Do not assume one: split on the first non-digit and keep the digits.
+    # The fractional part holds six digits (microseconds). Seconds and microseconds are
+    # converted separately, so no separator character reaches the arithmetic.
+    local _start_s=${_p11k_cmd_start%%[!0-9]*} _start_f=${_p11k_cmd_start#*[!0-9]}
+    local _now_s=${EPOCHREALTIME%%[!0-9]*} _now_f=${EPOCHREALTIME#*[!0-9]}
+    _start_f=${_start_f//[!0-9]/} _now_f=${_now_f//[!0-9]/}
+    (( _dur = ( 10#$_now_s * 1000000 + 10#${_now_f:0:6} - 10#$_start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
     _p11k_cmd_start=
   fi
   # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
