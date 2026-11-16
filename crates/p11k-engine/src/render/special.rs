@@ -78,7 +78,13 @@ impl SegmentRender for PromptCharSegment {
     fn render(&self, ctx: &Ctx<'_>) -> SegmentValue {
         let state = prompt_state(ctx.config, Some(ctx.info), ctx.vi_mode);
         let style = ctx.segment.effective_style(state, &ctx.config.defaults);
-        SegmentValue::text(paint(ctx.segment.char_for(state, "❯"), &style))
+        // The locale fallback can force the ascii mode, which cannot display `❯`; the default
+        // prompt character follows the mode so the prompt stays renderable.
+        let default_char = match ctx.config.mode {
+            crate::config::IconMode::Ascii => ">",
+            _ => "❯",
+        };
+        SegmentValue::text(paint(ctx.segment.char_for(state, default_char), &style))
     }
 }
 

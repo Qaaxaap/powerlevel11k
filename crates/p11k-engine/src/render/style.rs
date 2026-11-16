@@ -86,7 +86,12 @@ pub(super) fn prefix_text_with(
     }
     let pc = config.segment("prompt_char");
     let st = pc.effective_style(state, &config.defaults);
-    text.push_str(&colour(pc.char_for(state, "❯"), &st));
+    // The locale fallback can force the ascii mode, which cannot display `❯`.
+    let default_char = match config.mode {
+        crate::config::IconMode::Ascii => ">",
+        _ => "❯",
+    };
+    text.push_str(&colour(pc.char_for(state, default_char), &st));
     text.push(' '); // space after the prefix (uncolored), matching the original `❯ ` geometry
     text
 }
@@ -140,7 +145,12 @@ pub fn input_prefix(config: &Config, info: Option<&HeaderInfo>, vi_mode: ViMode)
 /// the conditional `%(?\x01OK\x01ERR)` picks a color from the last command's exit code.
 pub fn transient_prompt_zsh(config: &Config) -> String {
     let pc = config.segment("prompt_char");
-    let ch = pc.char_for(None, "❯");
+    // The locale fallback can force the ascii mode, which cannot display `❯`.
+    let default_char = match config.mode {
+        crate::config::IconMode::Ascii => ">",
+        _ => "❯",
+    };
+    let ch = pc.char_for(None, default_char);
     let ok = pc.effective_style(None, &config.defaults);
     let err = pc.effective_style(Some("ERROR"), &config.defaults);
     let ok_prompt = format!("{}{} ", zsh_fg(&ok.fg), ch);

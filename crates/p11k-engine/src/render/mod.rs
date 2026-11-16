@@ -1760,6 +1760,47 @@ mod tests {
         );
     }
 
+    /// The ascii locale fallback defaults the prompt char and the transient prompt to an ASCII
+    /// character, and an explicit char still wins.
+    #[test]
+    fn prompt_char_defaults_follow_the_ascii_mode() {
+        let ascii = Config::parse(
+            "mode \"ascii\"\nlayout { left { line { dir #true } } }\nsegments { prompt_char }",
+        )
+        .unwrap();
+        let p = input_prefix(&ascii, None, ViMode::Unreported);
+        assert!(p.text.contains('>'), "ascii prompt char: {:?}", p.text);
+        assert!(
+            !p.text.contains('❯'),
+            "ascii mode must not use the Unicode prompt char: {:?}",
+            p.text
+        );
+        let t = transient_prompt_zsh(&ascii);
+        assert!(t.contains('>'), "ascii transient prompt: {t:?}");
+        assert!(
+            !t.contains('❯'),
+            "ascii transient prompt must not use ❯: {t:?}"
+        );
+        let explicit = Config::parse(
+            "mode \"ascii\"\nlayout { left { line { dir #true } } }\n\
+             segments { prompt_char char=\"$\" }",
+        )
+        .unwrap();
+        let p = input_prefix(&explicit, None, ViMode::Unreported);
+        assert!(
+            p.text.contains('$'),
+            "an explicit char wins over the ascii default: {:?}",
+            p.text
+        );
+        let unicode = Config::parse(
+            "mode \"nerdfont-complete\"\nlayout { left { line { dir #true } } }\n\
+             segments { prompt_char }",
+        )
+        .unwrap();
+        let p = input_prefix(&unicode, None, ViMode::Unreported);
+        assert!(p.text.contains('❯'), "unicode prompt char: {:?}", p.text);
+    }
+
     #[test]
     fn icon_mode_switches_default_icons() {
         // The status icon is the segment's visual identifier, not part of its text (p10k draws

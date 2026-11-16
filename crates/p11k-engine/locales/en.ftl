@@ -26,6 +26,10 @@ config-kdl-parse-error = KDL parse error: { $detail }
 config-state-needs-name = `state` needs a name (a positional string)
 config-element-needs-text = { $element } needs text (a positional string)
 config-unknown-key = unknown config key: { $key }
+config-mode-fallback = "{ $declared }" cannot be displayed by this locale; falling back to "{ $effective }"
+config-glyph-fallback = { $field } "{ $glyph }": cannot be displayed; using the built-in default
+config-unrenderable-glyphs = the config has no glyphs this locale can display in mode "{ $mode }": { $glyphs }
+config-cannot-render = cannot render the theme: { $error }
 
 # ===== engine =====
 engine-inner-shell-failed = the inner shell failed to start

@@ -226,7 +226,7 @@ impl Sandbox {
         let work = self.dir.path().join("engine");
         std::fs::create_dir_all(&work).expect("engine work dir");
         let cmd = format!(
-            "unset P11K_LANG P11K_LOCALEDIR LANGUAGE LC_ALL LC_MESSAGES LANG; sleep 0.3; cd '{}' && XDG_STATE_HOME='{}' \
+            "unset P11K_LANG P11K_LOCALEDIR LANGUAGE; export LC_ALL=C.UTF-8; sleep 0.3; cd '{}' && XDG_STATE_HOME='{}' \
              XDG_CONFIG_HOME='{}' P11K_USER_ZSHRC=/dev/null P11K_USER_PROFILE=/dev/null \
              exec '{}' --shell {shell}",
             work.display(),
@@ -285,7 +285,7 @@ impl Sandbox {
             .collect();
         match shell {
             "zsh" => format!(
-                "unset P11K_LANG P11K_LOCALEDIR LANGUAGE LC_ALL LC_MESSAGES LANG; cd '{}' && env {extra}ZDOTDIR='{}' \
+                "unset P11K_LANG P11K_LOCALEDIR LANGUAGE; export LC_ALL=C.UTF-8; cd '{}' && env {extra}ZDOTDIR='{}' \
                  P11K_ANNOUNCE='{}' P11K_ACK='{}' P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' \
                  P11K_USER_ZSHRC=/dev/null zsh -i",
                 self.dir.path().display(),
@@ -294,7 +294,7 @@ impl Sandbox {
                 self.ack.display(),
             ),
             "bash" => format!(
-                "unset P11K_LANG P11K_LOCALEDIR LANGUAGE LC_ALL LC_MESSAGES LANG; cd '{}' && env {extra}P11K_ANNOUNCE='{}' \
+                "unset P11K_LANG P11K_LOCALEDIR LANGUAGE; export LC_ALL=C.UTF-8; cd '{}' && env {extra}P11K_ANNOUNCE='{}' \
                  P11K_ACK='{}' P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' \
                  P11K_USER_ZSHRC=/dev/null bash --rcfile '{}' -i",
                 self.dir.path().display(),
@@ -303,7 +303,7 @@ impl Sandbox {
                 self.rc.join(".bashrc").display(),
             ),
             "fish" => format!(
-                "unset P11K_LANG P11K_LOCALEDIR LANGUAGE LC_ALL LC_MESSAGES LANG; cd '{}' && env {extra}XDG_CONFIG_HOME='{}' \
+                "unset P11K_LANG P11K_LOCALEDIR LANGUAGE; export LC_ALL=C.UTF-8; cd '{}' && env {extra}XDG_CONFIG_HOME='{}' \
                  P11K_ANNOUNCE='{}' P11K_ACK='{}' P11K_PREFIX_OK='OK> ' P11K_PREFIX_ERR='ERR> ' \
                  fish -i",
                 self.dir.path().display(),
@@ -444,7 +444,7 @@ fn a_cwd_with_control_characters_keeps_the_prompt_alive() {
     let newlined = work.join("line\nbreak");
     std::fs::create_dir_all(&newlined).expect("newline dir");
     let cmd = format!(
-        "unset P11K_LANG P11K_LOCALEDIR LANGUAGE LC_ALL LC_MESSAGES LANG; sleep 0.3; cd '{}' && XDG_STATE_HOME='{}' \
+        "unset P11K_LANG P11K_LOCALEDIR LANGUAGE; export LC_ALL=C.UTF-8; sleep 0.3; cd '{}' && XDG_STATE_HOME='{}' \
          XDG_CONFIG_HOME='{}' P11K_USER_ZSHRC=/dev/null P11K_USER_PROFILE=/dev/null \
          exec '{}' --shell zsh",
         work.display(),
@@ -505,7 +505,7 @@ fn a_recursive_launch_reports_and_exits() {
     let sandbox = Sandbox::new("recursive");
     let capture = sandbox.dir.path().join("capture");
     let cmd = format!(
-        "env -u P11K_LANG -u P11K_LOCALEDIR -u LANGUAGE -u LC_ALL -u LC_MESSAGES -u LANG P11K_ENGINE=1 SHELL=/bin/true '{}'",
+        "env -u P11K_LANG -u P11K_LOCALEDIR -u LANGUAGE LC_ALL=C.UTF-8 P11K_ENGINE=1 SHELL=/bin/true '{}'",
         Sandbox::bin()
     );
     new_session(&sandbox.socket, &cmd);
@@ -541,7 +541,7 @@ fn a_failed_inner_shell_is_reported() {
     let capture = sandbox.dir.path().join("capture");
     // The shell wrapping the engine prints the exit status after the engine has exited.
     let cmd = format!(
-        "env -u P11K_LANG -u P11K_LOCALEDIR -u LANGUAGE -u LC_ALL -u LC_MESSAGES -u LANG PATH=/nonexistent XDG_STATE_HOME='{}' \
+        "env -u P11K_LANG -u P11K_LOCALEDIR -u LANGUAGE LC_ALL=C.UTF-8 PATH=/nonexistent XDG_STATE_HOME='{}' \
          '{}' --shell zsh; echo EXIT:$?",
         sandbox.state.display(),
         Sandbox::bin()
