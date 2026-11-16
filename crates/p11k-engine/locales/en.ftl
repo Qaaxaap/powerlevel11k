@@ -28,7 +28,7 @@ config-element-needs-text = { $element } needs text (a positional string)
 config-unknown-key = unknown config key: { $key }
 config-mode-fallback = "{ $declared }" cannot be displayed by this locale; falling back to "{ $effective }"
 config-glyph-fallback = { $field } "{ $glyph }": cannot be displayed; using the built-in default
-config-unrenderable-glyphs = the config has no glyphs this locale can display in mode "{ $mode }": { $glyphs }
+config-unrenderable-glyphs = the config has a glyph this locale cannot display in mode "{ $mode }": { $glyphs }
 config-cannot-render = cannot render the theme: { $error }
 
 # ===== engine =====

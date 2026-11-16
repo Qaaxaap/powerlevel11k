@@ -683,6 +683,19 @@ impl Config {
                     spec.char = None;
                 }
             }
+            let char_glyph = segment
+                .props
+                .get("char")
+                .and_then(|prop| match prop {
+                    crate::config::Prop::Str(value) => Some(value),
+                    _ => None,
+                })
+                .filter(|value| text_overflows_mode(value, mode))
+                .map(|value| value.escape_default().to_string());
+            if let Some(glyph) = char_glyph {
+                warnings.push(glyph_fallback(&format!("segment {name} char"), &glyph));
+                segment.props.remove("char");
+            }
         }
         let mode_slot: fn(&mut crate::config::IconOverride) -> &mut Option<String> = match mode {
             IconMode::NerdfontComplete | IconMode::NerdfontFontconfig => |ov| &mut ov.nf,
@@ -785,14 +798,19 @@ impl Config {
                     check(&format!("segment {name} state {state}"), text);
                 }
             }
+            if let Some(crate::config::Prop::Str(text)) = segment.props.get("char") {
+                check(&format!("segment {name} char"), text);
+            }
         }
         for (name, ov) in &self.icon_overrides {
-            for (field, slot) in [
-                ("all", &ov.all),
-                ("nf", &ov.nf),
-                ("compat", &ov.compat),
-                ("ascii", &ov.ascii),
-            ] {
+            // Only the `all` slot and the effective mode's slot are rendered; a slot for an
+            // inactive mode is kept for a future UTF-8 session and is not validated here.
+            let mode_slot = match mode {
+                IconMode::NerdfontComplete | IconMode::NerdfontFontconfig => &ov.nf,
+                IconMode::Compatible => &ov.compat,
+                IconMode::Ascii => &ov.ascii,
+            };
+            for (field, slot) in [("all", &ov.all), ("mode", mode_slot)] {
                 if let Some(text) = slot {
                     check(&format!("icon {name} {field}"), text);
                 }
@@ -830,7 +848,7 @@ impl Config {
     pub fn to_document(&self) -> KdlDocument {
         let mut doc = KdlDocument::new();
         // mode must be emitted explicitly: the parse default follows the locale, so omitting it breaks round-trip.
-        doc.nodes_mut().push(leaf("mode", mode_str(&self.mode)));
+        doc.nodes_mut().push(leaf("mode", self.mode.name()));
         doc.nodes_mut().push(self.layout_node());
         if self.defaults != Style::default() {
             let mut n = KdlNode::new("defaults");
@@ -1179,15 +1197,6 @@ fn leaf(name: &str, value: impl Into<KdlValue>) -> KdlNode {
     n
 }
 
-fn mode_str(m: &IconMode) -> &'static str {
-    match m {
-        IconMode::NerdfontComplete => "nerdfont-complete",
-        IconMode::NerdfontFontconfig => "nerdfont-fontconfig",
-        IconMode::Compatible => "compatible",
-        IconMode::Ascii => "ascii",
-    }
-}
-
 fn color_value(c: &Color) -> KdlValue {
     match c {
         Color::Default => KdlValue::Null,
@@ -1382,7 +1391,12 @@ fn glyph_required_mode(c: char) -> IconMode {
         return IconMode::Ascii;
     }
     let cp = c as u32;
-    // Private Use Area: BMP, plane 15 and plane 16. Nerd Font and Powerline glyphs live here.
+    // Powerline symbols sit in the BMP private-use area, but the compatible tier is documented
+    // to carry them and its built-in icons use them, so they stay compatible.
+    if (0xE0A0..=0xE0B3).contains(&cp) {
+        return IconMode::Compatible;
+    }
+    // Private Use Area: BMP, plane 15 and plane 16. Nerd Font glyphs live here.
     if (0xE000..=0xF8FF).contains(&cp)
         || (0xF0000..=0xFFFFD).contains(&cp)
         || (0x100000..=0x10FFFD).contains(&cp)
@@ -1403,6 +1417,11 @@ fn text_required_mode(s: &str) -> IconMode {
 /// Whether `s` contains a character the mode cannot display.
 fn text_overflows_mode(s: &str, mode: &IconMode) -> bool {
     text_required_mode(s).rank() > mode.rank()
+}
+
+/// Whether the mode can display `c` (used by the `all` icon auto-detection).
+pub(crate) fn glyph_fits_mode(c: char, mode: &IconMode) -> bool {
+    glyph_required_mode(c).rank() <= mode.rank()
 }
 
 /// A warning for one declared glyph that fell back to the built-in default.
@@ -2246,10 +2265,8 @@ segments {
         assert_eq!(glyph_required_mode(' '), IconMode::Ascii);
         assert_eq!(glyph_required_mode('\u{276f}'), IconMode::Compatible); // ❯
         assert_eq!(glyph_required_mode('\u{2500}'), IconMode::Compatible); // ─
-        assert_eq!(
-            glyph_required_mode('\u{e0b0}'),
-            IconMode::NerdfontFontconfig
-        ); // Powerline
+        assert_eq!(glyph_required_mode('\u{e0b0}'), IconMode::Compatible); // Powerline
+        assert_eq!(glyph_required_mode('\u{e0a2}'), IconMode::Compatible); // Powerline
         assert_eq!(
             glyph_required_mode('\u{f115}'),
             IconMode::NerdfontFontconfig
@@ -2356,5 +2373,65 @@ segments {
         let c = Config::parse("frame { last-prefix \"╰─\" }\n").unwrap();
         let error = c.unrenderable_glyph(&IconMode::Ascii).unwrap();
         assert!(error.contains("frame last-prefix"), "got {error:?}");
+    }
+
+    /// Powerline glyphs stay renderable in compatible mode; the documentation and the built-in
+    /// compatible tier both use them.
+    #[test]
+    fn compatible_keeps_powerline_glyphs() {
+        let mut c = Config::parse(
+            "mode \"compatible\"\n\
+             separators { segment \"\u{e0b0}\" }\n\
+             segments { dir prefix=\"\u{e0b1}\" }\n\
+             icon { lock { compat \"\u{e0a2}\" } }\n",
+        )
+        .unwrap();
+        let warnings = c
+            .apply_locale_fallback_with(IconMode::NerdfontComplete)
+            .unwrap();
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert_eq!(c.separators.segment, "\u{e0b0}");
+        assert_eq!(c.segment("dir").prefix.as_deref(), Some("\u{e0b1}"));
+        assert_eq!(c.icon_overrides["lock"].compat.as_deref(), Some("\u{e0a2}"));
+    }
+
+    /// A slot for an inactive mode is kept and does not block startup, so the documented
+    /// per-mode override works in a C locale.
+    #[test]
+    fn inactive_icon_slots_do_not_block_startup() {
+        let mut c = Config::parse(
+            "mode \"nerdfont-complete\"\n\
+             icon {\n\
+                 folder {\n\
+                     nf \"\u{f07c}\"\n\
+                     compat \"\"\n\
+                     ascii \"d\"\n\
+                 }\n\
+             }\n",
+        )
+        .unwrap();
+        let result = c.apply_locale_fallback_with(IconMode::Ascii);
+        assert!(result.is_ok(), "unexpected error: {result:?}");
+        // The inactive `nf` slot survives for a later UTF-8 session.
+        assert_eq!(c.icon_overrides["folder"].nf.as_deref(), Some("\u{f07c}"));
+        assert_eq!(c.icon_overrides["folder"].ascii.as_deref(), Some("d"));
+    }
+
+    /// The explicit `char` property of `prompt_char` rolls back like the other declared glyphs.
+    #[test]
+    fn prompt_char_char_property_rolls_back() {
+        let mut c = Config::parse(
+            "mode \"nerdfont-complete\"\n\
+             segments { prompt_char char=\"❯\" }\n",
+        )
+        .unwrap();
+        let warnings = c.apply_locale_fallback_with(IconMode::Ascii).unwrap();
+        assert_eq!(c.segment("prompt_char").props.get("char"), None);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("segment prompt_char char")),
+            "the char fallback needs a warning: {warnings:?}"
+        );
     }
 }

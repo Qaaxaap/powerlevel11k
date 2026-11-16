@@ -29,7 +29,7 @@ config-element-needs-text = { $element } 需要文本（位置参数）
 config-unknown-key = 未知配置键：{ $key }
 config-mode-fallback = "{ $declared }" 无法在当前 locale 显示，回退到 "{ $effective }"
 config-glyph-fallback = { $field } "{ $glyph }"：无法显示，使用内置默认值
-config-unrenderable-glyphs = 当前 locale 在 "{ $mode }" 模式下没有可显示的字形：{ $glyphs }
+config-unrenderable-glyphs = 当前 locale 在 "{ $mode }" 模式下存在无法显示的字形：{ $glyphs }
 config-cannot-render = 无法渲染主题：{ $error }
 
 # ===== 引擎 =====
