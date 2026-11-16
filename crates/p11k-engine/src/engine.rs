@@ -31,7 +31,7 @@ extern "C" fn handle_sigusr1(_sig: libc::c_int) {
 use crate::cli::{Shell, detect_shell, load_config, load_config_file, theme_file};
 use crate::geometry::Geometry;
 use crate::git::{GitRequest, GitResult, spawn_git_worker};
-use crate::i18n::t;
+use crate::i18n::{t, t_args};
 use crate::log::{debug, info};
 use crate::protocol::{AnnMsg, SignalScanner, drain_announce, is_terminal_reply};
 
@@ -63,6 +63,20 @@ pub fn run() -> anyhow::Result<()> {
     // The config comes first: it may name the shell, and it carries the frame and the input-line
     // prefix the templates hand to the shell.
     let mut config = load_config();
+    match config.apply_locale_fallback() {
+        Ok(warnings) => {
+            for warning in warnings {
+                eprintln!("p11k: {warning}");
+            }
+        }
+        Err(error) => {
+            eprintln!(
+                "p11k: {}",
+                t_args("config-cannot-render", &[("error", &error)])
+            );
+            process::exit(1);
+        }
+    }
     let shell = detect_shell(&config);
     // The file the theme came from, kept for `p11k reload` (None for a preset or the built-in
     // theme; the engine then has nothing to re-read). Made absolute, because the reload
@@ -357,7 +371,20 @@ pub fn run() -> anyhow::Result<()> {
                         config_path = request;
                     }
                     match config_path.as_deref().map(load_config_file) {
-                        Some(Ok(new_config)) => {
+                        Some(Ok(mut new_config)) => {
+                            match new_config.apply_locale_fallback() {
+                                Ok(warnings) => {
+                                    for warning in warnings {
+                                        eprintln!("p11k: {warning}");
+                                    }
+                                }
+                                Err(error) => {
+                                    // The current theme stays in use; the reload command reports
+                                    // the error of the new theme.
+                                    info(&format!("reload: keeping the current theme: {error}"));
+                                    continue;
+                                }
+                            }
                             // The shell re-reads the header height from the ack on every prompt,
                             // so a reload that changes it lands on the next one. The prefix
                             // travelled to the shell at startup and can only change with a

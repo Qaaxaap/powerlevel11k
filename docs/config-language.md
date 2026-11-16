@@ -24,6 +24,7 @@ Top-level nodes today: `layout` (required), `segments`, `defaults`, `separators`
 ## Icon mode
 
 - `mode "nerdfont-complete"` / `mode "nerdfont-fontconfig"` / `mode "compatible"` / `mode "ascii"` pick the character set for built-in segment icons. When `mode` is absent, the default follows the locale: UTF-8 (normal terminals) uses `nerdfont-complete`. Non-UTF-8 (console, C locale) uses `ascii`.
+- The locale lowers the declared mode when the locale cannot display it. A non-UTF-8 locale forces `ascii`, and the engine prints a warning. Declared characters outside the effective mode fall back to the built-in default for that field, with one warning per fallback. The check covers `frame`, `separators`, `prompt_char` (the `char` property and state characters), segment content, prefix, suffix and attached text, `icon {}` (the `all` slot and the effective mode slot), `dir-classes` icons and a configured `vcs-remote-icons` table. An icon slot for an inactive mode is kept and not validated. When a fallback leaves a glyph the locale cannot display, the engine prints an error and does not start.
 - `nerdfont-complete` and `nerdfont-fontconfig` share one Nerd Font glyph set. The split only mirrors p10k's naming, so there are three icon sets in practice. `compatible` uses standard Unicode and Powerline glyphs, and `ascii` uses plain text.
 - Top-level `icon {}` overrides a named icon's character per mode. Icon names follow the glyph's meaning (`folder`, `go`, `ok`, `error`, `branch`…). A name shared by several segments overrides all of them at once, e.g. `python` covers `virtualenv`, `anaconda` and `pyenv`:
 
@@ -31,11 +32,15 @@ Top-level nodes today: `layout` (required), `segments`, `defaults`, `separators`
   icon {
       ok     { all "V" }              // ASCII → applies to all three modes
       error  { all "X" }
-      folder { nf "\u{f07c}" compat "" ascii "" } // each mode set independently
+      folder {                        // each mode set independently
+          nf     "\u{f07c}"
+          compat ""
+          ascii  ""
+      }
   }
   ```
 
-  - `all` auto-detects the glyph class. Nerd Font private-use chars fall on `nf` only, standard Unicode (e.g. ✔) on `nf` and `compat`, pure ASCII on all three modes.
+  - `all` auto-detects the glyph class. Nerd Font private-use chars fall on `nf` only; Powerline symbols (U+E0A0–U+E0B3) fall on `nf` and `compat`; standard Unicode (e.g. ✔) on `nf` and `compat`; pure ASCII on all three modes.
   - `nf` / `compat` / `ascii` set that mode's glyph, and an empty string means explicitly no icon. An omitted field falls back to the engine default table, which follows `mode`.
 - Engine defaults come from p10k. User `icon {}`, `separators` and `frame` win over the mode defaults.
 

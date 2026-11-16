@@ -256,8 +256,20 @@ pub fn reload_engine(config: Option<PathBuf>) -> anyhow::Result<()> {
         }
     };
     let target = target.canonicalize().unwrap_or(target);
-    if let Err(error) = load_config_file(&target) {
-        eprintln!("p11k: {target:?}: {error}");
+    // Validate the file before the engine sees it: a theme the locale cannot render is
+    // reported here instead of only in the engine log, and the old theme stays in use.
+    let mut preview = match load_config_file(&target) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("p11k: {target:?}: {error}");
+            process::exit(1);
+        }
+    };
+    if let Err(error) = preview.apply_locale_fallback() {
+        eprintln!(
+            "p11k: {target:?}: {}",
+            t_args("config-cannot-render", &[("error", &error)])
+        );
         process::exit(1);
     }
     let request = session_dir.join("reload-request");

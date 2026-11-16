@@ -153,15 +153,15 @@ pub(super) fn icon_str(config: &Config, key: &str) -> Option<String> {
     non_empty(icon_by_mode(&e, &config.mode))
 }
 
-/// Auto-detection for the `all` field: NF Private Use chars land in the nf tier only,
-/// standard ones in nf+compat, plain ASCII in all three.
+/// Auto-detection for the `all` field: Nerd Font Private Use chars land in the nf tier only,
+/// Powerline symbols in compat and nf, standard ones in nf+compat, plain ASCII in all three.
 pub(super) fn all_covers(s: &str, mode: &crate::config::IconMode) -> bool {
     match mode {
         crate::config::IconMode::NerdfontComplete | crate::config::IconMode::NerdfontFontconfig => {
             true
         }
         crate::config::IconMode::Compatible => {
-            s.chars().all(|c| !(0xE000..=0xF8FF).contains(&(c as u32)))
+            s.chars().all(|c| crate::config::glyph_fits_mode(c, mode))
         }
         crate::config::IconMode::Ascii => s.is_ascii(),
     }
@@ -308,4 +308,23 @@ pub(super) fn os_icon(mode: &crate::config::IconMode) -> String {
         let e = *c.borrow_mut().get_or_insert_with(detect_os_icon);
         icon_by_mode(&e, mode)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `all` auto-detection follows the same tiers as the locale fallback: Powerline
+    /// symbols belong to compatible, other private-use glyphs to Nerd Font.
+    #[test]
+    fn all_covers_matches_the_glyph_tiers() {
+        let ascii = crate::config::IconMode::Ascii;
+        let compatible = crate::config::IconMode::Compatible;
+        let nerdfont = crate::config::IconMode::NerdfontComplete;
+        assert!(all_covers("V", &ascii));
+        assert!(all_covers("✔", &compatible));
+        assert!(all_covers("\u{e0a2}", &compatible)); // Powerline
+        assert!(!all_covers("\u{f115}", &compatible)); // Nerd Font
+        assert!(all_covers("\u{f115}", &nerdfont));
+    }
 }
