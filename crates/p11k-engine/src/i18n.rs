@@ -1,11 +1,16 @@
 //! Fluent-backed localisation.
 //!
 //! English is the source language (`locales/en.ftl`); `locales/zh-CN.ftl` carries the Chinese
-//! translation. Both are embedded at build time. `P11K_LANG` overrides the language. Otherwise
-//! `LANGUAGE` wins over the locale categories, like gettext: it is a colon-separated priority
-//! list, and the first supported language in it wins. The locale categories are checked in the
-//! order `LC_ALL`, `LC_MESSAGES`, `LANG`; the first one that carries a language tag decides, and
-//! an unsupported language falls back to English.
+//! translation. Both are embedded at build time; `P11K_LOCALEDIR` can add more catalogues at
+//! runtime.
+//!
+//! `P11K_LANG` overrides the language. Otherwise the locale decides first, like gettext: the
+//! first non-empty `LC_ALL`, `LC_MESSAGES` or `LANG` names the locale, and C/POSIX keeps English
+//! and disables `LANGUAGE`. In a non-C locale, `LANGUAGE` is a colon-separated priority list and
+//! the first entry the catalogue carries wins. A requested tag is resolved against the
+//! catalogue: an exact tag wins, a regional tag falls back to the bare language (`en_US` → `en`)
+//! and a bare language matches a regional catalogue (`zh` → `zh-CN`). A language the catalogue
+//! does not carry falls back to English.
 //!
 //! `P11K_LOCALEDIR` can point at a directory of `.ftl` files to override the embedded
 //! resources. The directory must carry `en.ftl` as the fallback language, or the external
@@ -34,9 +39,6 @@ static_loader! {
 /// English, the source language and the fallback for every missing translation.
 static EN: LanguageIdentifier = fluent_templates::langid!("en");
 
-/// The shipped translation besides English.
-static ZH_CN: LanguageIdentifier = fluent_templates::langid!("zh-CN");
-
 static LANGUAGE: OnceLock<LanguageIdentifier> = OnceLock::new();
 
 /// A runtime resource directory from `P11K_LOCALEDIR`, when it has usable files.
@@ -44,8 +46,10 @@ static EXTERNAL: OnceLock<Option<ArcLoader>> = OnceLock::new();
 
 /// Resolve the language and load `P11K_LOCALEDIR` if it is set. Call once per process.
 pub fn init() {
-    let _ = LANGUAGE.set(detect_language());
-    let _ = EXTERNAL.set(load_external());
+    let external = load_external();
+    let supported = supported_languages(external.as_ref());
+    let _ = LANGUAGE.set(detect_language(&supported));
+    let _ = EXTERNAL.set(external);
 }
 
 /// The language selected at startup (English until [`init`] runs).
@@ -108,60 +112,104 @@ fn load_external() -> Option<ArcLoader> {
     }
 }
 
+/// The languages the catalogue carries: the embedded set plus any `P11K_LOCALEDIR` files.
+fn supported_languages(external: Option<&ArcLoader>) -> Vec<LanguageIdentifier> {
+    let mut languages: Vec<LanguageIdentifier> = EMBEDDED.locales().cloned().collect();
+    if let Some(loader) = external {
+        for language in loader.locales() {
+            if !languages.iter().any(|known| known == language) {
+                languages.push(language.clone());
+            }
+        }
+    }
+    languages
+}
+
+/// Resolve a requested tag against the catalogue. An exact tag wins. A regional request falls
+/// back to the bare language (`en_US` → `en`), and a bare request matches a regional catalogue
+/// (`zh` → `zh-CN`); a regional request does not match another region, so `zh_TW` does not
+/// become `zh-CN`.
+fn negotiate(
+    language: &LanguageIdentifier,
+    supported: &[LanguageIdentifier],
+) -> Option<LanguageIdentifier> {
+    if let Some(exact) = supported.iter().find(|known| *known == language) {
+        return Some(exact.clone());
+    }
+    if language.region.is_some() {
+        return supported
+            .iter()
+            .find(|known| known.language == language.language && known.region.is_none())
+            .cloned();
+    }
+    supported
+        .iter()
+        .find(|known| known.language == language.language && known.region.is_some())
+        .cloned()
+}
+
+/// The first catalogue language in a gettext priority list, e.g. `zh_CN:en`.
+fn first_supported(raw: &str, supported: &[LanguageIdentifier]) -> Option<LanguageIdentifier> {
+    raw.split(':')
+        .filter_map(parse_language_tag)
+        .find_map(|language| negotiate(&language, supported))
+}
+
+/// gettext's message locale: `LC_ALL` wins over `LC_MESSAGES`, which wins over `LANG`. The
+/// first non-empty value decides.
+fn locale_category(var: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .into_iter()
+        .find_map(|key| var(key).filter(|value| !value.trim().is_empty()))
+}
+
+/// Whether a locale value names the C/POSIX locale, which keeps English and disables
+/// `LANGUAGE` (gettext).
+fn is_c_locale(raw: &str) -> bool {
+    let tag = raw.split(['.', '@']).next().unwrap_or("").trim();
+    tag.is_empty() || tag.eq_ignore_ascii_case("c") || tag.eq_ignore_ascii_case("posix")
+}
+
 /// Pick the language from the environment.
-fn detect_language() -> LanguageIdentifier {
-    detect_language_with(|key| std::env::var_os(key).map(|v| v.to_string_lossy().into_owned()))
+fn detect_language(supported: &[LanguageIdentifier]) -> LanguageIdentifier {
+    detect_language_with(supported, |key| {
+        std::env::var_os(key).map(|v| v.to_string_lossy().into_owned())
+    })
 }
 
 /// [`detect_language`] with an injectable environment (tests).
-fn detect_language_with(var: impl Fn(&str) -> Option<String>) -> LanguageIdentifier {
+fn detect_language_with(
+    supported: &[LanguageIdentifier],
+    var: impl Fn(&str) -> Option<String>,
+) -> LanguageIdentifier {
     // P11K_LANG is an explicit override: an unsupported tag falls back to English without
     // consulting the locale.
     if let Some(raw) = var("P11K_LANG")
         && let Some(language) = parse_language(&raw)
     {
-        return if supported(&language) {
-            language
-        } else {
-            EN.clone()
-        };
+        return negotiate(&language, supported).unwrap_or_else(|| EN.clone());
     }
-    // LANGUAGE is gettext's priority list and wins over the locale categories. A list without
-    // a supported language falls through to the locale.
-    if let Some(raw) = var("LANGUAGE")
-        && let Some(language) = first_supported(&raw)
+    // The locale categories decide the message locale first. C/POSIX keeps English and
+    // disables LANGUAGE, like gettext.
+    let locale = locale_category(&var);
+    let c_locale = locale.as_deref().is_none_or(is_c_locale);
+    if !c_locale
+        && let Some(raw) = var("LANGUAGE")
+        && let Some(language) = first_supported(&raw, supported)
     {
         return language;
     }
-    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
-        let Some(raw) = var(key) else {
-            continue;
-        };
-        if raw.trim().is_empty() {
-            continue;
+    if let Some(raw) = locale {
+        if is_c_locale(&raw) {
+            return EN.clone();
         }
-        let Some(language) = parse_language(&raw) else {
-            continue;
-        };
-        return if supported(&language) {
-            language
-        } else {
-            EN.clone()
-        };
+        if let Some(language) = parse_language(&raw)
+            && let Some(negotiated) = negotiate(&language, supported)
+        {
+            return negotiated;
+        }
     }
     EN.clone()
-}
-
-/// Whether the shipped catalogue carries a translation for `language`.
-fn supported(language: &LanguageIdentifier) -> bool {
-    *language == EN || *language == ZH_CN
-}
-
-/// The first supported language in a gettext priority list, e.g. `zh_CN:en`.
-fn first_supported(raw: &str) -> Option<LanguageIdentifier> {
-    raw.split(':')
-        .filter_map(parse_language_tag)
-        .find(supported)
 }
 
 /// Parse a locale value. `LANGUAGE` and `P11K_LANG` are colon-separated priority lists, the
@@ -465,55 +513,64 @@ mod tests {
     /// `LANGUAGE` is a priority list and skips entries the catalogue does not carry.
     #[test]
     fn language_precedence() {
-        let zh = ZH_CN.clone();
+        let zh: LanguageIdentifier = fluent_templates::langid!("zh-CN");
         let en = EN.clone();
-        // LANGUAGE wins over the locale categories.
+        let supported = [en.clone(), zh.clone()];
+        let check = |pairs: &[(&str, &str)]| detect_language_with(&supported, env(pairs));
+
+        // LANGUAGE wins over the locale categories; the list is walked and skips unsupported
+        // entries.
+        assert_eq!(check(&[("LANGUAGE", "zh_CN"), ("LANG", "en_US.UTF-8")]), zh);
         assert_eq!(
-            detect_language_with(env(&[("LANGUAGE", "zh_CN"), ("LANG", "en_US.UTF-8")])),
+            check(&[("LANGUAGE", "fr_FR:zh_CN"), ("LANG", "en_US.UTF-8")]),
             zh
         );
-        // The list is walked: unsupported entries are skipped.
-        assert_eq!(
-            detect_language_with(env(&[("LANGUAGE", "fr_FR:zh_CN"), ("LANG", "en_US.UTF-8")])),
-            zh
-        );
+        // A regional tag resolves to the bare language, so en_US forces English.
+        assert_eq!(check(&[("LANGUAGE", "en_US"), ("LANG", "zh_CN.UTF-8")]), en);
         // A list without a supported language falls through to the locale.
-        assert_eq!(
-            detect_language_with(env(&[("LANGUAGE", "fr_FR"), ("LANG", "zh_CN.UTF-8")])),
-            zh
-        );
+        assert_eq!(check(&[("LANGUAGE", "fr_FR"), ("LANG", "zh_CN.UTF-8")]), zh);
+        // C/POSIX keeps English and disables LANGUAGE, like gettext.
+        assert_eq!(check(&[("LANGUAGE", "zh_CN"), ("LC_ALL", "C")]), en);
+        assert_eq!(check(&[("LANGUAGE", "zh_CN")]), en);
         // P11K_LANG is an explicit override and does not fall through when unsupported.
         assert_eq!(
-            detect_language_with(env(&[
+            check(&[
                 ("P11K_LANG", "fr_FR"),
                 ("LANGUAGE", "zh_CN"),
                 ("LANG", "zh_CN.UTF-8"),
-            ])),
+            ]),
             en
         );
-        assert_eq!(
-            detect_language_with(env(&[("P11K_LANG", "zh_CN"), ("LC_ALL", "C")])),
-            zh
-        );
+        assert_eq!(check(&[("P11K_LANG", "zh_CN"), ("LC_ALL", "C")]), zh);
         // An empty P11K_LANG is ignored.
-        assert_eq!(
-            detect_language_with(env(&[("P11K_LANG", ""), ("LANG", "zh_CN.UTF-8")])),
-            zh
-        );
+        assert_eq!(check(&[("P11K_LANG", ""), ("LANG", "zh_CN.UTF-8")]), zh);
         // LC_ALL overrides LC_MESSAGES and LANG; LC_MESSAGES overrides LANG.
+        assert_eq!(check(&[("LC_ALL", "C"), ("LANG", "zh_CN.UTF-8")]), en);
         assert_eq!(
-            detect_language_with(env(&[("LC_ALL", "C"), ("LANG", "zh_CN.UTF-8")])),
-            en
-        );
-        assert_eq!(
-            detect_language_with(env(&[("LC_MESSAGES", "zh_CN"), ("LANG", "en_US.UTF-8")])),
+            check(&[("LC_MESSAGES", "zh_CN"), ("LANG", "en_US.UTF-8")]),
             zh
         );
         // Empty values are skipped and nothing set is English.
+        assert_eq!(check(&[("LC_ALL", ""), ("LANG", "zh_CN.UTF-8")]), zh);
+        assert_eq!(check(&[]), en);
+    }
+
+    /// A catalogue language added through the loader set is selectable, and a regional request
+    /// resolves to it.
+    #[test]
+    fn external_catalogue_language_is_selected() {
+        let de: LanguageIdentifier = fluent_templates::langid!("de");
+        let supported = [EN.clone(), de.clone()];
         assert_eq!(
-            detect_language_with(env(&[("LC_ALL", ""), ("LANG", "zh_CN.UTF-8")])),
-            zh
+            detect_language_with(&supported, env(&[("P11K_LANG", "de_DE")])),
+            de
         );
-        assert_eq!(detect_language_with(env(&[])), en);
+        assert_eq!(
+            detect_language_with(
+                &supported,
+                env(&[("LANGUAGE", "de_AT:en"), ("LANG", "en_US.UTF-8")]),
+            ),
+            de
+        );
     }
 }

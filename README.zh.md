@@ -147,14 +147,14 @@ p11k reload
 
 ## 界面语言
 
-界面文案支持中文与英文，其它语言的翻译欢迎贡献。语言按 `P11K_LANG`、`LC_ALL`、`LC_MESSAGES`、`LANG`、`LANGUAGE` 的顺序取第一个可解析的值，默认英文：
+界面文案支持中文与英文，其它语言的翻译欢迎贡献。`P11K_LANG` 优先。否则与 gettext 一致，`LANGUAGE` 优先于 locale 类别：它是冒号分隔的优先列表，取列表中第一个词条文件支持的语言。locale 类别依次为 `LC_ALL`、`LC_MESSAGES`、`LANG`；`C`/`POSIX` 保持英文并忽略 `LANGUAGE`。区域标签会回退到基础语言（如 `en_US` → `en`），词条文件不支持的语言回退英文。默认英文：
 
 ```bash
 LANG=zh_CN.UTF-8 p11k --shell zsh   # 中文界面
 p11k --shell zsh                    # 英文（默认）
 ```
 
-`P11K_LOCALEDIR` 可指向包含 `.ftl` 文件的目录，以覆盖内嵌词条（测试与翻译用）。通过安装包或 flake 安装时无需设置。
+`P11K_LOCALEDIR` 可指向包含 `.ftl` 文件的目录，以覆盖内嵌词条并新增语言（测试与翻译用）。通过安装包或 flake 安装时无需设置。
 
 ## compat/p10k：替换 gitstatusd
 

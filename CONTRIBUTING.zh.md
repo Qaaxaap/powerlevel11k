@@ -96,7 +96,7 @@ cargo install iai-callgrind-runner --version 0.16.1   # 必须与 Cargo.toml 里
 2. 在 `locales/zh-CN.ftl` 中为同一个 id 补上中文。
 3. 在调用点使用 id：`t("wizard-yes")`。带变量的消息由调用点传值：`t_args("cli-unknown-shell", &[("shell", name)])`；`.ftl` 中用 `{ $shell }` 放置变量。
 4. `cargo test -p p11k-engine` 会检查两个词条文件的 id 一致、源码引用的 id 都已定义、没有未使用的消息。
-5. 新增语言：创建 `locales/<lang>.ftl` 并包含相同 id。语言按 `P11K_LANG`、`LC_ALL`、`LC_MESSAGES`、`LANG`、`LANGUAGE` 的顺序选择，英文为回退语言。`P11K_LOCALEDIR` 可指向包含 `.ftl` 文件的目录，用于在不重新构建时测试词条。
+5. 新增语言：创建 `locales/<lang>.ftl` 并包含相同 id。语言按 `P11K_LANG`、`LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG` 的顺序选择（顺序说明见 README），引擎会自动识别新文件，无需改动代码。英文为回退语言。`P11K_LOCALEDIR` 可指向包含 `.ftl` 文件的目录，用于在不重新构建时测试词条。
 
 词条会在构建时编入二进制：发布产物不需要额外的数据文件或翻译工具。
 

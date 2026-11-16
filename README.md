@@ -154,14 +154,14 @@ The engine repaints the header and restarts its git worker, so `vcs` properties 
 
 ## Interface language
 
-The interface is available in Chinese and English. More translations are welcome. `P11K_LANG` overrides the language. Otherwise `LANGUAGE` wins over the locale categories, like gettext: it is a colon-separated priority list, and the first supported language in it wins. The locale categories are `LC_ALL`, `LC_MESSAGES` and `LANG`, in that order. English is the default:
+The interface is available in Chinese and English. More translations are welcome. `P11K_LANG` overrides the language. Otherwise `LANGUAGE` wins over the locale categories, like gettext: it is a colon-separated priority list, and the first language the catalogue carries wins. The locale categories are `LC_ALL`, `LC_MESSAGES` and `LANG`, in that order; `C`/`POSIX` keeps English and ignores `LANGUAGE`. A regional tag resolves to its bare language (`en_US` → `en`), and a language the catalogue does not carry falls back to English. English is the default:
 
 ```bash
 LANG=zh_CN.UTF-8 p11k --shell zsh   # Chinese interface
 p11k --shell zsh                    # English (default)
 ```
 
-`P11K_LOCALEDIR` can point at a directory of `.ftl` files to override the embedded catalogue (for tests and translators). Installations through a package or the flake need no such setting.
+`P11K_LOCALEDIR` can point at a directory of `.ftl` files to override the embedded catalogue and to add a language (for tests and translators). Installations through a package or the flake need no such setting.
 
 ## compat/p10k: replacing gitstatusd
 

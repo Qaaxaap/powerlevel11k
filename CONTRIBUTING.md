@@ -96,7 +96,7 @@ User-facing text uses Fluent: message ids in the code, messages in `crates/p11k-
 2. Add the same id to `locales/zh-CN.ftl` with the Chinese text.
 3. Use the id at the call site: `t("wizard-yes")`. A message with variables takes them from the call site: `t_args("cli-unknown-shell", &[("shell", name)])`; the `.ftl` value places `{ $shell }`.
 4. `cargo test -p p11k-engine` fails when the two catalogues disagree, when a source references an id that `en.ftl` does not define, or when a message is not referenced anywhere.
-5. Adding a language: create `locales/<lang>.ftl` with the same ids. The language is chosen from `P11K_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG` and `LANGUAGE`; English is the fallback. `P11K_LOCALEDIR` can point at a directory of `.ftl` files to test a catalogue without rebuilding.
+5. Adding a language: create `locales/<lang>.ftl` with the same ids. The language comes from `P11K_LANG`, `LANGUAGE`, `LC_ALL`, `LC_MESSAGES` or `LANG` (see the README for the order), and the engine discovers the new file without a code change. English is the fallback. `P11K_LOCALEDIR` can point at a directory of `.ftl` files to test a catalogue without rebuilding.
 
 The catalogues are embedded in the binary: a release needs no data files and no external translation tools.
 
