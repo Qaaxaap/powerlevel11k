@@ -66,11 +66,6 @@ deny:
 spell:
     typos
 
-# Regenerate the gettext template and merge it into every catalog.
-i18n:
-    tools/i18n.sh extract
-    tools/i18n.sh update
-
 # Regenerate CHANGELOG.md from the Conventional Commit history. Pass a tag to write that
 # version's section instead of Unreleased: `just changelog v1.0.0`.
 changelog tag="":

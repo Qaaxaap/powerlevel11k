@@ -99,7 +99,7 @@ tar 包需要 C 库与 GCC 运行库，常见发行版默认提供。每个 rele
 cargo install --path crates/p11k-engine
 ```
 
-需要 Rust 工具链。`msgfmt`（gettext）用于生成翻译。缺失时构建仍然成功，界面只是没有翻译。
+需要 Rust 工具链。翻译在构建时编入二进制，不需要额外的翻译工具。
 
 CI 在 x86_64 与 aarch64 Linux 上构建并测试。
 
@@ -147,14 +147,14 @@ p11k reload
 
 ## 界面语言
 
-界面文案支持中文与英文，其它语言的翻译欢迎贡献。按标准环境变量（`LANG`、`LC_ALL`、`LANGUAGE`）选择，默认英文：
+界面文案支持中文与英文，其它语言的翻译欢迎贡献。`P11K_LANG` 优先。否则与 gettext 一致，`LANGUAGE` 优先于 locale 类别：它是冒号分隔的优先列表，取列表中第一个词条文件支持的语言。locale 类别依次为 `LC_ALL`、`LC_MESSAGES`、`LANG`；`C`/`POSIX` 保持英文并忽略 `LANGUAGE`。区域标签会回退到基础语言（如 `en_US` → `en`），词条文件不支持的语言回退英文。默认英文：
 
 ```bash
 LANG=zh_CN.UTF-8 p11k --shell zsh   # 中文界面
 p11k --shell zsh                    # 英文（默认）
 ```
 
-`P11K_LOCALEDIR` 可指定词条目录。通过安装包或 flake 安装时无需设置。
+`P11K_LOCALEDIR` 可指向包含 `.ftl` 文件的目录，以覆盖内嵌词条并新增语言（测试与翻译用）。通过安装包或 flake 安装时无需设置。
 
 ## compat/p10k：替换 gitstatusd
 
@@ -176,7 +176,7 @@ export GITSTATUS_DAEMON=/path/to/p11k-d
 - 占位协议：多行头部几何自洽，覆盖 zsh / bash / fish / pwsh
 - 即时提示符 / 瞬态提示符、vi_mode、history、宽松布局
 - 80+ 段、KDL 主题语言、三档图标与 `icon{}` 覆盖
-- `p11k configure` 向导、gettext 词条（zh_CN）、CI
+- `p11k configure` 向导、Fluent 词条（zh-CN）、CI
 - `p11k reload`；p10k 功能已对齐至扩展状态（`OK_PIPE` / `ERROR_PIPE` / `ERROR_SIGNAL`）与 `VCS_DISABLED_WORKDIR_PATTERN`
 - p10k 开关：`ICON_PADDING`、`ICON_BEFORE_CONTENT`、`TRANSIENT_PROMPT` 在各档取值下与 p10k 一致，包括 `moderate`、显式逐段覆盖与 `same-dir`
 - 发布产物：Nix flake、`.deb` 与 tar 包

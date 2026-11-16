@@ -91,8 +91,9 @@ impl Tmux {
         // at `/dev/null`: a real `~/.zshrc` with oh-my-zsh/p10k is slow and disruptive to the
         // assertions.
         let cmd = format!(
-            "sleep 0.3; cd '{cwd}' && XDG_CONFIG_HOME={config_home} XDG_STATE_HOME={} \
-             P11K_USER_ZSHRC={user_rc} P11K_USER_PROFILE=/dev/null exec '{}' --shell {shell}{config_arg}",
+            "unset P11K_LANG P11K_LOCALEDIR; sleep 0.3; cd '{cwd}' && XDG_CONFIG_HOME={config_home} \
+             XDG_STATE_HOME={} P11K_USER_ZSHRC={user_rc} P11K_USER_PROFILE=/dev/null \
+             exec '{}' --shell {shell}{config_arg}",
             state_home.display(),
             env!("CARGO_BIN_EXE_p11k")
         );

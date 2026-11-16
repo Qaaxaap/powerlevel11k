@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::i18n::t;
+use crate::i18n::{t, t_args};
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 
 /// Color: a number = 256-color palette, `#rrggbb` = 24-bit, `"default"`/absent = inherit the terminal.
@@ -70,9 +70,9 @@ impl Color {
             {
                 return Ok(Color::Rgb(r, g, b));
             }
-            return Err(format!(
-                "{key}: {}{s}",
-                t("invalid colour; a hex colour needs six digits: ")
+            return Err(t_args(
+                "config-invalid-hex-colour",
+                &[("key", key), ("value", s)],
             ));
         }
         if s == "default" {
@@ -81,10 +81,10 @@ impl Color {
         if Self::NAMES.contains(&s) {
             return Ok(Color::Named(s.to_string()));
         }
-        Err(format!(
-            "{key}: {}{s}; {}",
-            t("unknown colour name: "),
-            t("use a name, 0-255, #rrggbb or default")
+        let help = t("config-colour-help");
+        Err(t_args(
+            "config-unknown-colour-name",
+            &[("key", key), ("name", s), ("help", &help)],
         ))
     }
 
@@ -92,13 +92,14 @@ impl Color {
     fn from_value(v: &KdlValue, key: &str) -> Result<Color, String> {
         match v {
             KdlValue::String(s) => Color::from_str(s, key),
-            KdlValue::Integer(n) => u8::try_from(*n)
-                .map(Color::Xterm)
-                .map_err(|_| format!("{key}: {}{n}", t("colour index is outside 0-255: "))),
-            _ => Err(format!(
-                "{key}: {}",
-                t("expected a colour (0-255, #rrggbb, a colour name or default)")
-            )),
+            KdlValue::Integer(n) => u8::try_from(*n).map(Color::Xterm).map_err(|_| {
+                let index = n.to_string();
+                t_args(
+                    "config-colour-index-out-of-range",
+                    &[("key", key), ("index", &index)],
+                )
+            }),
+            _ => Err(t_args("config-expected-colour", &[("key", key)])),
         }
     }
 }
@@ -525,7 +526,10 @@ impl Default for Config {
 impl Config {
     /// Parse KDL text into a config.
     pub fn parse(src: &str) -> Result<Config, String> {
-        let doc = KdlDocument::parse(src).map_err(|e| format!("{}{e}", t("KDL parse error: ")))?;
+        let doc = KdlDocument::parse(src).map_err(|e| {
+            let detail = e.to_string();
+            t_args("config-kdl-parse-error", &[("detail", &detail)])
+        })?;
         Self::parse_doc(&doc)
     }
 
@@ -1313,7 +1317,7 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
             match child.name().value() {
                 "state" => {
                     let Some(nm) = first_state_name(child) else {
-                        return Err(t("`state` needs a name (a positional string)"));
+                        return Err(t("config-state-needs-name"));
                     };
                     let st = Style::from_mixed_entries(child.entries())?;
                     let ch = named_str(child, "char");
@@ -1328,10 +1332,9 @@ fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                 // Attached text slots: left/middle/right. The positional string is the text, `fg` is optional.
                 "text-left" | "text-middle" | "text-right" => {
                     let Some(text) = first_state_name(child) else {
-                        return Err(format!(
-                            "{}{}",
-                            child.name().value(),
-                            t(" needs text (a positional string)")
+                        return Err(t_args(
+                            "config-element-needs-text",
+                            &[("element", child.name().value())],
                         ));
                     };
                     let attach = AttachText {
@@ -1389,7 +1392,7 @@ fn first_state_name(node: &KdlNode) -> Option<String> {
 
 /// Warn when the config contains a key the engine does not know.
 fn warn_unknown_key(name: &str) {
-    eprintln!("p11k: {}{name}", t("unknown config key: "));
+    eprintln!("p11k: {}", t_args("config-unknown-key", &[("key", name)]));
 }
 
 /// Parse the `separators` node: character child nodes (`segment`/`sub`/`end`/`right-start`/`right-segment`/`right-sub`/`left-tail`/`right-tail`/`gap`), values read as whole strings.

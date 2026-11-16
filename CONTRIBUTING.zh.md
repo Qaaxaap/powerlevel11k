@@ -21,11 +21,10 @@ CI 在 x86_64 与 aarch64 上执行 `just verify`，不存在第二套需要同�
 
 - `just deny`：依赖许可、禁用与安全通告
 - `just spell`：拼写检查
-- `just i18n`：重新生成 gettext 模板
 - `just changelog`：由提交历史重新生成 `CHANGELOG.md`
 - `just demo`：重新录制 `docs/images/`
 
-devShell 会导出 `LOCALE_ARCHIVE`。缺少该变量时 `setlocale("zh_CN.UTF-8")` 失败，i18n 测试将被跳过。
+devShell 会导出 `LOCALE_ARCHIVE`，其中包含测试所需的 C.UTF-8 与 it_IT 等 locale。
 
 以开发方式启动引擎：
 
@@ -91,18 +90,15 @@ cargo install iai-callgrind-runner --version 0.16.1   # 必须与 Cargo.toml 里
 
 作者不是英语母语者，英文翻译可能不准确。英文与代码行为不一致时以代码为准，并在 PR 或 issue 中指出。
 
-用户可见文案使用 gettext：代码中写英文 msgid，词条位于 `crates/p11k-engine/po/`。新增、删除或改写用户可见文案时：
+用户可见文案使用 Fluent：消息 id 在代码中，中英文词条位于 `crates/p11k-engine/locales/`。新增、删除或改写用户可见文案时：
 
-```bash
-tools/i18n.sh extract   # xgettext → po/p11k.pot
-tools/i18n.sh update    # msgmerge 将新条目并入每个 po/*.po
-```
+1. 在 `locales/en.ftl` 中新增或修改消息。id 保持稳定，值为英文原文。按原有风格书写：小写开头、结尾不加句号、细节放在冒号后。
+2. 在 `locales/zh-CN.ftl` 中为同一个 id 补上中文。
+3. 在调用点使用 id：`t("wizard-yes")`。带变量的消息由调用点传值：`t_args("cli-unknown-shell", &[("shell", name)])`；`.ftl` 中用 `{ $shell }` 放置变量。
+4. `cargo test -p p11k-engine` 会检查两个词条文件的 id 一致、源码引用的 id 都已定义、没有未使用的消息。
+5. 新增语言：创建 `locales/<lang>.ftl` 并包含相同 id。语言按 `P11K_LANG`、`LANGUAGE`、`LC_ALL`、`LC_MESSAGES`、`LANG` 的顺序选择（顺序说明见 README），引擎会自动识别新文件，无需改动代码。英文为回退语言。`P11K_LOCALEDIR` 可指向包含 `.ftl` 文件的目录，用于在不重新构建时测试词条。
 
-随后补全新条目的 `msgstr`。以下三条规则由测试保证：
-
-- 就地翻译的文案使用 `t("…")`。先收集、稍后统一翻译的文案须以 `msgid("…")` 包裹，以便提取器识别，这类文案包括 wizard 的问题标题与选项。两者都必须为纯字符串字面量。
-- 源码、`po/p11k.pot` 与各语言词条三者中任意一处不一致，`cargo test -p p11k-engine` 即失败。遗漏 extract 或 update、残留过时条目，都无法通过测试。
-- 新增语言：将 `po/zh_CN.po` 复制为 `po/<lang>.po`，翻译 `msgstr` 后重新构建。Nix 包会编入 `po/` 下的全部语言，无需改动 `flake.nix`。
+词条会在构建时编入二进制：发布产物不需要额外的数据文件或翻译工具。
 
 ## AI 政策
 

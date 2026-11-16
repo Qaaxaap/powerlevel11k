@@ -78,7 +78,9 @@ The Fixed form column gives the form to use, and the forms to avoid. The Chinese
 | tag | 标签 | A `v*` version tag | Do not write “mark” |
 | MSRV | 最低支持的 Rust 版本 | Pinned by `rust-toolchain.toml` | Write the full form at first mention |
 | Conventional Commits | 约定式提交 | The commit title format | Do not write “regular commits” |
-| msgid / msgstr | msgid / msgstr | The gettext source string and its translation | Do not translate |
-| translation catalog | 翻译词条文件 | `po/*.po` | Do not write “translation library” |
+| message id | 消息 id | The Fluent key in `crates/p11k-engine/locales/*.ftl` | Do not translate |
+| translation catalogue | 翻译词条文件 | `crates/p11k-engine/locales/<lang>.ftl` | Do not write “translation library” |
+| prompt heads / prompt tails | 提示符首端符 / 尾端符 | The cap glyphs at the head and tail of a prompt line | The English words “heads” / “tails” may follow in brackets |
+| prompt colours | 提示符配色 | The “Prompt Colors” wizard option for the whole prompt | Use “提示符颜色” only for the singular “Prompt Color” |
 | squash | 压缩合并 | Merging a pull request as one commit | Do not write “squeeze” |
 | pull request / PR | 拉取请求 | The change submission flow | Write “拉取请求（PR）” at first mention in Chinese, then PR |

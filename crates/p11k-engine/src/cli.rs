@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::config::Config;
-use crate::i18n::t;
+use crate::i18n::{t, t_args};
 use crate::presets;
 
 /// The shell the engine proxies.
@@ -31,7 +31,7 @@ impl Shell {
 }
 
 /// Parsed command line. clap renders the help output itself, so that text stays English; the
-/// engine's own messages still go through gettext.
+/// engine's own messages are translated.
 #[derive(Parser, Debug, Default)]
 #[command(name = "p11k", version, disable_help_subcommand = true)]
 pub struct Cli {
@@ -92,7 +92,7 @@ pub fn apply_log_level() {
 }
 
 /// The clap command. clap does not translate the text it renders, so the help output stays
-/// English; messages the engine prints itself still go through gettext.
+/// English; messages the engine prints itself are translated.
 fn cli_command() -> clap::Command {
     Cli::command()
         .about("p11k: a prompt engine that draws the header of zsh, bash, fish and pwsh prompts")
@@ -169,8 +169,11 @@ pub fn load_config() -> Config {
         match load_config_file(path) {
             Ok(c) => return c,
             Err(e) => eprintln!(
-                "p11k: {}{path:?}: {e}",
-                t("cannot read config, falling back to the built-in lean theme: ")
+                "p11k: {}",
+                t_args(
+                    "cli-cannot-read-config",
+                    &[("detail", &format!("{path:?}: {e}"))]
+                )
             ),
         }
     }
@@ -179,10 +182,8 @@ pub fn load_config() -> Config {
             return presets::build(kind);
         }
         eprintln!(
-            "p11k: {}{name:?}",
-            t(
-                "unknown preset, falling back to the built-in lean theme (expected lean/classic/rainbow/pure): "
-            )
+            "p11k: {}",
+            t_args("cli-unknown-preset", &[("preset", &format!("{name:?}"))])
         );
     }
     let default_path = crate::config::default_config_path();
@@ -190,8 +191,11 @@ pub fn load_config() -> Config {
         match load_config_file(&default_path) {
             Ok(c) => return c,
             Err(e) => eprintln!(
-                "p11k: {}{default_path:?}: {e}",
-                t("cannot read config, falling back to the built-in lean theme: ")
+                "p11k: {}",
+                t_args(
+                    "cli-cannot-read-config",
+                    &[("detail", &format!("{default_path:?}: {e}"))]
+                )
             ),
         }
     }
@@ -211,37 +215,25 @@ pub fn reload_engine(config: Option<PathBuf>) -> anyhow::Result<()> {
         .ok()
         .and_then(|p| p.parse::<libc::pid_t>().ok());
     let Some(pid) = pid else {
-        eprintln!(
-            "p11k: {}",
-            t("not inside a p11k session (P11K_ENGINE_PID is unset)")
-        );
+        eprintln!("p11k: {}", t("cli-not-in-session-unset"));
         process::exit(1);
     };
     if pid <= 0 {
-        eprintln!(
-            "p11k: {}",
-            t("invalid P11K_ENGINE_PID (must be a positive process id)")
-        );
+        eprintln!("p11k: {}", t("cli-invalid-engine-pid"));
         process::exit(1);
     }
     let Some(session_dir) = std::env::var_os("P11K_ENGINE_SESSION")
         .filter(|dir| !dir.is_empty())
         .map(PathBuf::from)
     else {
-        eprintln!(
-            "p11k: {}",
-            t("not inside a p11k session (session data is missing; restart the session)")
-        );
+        eprintln!("p11k: {}", t("cli-not-in-session-missing"));
         process::exit(1);
     };
     let Some(token) = std::env::var("P11K_ENGINE_TOKEN")
         .ok()
         .filter(|t| !t.is_empty())
     else {
-        eprintln!(
-            "p11k: {}",
-            t("not inside a p11k session (session data is missing; restart the session)")
-        );
+        eprintln!("p11k: {}", t("cli-not-in-session-missing"));
         process::exit(1);
     };
     if let Err(error) = verify_session(&session_dir, &token) {
@@ -272,8 +264,11 @@ pub fn reload_engine(config: Option<PathBuf>) -> anyhow::Result<()> {
     if let Err(error) = crate::state::write_private(&request, target.as_os_str().as_encoded_bytes())
     {
         eprintln!(
-            "p11k: {} {request:?}: {error}",
-            t("cannot write the reload request:")
+            "p11k: {}",
+            t_args(
+                "cli-cannot-write-reload-request",
+                &[("detail", &format!("{request:?}: {error}"))]
+            )
         );
         process::exit(1);
     }
@@ -283,14 +278,14 @@ pub fn reload_engine(config: Option<PathBuf>) -> anyhow::Result<()> {
             && error.kind() != std::io::ErrorKind::NotFound
         {
             eprintln!(
-                "p11k: {} {request:?}: {error}",
-                t("cannot remove the reload request:")
+                "p11k: {}",
+                t_args(
+                    "cli-cannot-remove-reload-request",
+                    &[("detail", &format!("{request:?}: {error}"))]
+                )
             );
         }
-        eprintln!(
-            "p11k: {}",
-            t("cannot signal the engine (the session may have exited)")
-        );
+        eprintln!("p11k: {}", t("cli-cannot-signal-engine"));
         process::exit(1);
     }
     Ok(())
@@ -299,12 +294,14 @@ pub fn reload_engine(config: Option<PathBuf>) -> anyhow::Result<()> {
 /// Check that the token in the session directory matches the one the engine exported.
 fn verify_session(session_dir: &Path, token: &str) -> Result<(), String> {
     let path = session_dir.join("session");
-    let stored = std::fs::read_to_string(&path)
-        .map_err(|error| format!("{} {path:?}: {error}", t("cannot read the session file:")))?;
+    let stored = std::fs::read_to_string(&path).map_err(|error| {
+        t_args(
+            "cli-cannot-read-session-file",
+            &[("detail", &format!("{path:?}: {error}"))],
+        )
+    })?;
     if stored.trim() != token {
-        return Err(t(
-            "the session token does not match; the pid may belong to another process",
-        ));
+        return Err(t("cli-token-mismatch"));
     }
     Ok(())
 }
@@ -326,9 +323,7 @@ fn reload_target(session_dir: &Path, default: Option<PathBuf>) -> Result<PathBuf
     if let Some(path) = default {
         return Ok(path);
     }
-    Err(t(
-        "this session has no theme file: it was started with --preset or the built-in theme",
-    ))
+    Err(t("cli-no-theme-file"))
 }
 
 /// Which shell to proxy: `--shell <name>` if given, else the `shell` node of the theme,
@@ -345,10 +340,8 @@ pub fn detect_shell(config: &Config) -> Shell {
         && shell_by_name(name).is_none()
     {
         eprintln!(
-            "p11k: {}{name:?}",
-            t(
-                "unknown shell in the config, falling back to $SHELL (expected zsh/bash/fish/pwsh): "
-            )
+            "p11k: {}",
+            t_args("cli-unknown-shell", &[("shell", &format!("{name:?}"))])
         );
     }
     let env = std::env::var("SHELL").unwrap_or_default();

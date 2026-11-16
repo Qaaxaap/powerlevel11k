@@ -3,7 +3,6 @@
 use std::io::Write;
 
 use crate::config::{Color, Config, Element, Frame, IconMode, Prop, Segment, Separators};
-use crate::i18n::msgid;
 use crate::presets::{self, PresetKind};
 
 use super::Answer;
@@ -17,18 +16,18 @@ pub(super) fn ask_font(out: &mut dyn Write, input: &mut dyn Input) -> Answer<Ico
     let diamond = ask_yn(
         out,
         input,
-        msgid("Does this look like a diamond (rotated square)?"),
-        msgid("Yes."),
-        msgid("No."),
+        "wizard-font-diamond",
+        "wizard-yes",
+        "wizard-no",
         Some("--->  \u{e0b2}\u{e0b0}  <---"),
     )?;
     if diamond {
         match ask_yn(
             out,
             input,
-            msgid("Does this look like a lock?"),
-            msgid("Yes."),
-            msgid("No."),
+            "wizard-font-lock",
+            "wizard-yes",
+            "wizard-no",
             Some("--->  \u{f023}  <---"),
         )? {
             true => Ok(IconMode::NerdfontComplete),
@@ -38,9 +37,9 @@ pub(super) fn ask_font(out: &mut dyn Write, input: &mut dyn Input) -> Answer<Ico
         match ask_yn(
             out,
             input,
-            msgid("Does this look like >< but taller and fatter?"),
-            msgid("Yes."),
-            msgid("No."),
+            "wizard-font-angle",
+            "wizard-yes",
+            "wizard-no",
             Some("--->  \u{276f}\u{276e}  <---"),
         )? {
             true => Ok(IconMode::Compatible),
@@ -65,7 +64,7 @@ pub(super) fn ask_style(
     mode: &IconMode,
 ) -> Answer<PresetKind> {
     let titles = PresetKind::ALL.map(|k| k.title());
-    let i = ask_choice_preview(out, input, msgid("Prompt Style"), &titles, |i| {
+    let i = ask_choice_preview(out, input, "wizard-style-title", &titles, |i| {
         style_preview(PresetKind::ALL[i], mode)
     })?;
     Ok(PresetKind::ALL[i])
@@ -90,21 +89,21 @@ pub(super) fn ask_color(
 ) -> Answer<Config> {
     // p10k's four shade names (`color_name`).
     const FOUR: [&str; 4] = [
-        msgid("Lightest."),
-        msgid("Light."),
-        msgid("Dark."),
-        msgid("Darkest."),
+        "wizard-shade-lightest",
+        "wizard-shade-light",
+        "wizard-shade-dark",
+        "wizard-shade-darkest",
     ];
     let (title, options): (&str, &[&str]) = match kind {
         PresetKind::Lean => (
-            msgid("Prompt Colors"),
-            &[msgid("256 colors."), msgid("8 colors.")],
+            "wizard-colours-title",
+            &["wizard-colours-256", "wizard-colours-8"],
         ),
-        PresetKind::Classic => (msgid("Prompt Color"), &FOUR),
-        PresetKind::Rainbow => (msgid("Frame Color"), &FOUR),
+        PresetKind::Classic => ("wizard-colour-title", &FOUR),
+        PresetKind::Rainbow => ("wizard-frame-colour-title", &FOUR),
         PresetKind::Pure => (
-            msgid("Prompt Colors"),
-            &[msgid("Original."), msgid("Snazzy.")],
+            "wizard-colours-title",
+            &["preset-original", "preset-snazzy"],
         ),
     };
     let i = ask_choice_preview(out, input, title, options, |i| {
@@ -127,8 +126,8 @@ pub(super) fn ask_charset(
     let i = ask_choice_preview(
         out,
         input,
-        msgid("Character Set"),
-        &[msgid("Unicode."), msgid("ASCII.")],
+        "wizard-charset-title",
+        &["wizard-charset-unicode", "wizard-charset-ascii"],
         |i| {
             let mut c = cfg.clone();
             c.mode = if i == 1 {
@@ -151,8 +150,8 @@ pub(super) fn ask_use_rprompt(
     ask_apply(
         out,
         input,
-        msgid("Non-permanent content location"),
-        &[msgid("Left."), msgid("Right.")],
+        "wizard-rprompt-title",
+        &["wizard-side-left", "wizard-side-right"],
         cfg,
         |c, i| {
             // First remove exec from both columns, then put it back on the left/right per the choice.
@@ -181,12 +180,8 @@ pub(super) fn ask_time(
     ask_apply(
         out,
         input,
-        msgid("Show current time?"),
-        &[
-            msgid("No."),
-            msgid("12-hour format."),
-            msgid("24-hour format."),
-        ],
+        "wizard-time-title",
+        &["wizard-no", "wizard-time-12h", "wizard-time-24h"],
         cfg,
         |c, i| match i {
             0 => remove_segment(c, "time"),
@@ -239,12 +234,12 @@ pub(super) fn ask_separators(
     ask_apply(
         out,
         input,
-        msgid("Prompt Separators"),
+        "wizard-separators-title",
         &[
-            msgid("Angled."),
-            msgid("Vertical."),
-            msgid("Slanted."),
-            msgid("Round."),
+            "wizard-separator-angled",
+            "wizard-separator-vertical",
+            "wizard-shape-slanted",
+            "wizard-shape-round",
         ],
         cfg,
         |c, i| {
@@ -271,13 +266,13 @@ pub(super) fn ask_heads(
     ask_apply(
         out,
         input,
-        msgid("Prompt Heads"),
+        "wizard-heads-title",
         &[
-            msgid("Flat."),
-            msgid("Blurred."),
-            msgid("Sharp."),
-            msgid("Slanted."),
-            msgid("Round."),
+            "wizard-shape-flat",
+            "wizard-shape-blurred",
+            "wizard-shape-sharp",
+            "wizard-shape-slanted",
+            "wizard-shape-round",
         ],
         cfg,
         |c, i| {
@@ -303,13 +298,13 @@ pub(super) fn ask_tails(
     ask_apply(
         out,
         input,
-        msgid("Prompt Tails"),
+        "wizard-tails-title",
         &[
-            msgid("Flat."),
-            msgid("Blurred."),
-            msgid("Sharp."),
-            msgid("Slanted."),
-            msgid("Round."),
+            "wizard-shape-flat",
+            "wizard-shape-blurred",
+            "wizard-shape-sharp",
+            "wizard-shape-slanted",
+            "wizard-shape-round",
         ],
         cfg,
         |c, i| {
@@ -335,8 +330,8 @@ pub(super) fn ask_num_lines(
     ask_apply(
         out,
         input,
-        msgid("Prompt Height"),
-        &[msgid("One line."), msgid("Two lines.")],
+        "wizard-height-title",
+        &["wizard-height-one-line", "wizard-height-two-lines"],
         cfg,
         |c, i| {
             if i == 0 {
@@ -357,8 +352,12 @@ pub(super) fn ask_gap_char(
     ask_apply(
         out,
         input,
-        msgid("Prompt Connection"),
-        &[msgid("Disconnected."), msgid("Dotted."), msgid("Solid.")],
+        "wizard-connection-title",
+        &[
+            "wizard-connection-disconnected",
+            "wizard-connection-dotted",
+            "wizard-connection-solid",
+        ],
         cfg,
         |c, i| {
             c.separators.gap = match i {
@@ -387,12 +386,12 @@ pub(super) fn ask_frame(
     ask_apply(
         out,
         input,
-        msgid("Prompt Frame"),
+        "wizard-frame-title",
         &[
-            msgid("No frame."),
-            msgid("Left."),
-            msgid("Right."),
-            msgid("Full."),
+            "wizard-frame-none",
+            "wizard-side-left",
+            "wizard-side-right",
+            "wizard-frame-full",
         ],
         cfg,
         |c, i| {
@@ -428,8 +427,8 @@ pub(super) fn ask_empty_line(
     ask_apply(
         out,
         input,
-        msgid("Prompt Spacing"),
-        &[msgid("Compact."), msgid("Sparse.")],
+        "wizard-spacing-title",
+        &["wizard-spacing-compact", "wizard-spacing-sparse"],
         cfg,
         |c, i| c.layout.prompt_add_newline = usize::from(i == 1),
     )
@@ -443,8 +442,8 @@ pub(super) fn ask_extra_icons(
     ask_apply(
         out,
         input,
-        msgid("Icons"),
-        &[msgid("Few icons."), msgid("Many icons.")],
+        "wizard-icons-title",
+        &["wizard-icons-few", "wizard-icons-many"],
         cfg,
         |c, i| {
             if i == 0 {
@@ -481,8 +480,8 @@ pub(super) fn ask_prefixes(
     ask_apply(
         out,
         input,
-        msgid("Prompt Flow"),
-        &[msgid("Concise."), msgid("Fluent.")],
+        "wizard-flow-title",
+        &["wizard-flow-concise", "wizard-flow-fluent"],
         cfg,
         |c, i| {
             let names = ["vcs", "command_execution_time", "time"];
@@ -509,9 +508,9 @@ pub(super) fn ask_transient(
     let b = ask_yn(
         out,
         input,
-        msgid("Enable Transient Prompt?"),
-        msgid("Yes."),
-        msgid("No."),
+        "wizard-transient-title",
+        "wizard-yes",
+        "wizard-no",
         None,
     )?;
     cfg.layout.transient_prompt = if b {

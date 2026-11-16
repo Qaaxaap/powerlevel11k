@@ -33,8 +33,8 @@ pub(super) fn ask_choice_preview(
 ) -> Answer<usize> {
     loop {
         clear(out);
-        // The title and option labels are msgids, translated here in one place; preview lines
-        // are real prompts rendered from the config and do not go through gettext.
+        // The title and option labels are message ids, translated here in one place; preview
+        // lines are real prompts rendered from the config and are not translated.
         line(out, &t(title))?;
         line(out, "")?;
         for (i, label) in options.iter().enumerate() {
@@ -44,8 +44,8 @@ pub(super) fn ask_choice_preview(
             }
             line(out, "")?;
         }
-        line(out, &format!("(r)  {}", t("Restart from the beginning.")))?;
-        line(out, &format!("(q)  {}", t("Quit")))?;
+        line(out, &format!("(r)  {}", t("wizard-restart")))?;
+        line(out, &format!("(q)  {}", t("wizard-quit")))?;
         match key(input)? {
             b'q' => return Err(Control::Quit),
             b'r' => return Err(Control::Restart),
@@ -84,7 +84,7 @@ pub(super) fn ask_apply(
 }
 
 /// Yes/no question; when `sample` is present, a line with the glyph sample is shown before the
-/// options. `title`, `yes` and `no` are msgids.
+/// options. `title`, `yes` and `no` are message ids.
 pub(super) fn ask_yn(
     out: &mut dyn Write,
     input: &mut dyn Input,
@@ -97,7 +97,7 @@ pub(super) fn ask_yn(
 }
 
 /// Like [`ask_yn`] with an already translated title. Dynamic titles (an overwrite question with a
-/// path) go through this variant so gettext sees the text once.
+/// path) go through this variant so the message is looked up once.
 pub(super) fn ask_yn_title(
     out: &mut dyn Write,
     input: &mut dyn Input,
@@ -118,8 +118,8 @@ pub(super) fn ask_yn_title(
         line(out, &format!("(y)  {}", t(yes)))?;
         line(out, "")?;
         line(out, &format!("(n)  {}", t(no)))?;
-        line(out, &format!("(r)  {}", t("Restart from the beginning.")))?;
-        line(out, &format!("(q)  {}", t("Quit")))?;
+        line(out, &format!("(r)  {}", t("wizard-restart")))?;
+        line(out, &format!("(q)  {}", t("wizard-quit")))?;
         match key(input)? {
             b'q' => return Err(Control::Quit),
             b'r' => return Err(Control::Restart),
@@ -132,7 +132,7 @@ pub(super) fn ask_yn_title(
 
 pub(super) fn preview(out: &mut dyn Write, cfg: &Config) -> io::Result<()> {
     clear(out);
-    line(out, &t("Preview (current directory + exit code):"))?;
+    line(out, &t("wizard-preview"))?;
     line(out, "")?;
     for l in preview_lines(cfg) {
         line(out, &l)?;

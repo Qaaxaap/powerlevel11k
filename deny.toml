@@ -13,8 +13,8 @@ targets = [
 [advisories]
 version = 2
 yanked = "warn"
-# The runtime graph is clean: git2 0.21 fixed RUSTSEC-2026-0183 and RUSTSEC-2026-0184, and
-# gettext-rs 0.8 marks `setlocale` unsafe for RUSTSEC-2026-0244.
+# The runtime graph is clean: git2 0.21 fixed RUSTSEC-2026-0183 and RUSTSEC-2026-0184; the
+# translations are pure Rust (fluent-templates) and carry no advisory of their own.
 #
 # The two ignores below belong to iai-callgrind, which is a dev-dependency for the benchmark
 # harness and never reaches a release binary.
@@ -50,18 +50,22 @@ multiple-versions = "deny"
 wildcards = "deny"
 # The workspace crates are private and depend on each other by path only.
 allow-wildcard-paths = true
-# Two dependency trees pin an old major version of a shared crate, and no release moves them to
+# A few dependency trees pin an old major version of a shared crate, and no release moves them to
 # the version the rest of the graph uses:
 # - syn 2: derive_more 2.1.1 (dev-dependency chain through iai-callgrind) and thiserror 1
 #   (through filedescriptor/portable-pty) require syn 2. clap_derive and serde_derive use
 #   syn 3.
 # - unicode-width 0.1: miette 7.6.0 (through kdl 6.7.1) requires unicode-width 0.1, while the
 #   engine uses unicode-width 0.2 directly.
+# - thiserror 1: filedescriptor 0.8 (through portable-pty) still builds on thiserror 1;
+#   fluent-syntax 0.12 (through fluent-templates) uses thiserror 2.
 # The ranges keep the exception to the old major version. A new duplicate in either crate, or a
 # duplicate of another crate, still fails the check.
 skip = [
   { name = "syn", version = "^2" },
   { name = "unicode-width", version = "^0.1" },
+  { name = "thiserror", version = "^1" },
+  { name = "thiserror-impl", version = "^1" },
 ]
 
 [sources]

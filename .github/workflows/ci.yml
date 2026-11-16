@@ -248,8 +248,6 @@ jobs:
           for bin in p11k p11k-d; do
             test -x "$out/bin/$bin"
           done
-          test -f "$out/share/locale/zh_CN/LC_MESSAGES/p11k.mo"
-          grep -aq "$out/share/locale" "$out/bin/p11k"
           "$out/bin/p11k" --version
 
   # The devShell pins this version, but a flake mistake could hide that. This job uses plain
