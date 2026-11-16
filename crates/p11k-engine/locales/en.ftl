@@ -105,6 +105,6 @@ wizard-yes-write-config = Yes, write the config.
 wizard-aborted = p11k configuration wizard has been aborted.
 wizard-nothing-written = Nothing was written.
 wizard-overwrite = p11k config file already exists. Overwrite { $path }?
-wizard-new-config = New config:
+wizard-new-config = New config: { $path }.
 wizard-add-to-rc = Add one of these to your shell rc:
 wizard-engine-is-theme = The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise they will stack.

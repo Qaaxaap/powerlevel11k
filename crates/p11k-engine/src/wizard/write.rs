@@ -61,7 +61,7 @@ pub(super) fn write_config(out: &mut dyn Write, input: &mut dyn Input, cfg: &Con
         .unwrap_or_else(|_| "p11k".into());
     line(out, "")?;
     // p10k: `New config: <path>.`
-    line(out, &format!("{} {p}.", t("wizard-new-config")))?;
+    line(out, &t_args("wizard-new-config", &[("path", &p)]))?;
     line(out, "")?;
     line(out, &t("wizard-add-to-rc"))?;
     line(

@@ -106,6 +106,6 @@ wizard-yes-write-config = 是，写入配置
 wizard-aborted = p11k 配置向导已中止。
 wizard-nothing-written = 未写入任何内容。
 wizard-overwrite = p11k 配置文件 { $path } 已存在，是否覆盖？
-wizard-new-config = 新配置：
+wizard-new-config = 新配置：{ $path }。
 wizard-add-to-rc = 将对应的一行加入 shell rc：
 wizard-engine-is-theme = 引擎即主题：请先移除原有的 ZSH_THEME/主题设置，否则会叠加。
