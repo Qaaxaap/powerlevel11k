@@ -1,9 +1,11 @@
 //! Fluent-backed localisation.
 //!
 //! English is the source language (`locales/en.ftl`); `locales/zh-CN.ftl` carries the Chinese
-//! translation. Both are embedded at build time. The language comes from the first of
-//! `P11K_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG` and `LANGUAGE` that parses as a language tag;
-//! an unset or unparsable value falls back to English.
+//! translation. Both are embedded at build time. `P11K_LANG` overrides the language. Otherwise
+//! `LANGUAGE` wins over the locale categories, like gettext: it is a colon-separated priority
+//! list, and the first supported language in it wins. The locale categories are checked in the
+//! order `LC_ALL`, `LC_MESSAGES`, `LANG`; the first one that carries a language tag decides, and
+//! an unsupported language falls back to English.
 //!
 //! `P11K_LOCALEDIR` can point at a directory of `.ftl` files to override the embedded
 //! resources. The directory must carry `en.ftl` as the fallback language, or the external
@@ -31,6 +33,9 @@ static_loader! {
 
 /// English, the source language and the fallback for every missing translation.
 static EN: LanguageIdentifier = fluent_templates::langid!("en");
+
+/// The shipped translation besides English.
+static ZH_CN: LanguageIdentifier = fluent_templates::langid!("zh-CN");
 
 static LANGUAGE: OnceLock<LanguageIdentifier> = OnceLock::new();
 
@@ -105,19 +110,63 @@ fn load_external() -> Option<ArcLoader> {
 
 /// Pick the language from the environment.
 fn detect_language() -> LanguageIdentifier {
-    for key in ["P11K_LANG", "LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"] {
-        let Some(value) = std::env::var_os(key) else {
+    detect_language_with(|key| std::env::var_os(key).map(|v| v.to_string_lossy().into_owned()))
+}
+
+/// [`detect_language`] with an injectable environment (tests).
+fn detect_language_with(var: impl Fn(&str) -> Option<String>) -> LanguageIdentifier {
+    // P11K_LANG is an explicit override: an unsupported tag falls back to English without
+    // consulting the locale.
+    if let Some(raw) = var("P11K_LANG")
+        && let Some(language) = parse_language(&raw)
+    {
+        return if supported(&language) {
+            language
+        } else {
+            EN.clone()
+        };
+    }
+    // LANGUAGE is gettext's priority list and wins over the locale categories. A list without
+    // a supported language falls through to the locale.
+    if let Some(raw) = var("LANGUAGE")
+        && let Some(language) = first_supported(&raw)
+    {
+        return language;
+    }
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        let Some(raw) = var(key) else {
             continue;
         };
-        if let Some(language) = parse_language(&value.to_string_lossy()) {
-            return language;
+        if raw.trim().is_empty() {
+            continue;
         }
+        let Some(language) = parse_language(&raw) else {
+            continue;
+        };
+        return if supported(&language) {
+            language
+        } else {
+            EN.clone()
+        };
     }
     EN.clone()
 }
 
-/// Parse a locale value: `LANGUAGE` is a colon-separated priority list, the others are one
-/// value. `C`/`POSIX`, an empty value and anything that does not parse mean English.
+/// Whether the shipped catalogue carries a translation for `language`.
+fn supported(language: &LanguageIdentifier) -> bool {
+    *language == EN || *language == ZH_CN
+}
+
+/// The first supported language in a gettext priority list, e.g. `zh_CN:en`.
+fn first_supported(raw: &str) -> Option<LanguageIdentifier> {
+    raw.split(':')
+        .filter_map(parse_language_tag)
+        .find(supported)
+}
+
+/// Parse a locale value. `LANGUAGE` and `P11K_LANG` are colon-separated priority lists, the
+/// other variables hold one value. `C`/`POSIX`, an empty value and anything that does not parse
+/// mean English.
 fn parse_language(raw: &str) -> Option<LanguageIdentifier> {
     raw.split(':').find_map(parse_language_tag)
 }
@@ -401,5 +450,70 @@ mod tests {
             Some("fr-FR".into())
         );
         assert!(parse_language_tag("").is_none());
+    }
+
+    /// An environment backed by a fixed map.
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: BTreeMap<String, String> = pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect();
+        move |key: &str| map.get(key).cloned()
+    }
+
+    /// gettext precedence: `P11K_LANG` overrides, then `LANGUAGE`, then the locale categories.
+    /// `LANGUAGE` is a priority list and skips entries the catalogue does not carry.
+    #[test]
+    fn language_precedence() {
+        let zh = ZH_CN.clone();
+        let en = EN.clone();
+        // LANGUAGE wins over the locale categories.
+        assert_eq!(
+            detect_language_with(env(&[("LANGUAGE", "zh_CN"), ("LANG", "en_US.UTF-8")])),
+            zh
+        );
+        // The list is walked: unsupported entries are skipped.
+        assert_eq!(
+            detect_language_with(env(&[("LANGUAGE", "fr_FR:zh_CN"), ("LANG", "en_US.UTF-8")])),
+            zh
+        );
+        // A list without a supported language falls through to the locale.
+        assert_eq!(
+            detect_language_with(env(&[("LANGUAGE", "fr_FR"), ("LANG", "zh_CN.UTF-8")])),
+            zh
+        );
+        // P11K_LANG is an explicit override and does not fall through when unsupported.
+        assert_eq!(
+            detect_language_with(env(&[
+                ("P11K_LANG", "fr_FR"),
+                ("LANGUAGE", "zh_CN"),
+                ("LANG", "zh_CN.UTF-8"),
+            ])),
+            en
+        );
+        assert_eq!(
+            detect_language_with(env(&[("P11K_LANG", "zh_CN"), ("LC_ALL", "C")])),
+            zh
+        );
+        // An empty P11K_LANG is ignored.
+        assert_eq!(
+            detect_language_with(env(&[("P11K_LANG", ""), ("LANG", "zh_CN.UTF-8")])),
+            zh
+        );
+        // LC_ALL overrides LC_MESSAGES and LANG; LC_MESSAGES overrides LANG.
+        assert_eq!(
+            detect_language_with(env(&[("LC_ALL", "C"), ("LANG", "zh_CN.UTF-8")])),
+            en
+        );
+        assert_eq!(
+            detect_language_with(env(&[("LC_MESSAGES", "zh_CN"), ("LANG", "en_US.UTF-8")])),
+            zh
+        );
+        // Empty values are skipped and nothing set is English.
+        assert_eq!(
+            detect_language_with(env(&[("LC_ALL", ""), ("LANG", "zh_CN.UTF-8")])),
+            zh
+        );
+        assert_eq!(detect_language_with(env(&[])), en);
     }
 }

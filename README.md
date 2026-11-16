@@ -154,7 +154,7 @@ The engine repaints the header and restarts its git worker, so `vcs` properties 
 
 ## Interface language
 
-The interface is available in Chinese and English. More translations are welcome. The language is taken from the first of `P11K_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG` and `LANGUAGE` that names a language; English is the default:
+The interface is available in Chinese and English. More translations are welcome. `P11K_LANG` overrides the language. Otherwise `LANGUAGE` wins over the locale categories, like gettext: it is a colon-separated priority list, and the first supported language in it wins. The locale categories are `LC_ALL`, `LC_MESSAGES` and `LANG`, in that order. English is the default:
 
 ```bash
 LANG=zh_CN.UTF-8 p11k --shell zsh   # Chinese interface
