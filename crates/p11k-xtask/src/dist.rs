@@ -149,7 +149,7 @@ fn stage(root: &Path, target: Target, out: &Path) -> Result<PathBuf> {
 
 /// Write one tarball holding one package.
 fn tarball(out: &Path, target: Target, version: &str, binary: &str, dir: &Path) -> Result<()> {
-    let prefix = format!("{binary}-v{version}-{}", target.triple());
+    let prefix = format!("{binary}-v{}-{}", file_component(version), target.triple());
     let path = out.join(format!("{prefix}.tar.gz"));
 
     let file = File::create(&path).with_context(|| format!("cannot create {}", path.display()))?;
@@ -359,7 +359,24 @@ fn deb_file_name(package: &str, version: &str, arch: &str, musl: bool) -> String
     } else {
         package.to_owned()
     };
-    format!("{name}_{version}-1_{arch}.deb")
+    format!("{name}_{}-1_{arch}.deb", file_component(version))
+}
+
+/// Reduce a version to the characters GitHub keeps in a release asset name.
+///
+/// GitHub rewrites anything outside `[A-Za-z0-9._-]` to `.`, so `~` in a Debian version and `+`
+/// in a semver build metadata both break the match with `SHA256SUMS`. Rewriting here makes the
+/// name identical before and after the upload.
+fn file_component(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '.'
+            }
+        })
+        .collect()
 }
 
 /// Parse `2.28` or `2.2.5` into comparable parts.
@@ -488,6 +505,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn file_component_keeps_only_characters_github_keeps() {
+        assert_eq!(file_component("1.0.0-alpha.1"), "1.0.0-alpha.1");
+        assert_eq!(file_component("1.0.0+abc"), "1.0.0.abc");
+        assert_eq!(file_component("1.0.0~rc.1"), "1.0.0.rc.1");
+        // Every output character is one GitHub keeps, so a re-run changes nothing.
+        for input in ["1.0.0+build.7", "2.0.0~beta+sha.abc", "1.0.0"] {
+            let once = file_component(input);
+            assert_eq!(file_component(&once), once, "{input}");
+        }
+    }
+
+    #[test]
     fn deb_file_name_holds_no_tilde_github_would_rewrite() {
         for (package, version, arch, musl, expected) in [
             ("p11k", "1.2.3", "amd64", false, "p11k_1.2.3-1_amd64.deb"),
@@ -504,6 +533,13 @@ mod tests {
                 "arm64",
                 true,
                 "p11k-d-musl_0.0.0-test.1-1_arm64.deb",
+            ),
+            (
+                "p11k",
+                "1.0.0+build.7",
+                "amd64",
+                false,
+                "p11k_1.0.0.build.7-1_amd64.deb",
             ),
         ] {
             let name = deb_file_name(package, version, arch, musl);
