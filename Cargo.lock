@@ -998,7 +998,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "p11k-d"
-version = "1.0.0-alpha.1"
+version = "0.0.0-test.1"
 dependencies = [
  "git2",
  "p11k-gitstatus",
@@ -1007,7 +1007,7 @@ dependencies = [
 
 [[package]]
 name = "p11k-engine"
-version = "1.0.0-alpha.1"
+version = "0.0.0-test.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "p11k-gitstatus"
-version = "1.0.0-alpha.1"
+version = "0.0.0-test.1"
 dependencies = [
  "criterion",
  "env_logger",

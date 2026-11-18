@@ -4,7 +4,7 @@ Notable changes, newest first. Generated from
 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) by
 `just changelog`.
 
-## Unreleased
+## 0.0.0-test.1 — 2026-11-18
 
 ### Bug fixes
 - **engine:** Open one blank row per prompt-add-newline
@@ -23,6 +23,48 @@ Notable changes, newest first. Generated from
 - **gitstatus:** Keep the config-driven caps per request, not per process
 - **engine:** Forward pending pty output before handling an announce
 - **gitstatus:** Answer requests from one loop, in order
+- **release:** Read the release notes from the changelog headings
+- **engine:** Fold the instant header and keep same-dir's first prompt whole
+- **engine:** Count the ruler row in the header height
+- **engine:** Write the prompt ack atomically
+- **engine:** Keep a partial announce line across reads
+- **engine:** Wake the poll when a git result arrives
+- **engine:** Replace a stale run directory instead of failing
+- Close the remaining engine cleanup items (#74)
+- **gitstatus:** Count a nested repository as one untracked entry
+- **render:** Align segment spacing and hide unknown segments (#80)
+- **engine:** Keep the pwsh input prefix colour on redraw
+- **engine:** Keep the fish command echo above the new prompt
+- **engine:** Hide zsh's EOF mark on the first prompt
+- **cli:** Parse the command line once with clap
+- **reload:** Verify the session and support --config
+- **wizard:** Handle arrow keys and overwrite answers
+- **gitstatus:** Report annotated tags at HEAD
+- **render:** Keep text elements transparent
+- **gitstatus:** Keep the daemon alive after a bad request
+- **gitstatus:** Log the final index counters
+- **timing:** Take the command duration from the shell
+- **visual:** Wait for a stable frame before typing
+- **visual:** Complete the command marker in pwsh
+- **visual:** Send Return after the line editor is ready
+- **visual:** Pin the font raster in the fonts configuration
+- **visual:** Ignore antialiased pixels in the frame comparison
+- **visual:** Resend Return when the command does not start
+- **visual:** Wait for the first prompt before typing
+- **render:** Drop the conditional icon predicates
+- **render:** Treat an empty icon as no icon
+- **render:** Scan ANSI escapes for width and stripping
+- **render:** Time out and refresh the command cache
+- **render:** Read the memory and the directory state once
+- **render:** Give the public IP check a shorter timeout
+- **config:** Reject invalid colours
+- **engine:** Start the signal pipe first and fail a broken shell
+- **shell:** Time out the ack wait in every shell template
+- **protocol:** Escape the cwd in the announce line
+- **shell:** Read the command duration in any locale
+- **shell:** Snapshot the bash timestamp before splitting it
+- **render:** Keep the prompt-add-newline rows on a prompt redraw
+- **config:** Keep the prompt renderable in a non-UTF-8 locale (#121)
 
 ### Build
 - **deps:** Bump libc from 0.2.189 to 0.2.190
@@ -36,6 +78,9 @@ Notable changes, newest first. Generated from
 - **deps:** Bump actions/upload-artifact from 4 to 7 (#59)
 - **deps:** Bump actions/cache from 4 to 6 (#60)
 - **deps:** Bump actions/download-artifact from 4 to 8 (#62)
+- **just:** Make verify depend on check
+- **deny:** Deny duplicates with an explicit skip list
+- **deps:** Bump jiff from 0.2.38 to 0.2.43
 
 ### CI
 - Build the flake checks in CI, with tmux and terminfo
@@ -45,6 +90,12 @@ Notable changes, newest first. Generated from
 - Pass the release flags through an array
 - Build and test on aarch64
 - Name the platform jobs consistently
+- Run the differential tests and the locale check on aarch64
+- Harden the repository gates (#71)
+- Skip the heavy jobs for documentation-only changes
+- Run the nix checks in their own job (#79)
+- Allow the deps commit type
+- Move the build and release logic into a cargo xtask
 
 ### Chores
 - Add the project infrastructure the repository was missing
@@ -52,6 +103,18 @@ Notable changes, newest first. Generated from
 - Ignore the local nohup.out
 - Clean up the repository leftovers
 - **deps:** Exclude the MSRV toolchain from dependabot updates
+- State the licence policy in the deny configuration
+- Regenerate the changelog
+- **i18n:** Drop obsolete entries from the catalog
+- **i18n:** Add the Chinese wording for the reload messages
+
+### Dependencies
+- Parse JSON and escape URLs with crates
+- Expand environment variables with shellexpand
+- Format dates and times with jiff
+- Strip ANSI escapes with strip-ansi-escapes
+- Match globs with globset
+- Vendor libgit2 so the linked libraries are fixed
 
 ### Documentation
 - Add recorded demo images and a demo-first README (#6)
@@ -70,6 +133,11 @@ Notable changes, newest first. Generated from
 - Rewrite the Chinese docs for clarity
 - Keep the Chinese contributor table in sync
 - Improve the structure of the English docs
+- Pass the release tag to the changelog command
+- Spell the prerelease deb name in the install steps
+- Add agent guidance and a terminology table
+- State the dependency policy in AGENTS.md
+- Put the branch comments in STE
 
 ### Features
 - **protocol:** Strip prompt signals out of the shell stream
@@ -84,6 +152,7 @@ Notable changes, newest first. Generated from
 - **gitstatus:** Wire -e/--recurse-untracked-dirs
 - **gitstatus:** Wire -v/--log-level
 - **config:** Support transient-prompt "same-dir"
+- **render:** Keep the instant header as history
 
 ### Performance
 - **engine:** Skip a header repaint that would write the same bytes
@@ -100,6 +169,26 @@ Notable changes, newest first. Generated from
 - **engine:** Move state files under XDG_STATE_HOME and grade the log
 - **gitstatus:** Answer each request on its own thread
 - **engine:** Replace the announce file with a FIFO and wake the loop on signals
+- **render:** Move the pattern matcher into a module
+- **render:** Move the icon tables into a module
+- **render:** Move the prefix and paint helpers into a module
+- **render:** Move the environment lookups into a module
+- **render:** Move the segment text into a module
+- **render:** Read the segments from one registry
+- **render:** Render once and share the column emitter
+- **dir:** Fold the shortening strategies through slots
+- **render:** Keep the OS icon table with the icons
+- **render:** Put every segment behind one trait
+- **render:** Render through one object
+- **render:** Carry the line width with the painted line
+- **dir:** Inject the filesystem into the shortening strategies
+- **render:** Inject the environment into the render tests
+- Move the model and the pattern out of the renderer
+- **render:** Pass the vi mode through the context
+- **wizard:** Replace the step enum with a control error
+- **wizard:** Inject the input and cover the questions
+- **wizard:** Split the wizard into modules
+- **i18n:** Replace gettext with Fluent (#116)
 
 ### Tests
 - Run the bash tests on an interactive bash
@@ -116,9 +205,26 @@ Notable changes, newest first. Generated from
 - **proxy:** Read the marker that follows the command, not the one before it
 - **proxy:** Stop reading past the needle so chained reads cannot race
 - **proxy:** Assert the blank row on the rendered pane
+- **proxy:** Cover the header repaint and buffer over a resize
+- **proxy:** Cover the fish resize path
+- **p11k-d:** Make the closed-stdout daemon test deterministic
+- **proxy:** Cover same-dir transient folding and resize cases (#81)
+- **visual:** Add a real-terminal render check (#84)
+- **render:** Add the frame matrix and line snapshots
+- **proxy:** Replace the spawn helpers with one builder
+- Cover config, proxy timing, gitstatus states and daemon edges
+- **config:** Keep the colour tests locale independent
+- **shell:** Cover the bootstrap paths in tmux
+- **shell:** Cover the duration under a real comma locale
+- Pin the prompt-add-newline row count
+- Count the prompt-add-newline rows on a reprint
+- Keep each proxy test's doc comment on its test
 
 ### Translations
 - Translate the remaining config and script comments
+- Translate the colour errors
+- Translate the configure terminal message
+- Translate the shell bootstrap messages
 
 ## 1.0.0-alpha.1 — 2026-09-12
 
