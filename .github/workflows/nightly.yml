@@ -48,8 +48,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      # The tag has to be pushed, so the checkout keeps its credentials.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: target/dist
@@ -57,10 +58,23 @@ jobs:
       - name: Assemble the artifacts
         run: nix shell --inputs-from . nixpkgs#just --command just assemble
       # Move the nightly tag to this commit, so the release page follows the last good build.
+      # The refs API needs the token but not git credentials, so the checkout keeps none.
       - name: Move the nightly tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
         run: |
-          git tag -f nightly
-          git push --force origin refs/tags/nightly
+          set -eu
+          # The probe only picks the branch; a failure it swallows is the "tag absent" case
+          # below, and a real API failure surfaces on the write that follows.
+          if gh api "repos/$GH_REPO/git/ref/tags/nightly" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/nightly" \
+              -f sha="$SHA" -F force=true
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f ref="refs/tags/nightly" -f sha="$SHA"
+          fi
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
