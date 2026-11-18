@@ -11,6 +11,28 @@ rust-version.workspace = true
 name = "p11k-d"
 path = "src/main.rs"
 
+# The Debian package. `depends` is checked against the build target by `cargo xtask dist`.
+[package.metadata.deb]
+name = "p11k-d"
+maintainer = "Qaaxaap <Qaaxaap@users.noreply.github.com>"
+copyright = "2026, Qaaxaap"
+license-file = ["../../COPYING.LESSER", "0"]
+section = "utils"
+priority = "optional"
+depends = "libc6 (>= 2.17)"
+extended-description = "p11k-d is a byte-compatible gitstatusd replacement: the same protocol, the same responses, in Rust."
+assets = [
+  ["target/release/p11k-d", "usr/bin/", "755"],
+  ["../../README.md", "usr/share/doc/p11k-d/README.md", "644"],
+  ["../../COPYING", "usr/share/doc/p11k-d/COPYING", "644"],
+  ["../../COPYING.LESSER", "usr/share/doc/p11k-d/COPYING.LESSER", "644"],
+]
+
+# A musl build is static. `$auto` makes cargo-deb derive an empty dependency list from the
+# binary instead of declaring a package it does not need.
+[package.metadata.deb.variants.musl]
+depends = "$auto"
+
 [dependencies]
 p11k-gitstatus = { path = "../p11k-gitstatus" }
 

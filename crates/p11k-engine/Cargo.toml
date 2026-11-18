@@ -11,6 +11,29 @@ rust-version.workspace = true
 name = "p11k"
 path = "src/main.rs"
 
+# The Debian package. `depends` is checked against the build target by `cargo xtask dist`; the
+# glibc floor must stay the one `crates/p11k-xtask/src/target.rs` builds against.
+[package.metadata.deb]
+name = "p11k"
+maintainer = "Qaaxaap <Qaaxaap@users.noreply.github.com>"
+copyright = "2026, Qaaxaap"
+license-file = ["../../COPYING.LESSER", "0"]
+section = "utils"
+priority = "optional"
+depends = "libc6 (>= 2.17)"
+extended-description = "p11k owns the terminal as a pty host and draws the prompt header while the shell keeps drawing the input line and announces when a prompt is ready."
+assets = [
+  ["target/release/p11k", "usr/bin/", "755"],
+  ["../../README.md", "usr/share/doc/p11k/README.md", "644"],
+  ["../../COPYING", "usr/share/doc/p11k/COPYING", "644"],
+  ["../../COPYING.LESSER", "usr/share/doc/p11k/COPYING.LESSER", "644"],
+]
+
+# A musl build is static. `$auto` makes cargo-deb derive an empty dependency list from the
+# binary instead of declaring a package it does not need.
+[package.metadata.deb.variants.musl]
+depends = "$auto"
+
 [dependencies]
 anyhow = "1"
 clap = { workspace = true }

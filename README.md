@@ -186,7 +186,7 @@ Done:
 - the `p11k configure` wizard, Fluent catalogues (zh-CN), CI
 - `p11k reload`, and p10k feature parity up to the extended status states (`OK_PIPE` / `ERROR_PIPE` / `ERROR_SIGNAL`) and `VCS_DISABLED_WORKDIR_PATTERN`
 - p10k knobs: `ICON_PADDING`, `ICON_BEFORE_CONTENT` and `TRANSIENT_PROMPT` match p10k at every setting, including `moderate`, explicit per-segment overrides and `same-dir`
-- release artifacts: a Nix flake, a `.deb` and a tarball
+- release artifacts: a Nix flake, and for x86_64 and aarch64 with gnu or musl libc, a `.deb` and a tarball per binary
 
 Not done:
 

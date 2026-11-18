@@ -1,0 +1,4 @@
+# `cargo xtask <task>` runs the build and release tasks in crates/p11k-xtask. The tasks are what
+# `justfile` calls, so a developer machine and a runner execute the same code.
+[alias]
+xtask = "run --quiet --locked --package p11k-xtask --"

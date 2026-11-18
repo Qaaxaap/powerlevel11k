@@ -132,6 +132,15 @@
             git-cliff
             cargo-deny
             typos
+            # `just lint` also checks the workflow files: actionlint for the syntax, zizmor for
+            # the security properties (pinned actions, credential persistence).
+            actionlint
+            zizmor
+            # `just dist` builds the release artifacts: zig links against the pinned glibc,
+            # cargo-zigbuild drives it, and cargo-deb writes the Debian packages.
+            zig
+            cargo-zigbuild
+            cargo-deb
             # `just nix-fmt-check` checks the flake itself.
             nixfmt
             # `just demo` runs tools/demo/capture.sh; its other tools (agg, ImageMagick,

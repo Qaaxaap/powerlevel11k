@@ -1,0 +1,17 @@
+#!/bin/sh
+# Check the commit message with the same implementation the CI job runs. The rules are in
+# crates/p11k-xtask/src/commit_msg.rs, so there is nothing to keep in sync here.
+#
+# Install with `git config core.hooksPath .githooks`; skip once with `git commit --no-verify`.
+
+set -u
+
+msg_file=${1:-}
+[ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "the commit message check needs cargo; enter the devShell first (nix develop)" >&2
+    exit 1
+fi
+
+exec cargo xtask commit-msg "$msg_file"

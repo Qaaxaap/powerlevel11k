@@ -1,0 +1,20 @@
+[package]
+name = "p11k-xtask"
+description = "Build and release tasks for p11k"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = "1"
+cargo_metadata = "0.23"
+clap = { workspace = true }
+flate2 = "1"
+goblin = "0.10"
+semver = "1"
+serde_json = "1"
+sha2 = "0.10"
+tar = "0.4"
+xshell = "0.2"

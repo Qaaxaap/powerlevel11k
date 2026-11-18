@@ -11,11 +11,19 @@ p11k (powerlevel11k) is a prompt engine written in Rust. The engine runs as a lo
    nix develop
    ```
 
-3. Use the project recipes. `just check` is the fast gate. CI runs `just verify`.
+3. Use the project recipes. `just check` is the fast gate; `just verify` is the full local gate.
 
    ```bash
    nix develop --command just verify
    ```
+
+4. Install the commit message hook once: `git config core.hooksPath .githooks`. It runs the same
+   check as CI (`cargo xtask commit-msg`).
+
+CI calls the recipes as separate jobs: `just lint`, `just test`, `just deny`, `just msrv`,
+`just nix-verify` and `just render-check`. The workflow files add nothing beyond checking out
+the repository and uploading artifacts. A `run:` step that does not call `just` is a defect in
+review, with two exceptions: the change classifier in `tools/ci/`, and publishing a release.
 
 ## Completion claims
 
@@ -73,6 +81,18 @@ p11k (powerlevel11k) is a prompt engine written in Rust. The engine runs as a lo
 ## Project skills
 
 Project agent skills live in `.agents/skills/`. Each skill is a directory with a `SKILL.md` entry point. Harnesses that support the Agent Skills directory load these skills automatically. Other harnesses do not load them. Read the `SKILL.md` directly when a task matches.
+
+## Releases
+
+`just dist <triple>` builds one target's artifacts into `target/dist/<triple>/`: a tarball and a
+`.deb` for each of `p11k` and `p11k-d`, plus a dependency list. `just assemble` merges every
+target's checksums and dependency list. `just release-check v<version>` validates a tag against
+`Cargo.toml` and `CHANGELOG.md` before it is pushed.
+
+The glibc floor (2.17, the oldest Rust supports) is part of the build command in
+`crates/p11k-xtask/src/target.rs`; `dist` checks the Debian `Depends` field against it and the
+built binary's symbol versions against the floor. A change to the artifact layout, the packaging
+metadata or the dependency list belongs in the xtask, not in the workflow.
 
 ## Routing
 
