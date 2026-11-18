@@ -81,6 +81,9 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: target/dist
+      # The runner image has no Nix, and the check job that installed it ran on a different
+      # machine.
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
       # Assemble writes one SHA256SUMS and one runtime-dependencies.md for every target.
       - name: Assemble the artifacts
         run: nix shell --inputs-from . nixpkgs#just --command just assemble
