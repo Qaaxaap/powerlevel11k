@@ -59,6 +59,11 @@ pub fn run(args: DistArgs) -> Result<()> {
     let root = workspace::root();
     let version = workspace::version()?;
     let out = root.join("target/dist").join(target.triple());
+    // Clear the whole directory, not just `stage/`: a re-run after a version bump would
+    // otherwise leave the previous version's tarballs and packages for `assemble` to pick up.
+    if out.exists() {
+        fs::remove_dir_all(&out).with_context(|| format!("cannot clear {}", out.display()))?;
+    }
     fs::create_dir_all(&out).with_context(|| format!("cannot create {}", out.display()))?;
     let sh = Shell::new()?;
 
@@ -132,7 +137,7 @@ fn stage(root: &Path, target: Target, out: &Path) -> Result<PathBuf> {
         fs::copy(&source, bin_dir.join(binary))
             .with_context(|| format!("cannot copy {}", source.display()))?;
 
-        for document in ["README.md", "COPYING", "COPYING.LESSER"] {
+        for document in ["README.md", "README.zh.md", "COPYING", "COPYING.LESSER"] {
             let from = root.join(document);
             fs::copy(&from, dir.join(document))
                 .with_context(|| format!("cannot copy {}", from.display()))?;
@@ -156,7 +161,7 @@ fn tarball(out: &Path, target: Target, version: &str, binary: &str, dir: &Path) 
         dir.join("bin").join(binary),
         0o755,
     )];
-    for document in ["README.md", "COPYING", "COPYING.LESSER"] {
+    for document in ["README.md", "README.zh.md", "COPYING", "COPYING.LESSER"] {
         entries.push((format!("{prefix}/{document}"), dir.join(document), 0o644));
     }
     entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -225,7 +230,13 @@ fn deb(
     } else {
         package.to_owned()
     };
-    let path = out.join(format!("{name}_{version}_{}.deb", target.deb_arch()));
+    let semver = semver::Version::parse(version)
+        .with_context(|| format!("cannot parse the version {version}"))?;
+    let path = out.join(format!(
+        "{name}_{}-1_{}.deb",
+        deb_version(&semver),
+        target.deb_arch()
+    ));
 
     // `--no-build` keeps cargo-deb from rebuilding; `--no-strip` keeps it from stripping a
     // binary the release profile already stripped.
@@ -335,6 +346,27 @@ fn check_glibc_floor(sh: &Shell, root: &Path, target: Target) -> Result<()> {
     Ok(())
 }
 
+/// The file name of an artifact.
+fn file_file_name(path: &Path) -> String {
+    path.file_name()
+        .expect("an artifact has a file name")
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// The version string cargo-deb writes into the control file.
+///
+/// cargo-deb spells a pre-release with `~`, so `1.0.0-alpha.1` becomes `1.0.0~alpha.1` and the
+/// package sorts below `1.0.0`.
+fn deb_version(version: &semver::Version) -> String {
+    let base = format!("{}.{}.{}", version.major, version.minor, version.patch);
+    if version.pre.is_empty() {
+        base
+    } else {
+        format!("{base}~{}", version.pre)
+    }
+}
+
 /// Parse `2.28` or `2.2.5` into comparable parts.
 fn parse_version(text: &str) -> Option<(u32, u32, u32)> {
     let mut parts = text.split('.');
@@ -423,10 +455,10 @@ pub fn assemble(args: AssembleArgs) -> Result<()> {
     for file in &files {
         let data = fs::read(file).with_context(|| format!("cannot read {}", file.display()))?;
         let digest = Sha256::digest(&data);
-        let name = file
-            .strip_prefix(&dir)
-            .expect("the artifact is under the output directory");
-        sums.push_str(&format!("{digest:x}  {}\n", name.display()));
+        // The release uploads the artifacts flat, so a `sha256sum -c` in the download
+        // directory must find the file name alone, without the artifact directory.
+        let name = file_file_name(file);
+        sums.push_str(&format!("{digest:x}  {name}\n"));
     }
     fs::write(dir.join("SHA256SUMS"), sums).context("cannot write SHA256SUMS")?;
 
@@ -443,7 +475,8 @@ pub fn assemble(args: AssembleArgs) -> Result<()> {
             document.push('\n');
         }
         first = false;
-        writeln!(document, "## {target}\n")?;
+        let label = target.strip_prefix("output-").unwrap_or(target.as_str());
+        writeln!(document, "## {label}\n")?;
         let body = text
             .strip_prefix("# Runtime dependencies\n\n")
             .unwrap_or(&text);
@@ -453,4 +486,58 @@ pub fn assemble(args: AssembleArgs) -> Result<()> {
     fs::write(dir.join("runtime-dependencies.md"), document)
         .context("cannot write runtime-dependencies.md")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deb_version_uses_a_tilde_for_prereleases() {
+        for (semver, deb) in [
+            ("1.2.3", "1.2.3"),
+            ("1.0.0-alpha.1", "1.0.0~alpha.1"),
+            ("2.0.0-rc.2", "2.0.0~rc.2"),
+        ] {
+            let version = semver::Version::parse(semver).unwrap();
+            assert_eq!(deb_version(&version), deb, "{semver}");
+        }
+    }
+
+    /// The release uploads artifacts flat, so `sha256sum -c` runs in a directory that holds
+    /// only the files. The checksum lines must name those files, not the download directory.
+    #[test]
+    fn assemble_writes_flat_checksums_and_triple_headings() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("output-x86_64-unknown-linux-gnu");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(
+            target.join("p11k-v1.0.0-x86_64-unknown-linux-gnu.tar.gz"),
+            b"tar",
+        )
+        .unwrap();
+        fs::write(target.join("p11k_1.0.0_amd64.deb"), b"deb").unwrap();
+        fs::write(
+            target.join("runtime-dependencies.md"),
+            "# Runtime dependencies\n\n## p11k\n\n- `libc.so.6`\n",
+        )
+        .unwrap();
+
+        assemble(AssembleArgs {
+            dir: dir.path().to_path_buf(),
+        })
+        .unwrap();
+
+        let sums = fs::read_to_string(dir.path().join("SHA256SUMS")).unwrap();
+        assert!(
+            sums.contains("  p11k-v1.0.0-x86_64-unknown-linux-gnu.tar.gz\n"),
+            "{sums}"
+        );
+        assert!(sums.contains("  p11k_1.0.0_amd64.deb\n"), "{sums}");
+        assert!(!sums.contains("output-"), "{sums}");
+
+        let deps = fs::read_to_string(dir.path().join("runtime-dependencies.md")).unwrap();
+        assert!(deps.contains("## x86_64-unknown-linux-gnu\n"), "{deps}");
+        assert!(!deps.contains("output-"), "{deps}");
+    }
 }

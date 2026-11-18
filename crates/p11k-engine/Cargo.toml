@@ -32,6 +32,9 @@ assets = [
 # A musl build is static. `$auto` makes cargo-deb derive an empty dependency list from the
 # binary instead of declaring a package it does not need.
 [package.metadata.deb.variants.musl]
+# The gnu package already owns `p11k`, so the musl build needs its own name. Without it the
+# two packages cannot be installed together.
+name = "p11k-musl"
 depends = "$auto"
 
 [dependencies]

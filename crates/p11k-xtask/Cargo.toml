@@ -18,3 +18,7 @@ serde_json = "1"
 sha2 = "0.10"
 tar = "0.4"
 xshell = "0.2"
+
+[dev-dependencies]
+# `assemble` is tested against a temporary directory laid out like the CI download.
+tempfile = "3"
