@@ -82,7 +82,7 @@ Debian / Ubuntu：从 [release](https://github.com/Qaaxaap/powerlevel11k/release
 sudo apt install ./p11k_<version>-1_amd64.deb
 ```
 
-文件名保留版本号原样，所以 `1.0.0-alpha.1` 的文件名是 `p11k_1.0.0-alpha.1-1_amd64.deb`。包自身的版本用 Debian 的波浪号（`1.0.0~alpha.1-1`），因此预发布版本排在同名正式版本之前。
+文件名保留版本号原样，只有 GitHub 不保留的字符会改成点号：`1.0.0-alpha.1` 的文件名是 `p11k_1.0.0-alpha.1-1_amd64.deb`，带 `+build` 的版本会显示成 `.build`。包自身的版本用 Debian 的波浪号（`1.0.0~alpha.1-1`），因此预发布版本排在同名正式版本之前。
 
 其它发行版解压 tar 包。二进制自包含，`bin/` 可以放到任意位置。
 

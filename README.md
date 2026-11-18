@@ -82,7 +82,7 @@ On Debian and Ubuntu, from the `.deb` attached to a [release](https://github.com
 sudo apt install ./p11k_<version>-1_amd64.deb
 ```
 
-The file name keeps the version as written, so `1.0.0-alpha.1` ships as `p11k_1.0.0-alpha.1-1_amd64.deb`. The package's own version uses the Debian tilde (`1.0.0~alpha.1-1`), so a prerelease sorts below the final release.
+The file name keeps the version as written, except that a character GitHub does not keep in an asset name becomes a dot: `1.0.0-alpha.1` ships as `p11k_1.0.0-alpha.1-1_amd64.deb`, and a `+build` suffix would appear as `.build`. The package's own version uses the Debian tilde (`1.0.0~alpha.1-1`), so a prerelease sorts below the final release.
 
 On Arch Linux, from the [AUR](https://aur.archlinux.org), with any AUR helper:
 
