@@ -29,14 +29,15 @@ jobs:
   # Any error here means `code=true`: a misclassified change must run the full CI, not skip it.
   changes:
     name: changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       code: ${{ steps.classify.outputs.code }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - id: classify
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -52,265 +53,194 @@ jobs:
           fi
           printf '%s\n' "$paths" | tools/ci/classify-changes.sh >> "$GITHUB_OUTPUT"
 
-  # A non-conventional title disappears from CHANGELOG.md (git-cliff filters it), and with a
-  # single-commit pull request the squashed commit takes its title from the commit, so a bad
-  # commit title can reach main even when the pull request title is fine. Check both.
-  commit-lint:
-    name: commit-lint
-    if: github.event_name == 'pull_request'
+  # The whole lint set: formatting, nix formatting, clippy, typos, actionlint and zizmor. It
+  # runs once, on one architecture, because none of it depends on the target.
+  lint:
+    name: lint
+    needs: changes
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: needs.changes.outputs.code == 'true'
         with:
           fetch-depth: 0
-      - name: Check the pull request title and its commit titles
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -eu
-          pattern='^(feat|fix|chore|docs|test|ci|refactor|perf|build|deps|style|revert|i18n|license|bench)(\([a-z0-9._-]+\))?!?: .+'
-          status=0
-          check() {
-            local title=$1
-            if ! printf '%s\n' "$title" | grep -Eq "$pattern"; then
-              echo "::error::title does not follow Conventional Commits: $title"
-              status=1
-            fi
-            if [ "${#title}" -gt 72 ]; then
-              echo "::error::title is longer than 72 characters: $title"
-              status=1
-            fi
-          }
-          check "$PR_TITLE"
-          while IFS= read -r subject; do
-            check "$subject"
-          done < <(git log --no-merges --format=%s "$BASE_SHA..HEAD")
-          exit "$status"
-
-  # Workflow files are code: a broken expression or an invalid step breaks every job. Lint them
-  # once per code change instead of waiting for a workflow run to fail.
-  workflows:
-    name: workflows
-    needs: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
-      - uses: cachix/install-nix-action@v31
-        if: needs.changes.outputs.code == 'true'
-      - name: Lint the workflows
-        if: needs.changes.outputs.code == 'true'
-        run: nix shell --inputs-from . nixpkgs#actionlint --command actionlint .github/workflows/*.yml
-
-  x86_64:
-    name: x86_64
-    needs: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
-
-      - uses: cachix/install-nix-action@v31
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
         if: needs.changes.outputs.code == 'true'
         with:
           extra_nix_config: |
             keep-env-derivations = true
             keep-outputs = true
-
-      - uses: nix-community/cache-nix-action@v7
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         if: needs.changes.outputs.code == 'true'
         with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml', 'deny.toml') }}
           restore-prefixes-first-match: nix-${{ runner.os }}-
           gc-max-store-size-linux: 3G
-
-      # The nix cache covers the store, not the cargo registry or the build directory, so the
-      # devShell would recompile the workspace on every run without this. The architecture is in
-      # the key because build artifacts are not portable between x86_64 and aarch64.
       - name: Cache cargo
         if: needs.changes.outputs.code == 'true'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             cargo-${{ runner.arch }}-${{ runner.os }}-
-
-      - name: Check
+      - name: Lint
         if: needs.changes.outputs.code == 'true'
-        run: nix develop --command just verify
+        run: nix develop --command just lint
+      - name: Commit messages
+        if: needs.changes.outputs.code == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: nix develop --command just commit-msg "$BASE_SHA..HEAD"
+      - name: Dependency audit
+        if: needs.changes.outputs.code == 'true'
+        run: nix develop --command just deny
 
+  test:
+    name: test (${{ matrix.arch }})
+    needs: changes
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: needs.changes.outputs.code == 'true'
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+        if: needs.changes.outputs.code == 'true'
+        with:
+          extra_nix_config: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        if: needs.changes.outputs.code == 'true'
+        with:
+          primary-key: nix-${{ matrix.arch }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ matrix.arch }}-
+          gc-max-store-size-linux: 3G
+      - name: Cache cargo
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-${{ runner.arch }}-${{ runner.os }}-
+      - name: Test
+        if: needs.changes.outputs.code == 'true'
+        run: nix develop --command just test
       # The diff against the original daemon is the compatibility promise; it needs the real
       # binary, which the devShell provides through GITSTATUSD_PATH.
       - name: Differential tests
         if: needs.changes.outputs.code == 'true'
         run: nix develop --command just differential
 
-  # The render check runs p11k inside a real kitty terminal in a headless sway compositor and
-  # compares the captured pixels with the committed reference frames. Its toolchain lives in a
-  # separate devShell, so it is a job of its own instead of part of `just verify`.
-  #
-  # It shares the x86_64 cache key: both jobs need the same flake inputs, and a second key would
-  # store a second copy of the store. The gc limit covers the visual devShell on top of the
-  # default one, and the cargo key is shared for the same reason.
-  render:
-    name: render
-    needs: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
-
-      - uses: cachix/install-nix-action@v31
-        if: needs.changes.outputs.code == 'true'
-        with:
-          extra_nix_config: |
-            keep-env-derivations = true
-            keep-outputs = true
-
-      - uses: nix-community/cache-nix-action@v7
-        if: needs.changes.outputs.code == 'true'
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 3G
-
-      - name: Cache cargo
-        if: needs.changes.outputs.code == 'true'
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.arch }}-${{ runner.os }}-
-
-      # The build runs in the default devShell so cargo reuses the cached target directory; the
-      # check itself runs in the visual devShell with --ignore-environment, so the caller's
-      # environment does not leak into the rendered frames.
-      - name: Build the engine
-        if: needs.changes.outputs.code == 'true'
-        run: nix develop --command cargo build -p p11k-engine --bin p11k
-
-      - name: Render check
-        if: needs.changes.outputs.code == 'true'
-        run: nix develop .#visual --ignore-environment --command bash tools/visual/check.sh
-
-      - name: Upload the captured frames and diffs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: render-check
-          path: .cache/render-check/
-          retention-days: 7
-
-  # The flake is the supported Nix install path. This job builds the package once, instead of
-  # repeating the same build on every architecture. The workspace tests run in `just verify`.
-  nix:
-    name: nix
-    needs: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
-
-      - uses: cachix/install-nix-action@v31
-        if: needs.changes.outputs.code == 'true'
-        with:
-          extra_nix_config: |
-            keep-env-derivations = true
-            keep-outputs = true
-
-      - uses: nix-community/cache-nix-action@v7
-        if: needs.changes.outputs.code == 'true'
-        with:
-          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-
-          gc-max-store-size-linux: 3G
-
-      - name: Package
-        if: needs.changes.outputs.code == 'true'
-        run: |
-          # Build in the nix sandbox directly. `nix develop` rebuilds the devShell when the
-          # store cache evicts it, and the sandbox build does not depend on the devShell.
-          out=$(nix build --no-link --print-out-paths)
-          for bin in p11k p11k-d; do
-            test -x "$out/bin/$bin"
-          done
-          "$out/bin/p11k" --version
-
-  # The devShell pins this version, but a flake mistake could hide that. This job uses plain
-  # rustup, so it fails on the real toolchain and not on a nix expression.
+  # The devShell pins the toolchain, but a flake mistake could hide that. This job uses the
+  # rustup toolchain the manifest names, so it fails on the real compiler and not on a nix
+  # expression. It runs outside the devShell, whose `cargo` is not a rustup proxy.
   msrv:
     name: msrv
     needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: needs.changes.outputs.code == 'true'
-      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
         if: needs.changes.outputs.code == 'true'
       - name: Check
         if: needs.changes.outputs.code == 'true'
-        run: cargo check --all-targets --locked
+        run: nix shell --inputs-from . nixpkgs#just --command just msrv
 
-  # The runner is native arm64, so the devShell checks and the differential tests run on the
-  # architecture the flake declares. The nix job builds the package on x86_64.
-  arm:
-    name: aarch64
+  # The flake is the supported Nix install path. This job builds the package once, instead of
+  # repeating the same build on every architecture. The tests run in `just test`.
+  nix:
+    name: nix
     needs: changes
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: needs.changes.outputs.code == 'true'
-
-      - uses: cachix/install-nix-action@v31
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
         if: needs.changes.outputs.code == 'true'
         with:
           extra_nix_config: |
             keep-env-derivations = true
             keep-outputs = true
-
-      - uses: nix-community/cache-nix-action@v7
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         if: needs.changes.outputs.code == 'true'
         with:
-          primary-key: nix-aarch64-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
-          restore-prefixes-first-match: nix-aarch64-
-          gc-max-store-size-linux: 2G
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 3G
+      - name: Package
+        if: needs.changes.outputs.code == 'true'
+        run: nix develop --command just nix-verify
 
-      # Same cargo cache as the x86_64 job; the key carries the architecture so the two runners
-      # never restore each other's build artifacts.
+  # The render check runs p11k inside a real kitty terminal in a headless sway compositor and
+  # compares the captured pixels with the committed reference frames. It is a job of its own
+  # because the visual devShell is heavy and only this job needs it.
+  render:
+    name: render
+    needs: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: needs.changes.outputs.code == 'true'
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+        if: needs.changes.outputs.code == 'true'
+        with:
+          extra_nix_config: |
+            keep-env-derivations = true
+            keep-outputs = true
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        if: needs.changes.outputs.code == 'true'
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+          gc-max-store-size-linux: 3G
       - name: Cache cargo
         if: needs.changes.outputs.code == 'true'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          key: cargo-${{ runner.arch }}-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             cargo-${{ runner.arch }}-${{ runner.os }}-
-
-      - name: Check
+      - name: Render check
         if: needs.changes.outputs.code == 'true'
-        run: nix develop --command just verify
-
-      # The diff against the original daemon is the compatibility promise; it needs the real
-      # binary, which the devShell provides through GITSTATUSD_PATH.
-      - name: Differential tests
-        if: needs.changes.outputs.code == 'true'
-        run: nix develop --command just differential
+        run: nix develop --command just render-check
+      - name: Upload the captured frames and diffs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: render-check
+          path: .cache/render-check/
+          retention-days: 7

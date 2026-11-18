@@ -79,19 +79,19 @@ home.packages = [ inputs.p11k.packages.${pkgs.system}.default ];
 Debian / Ubuntu：从 [release](https://github.com/Qaaxaap/powerlevel11k/releases) 下载 `.deb`。
 
 ```bash
-sudo apt install ./p11k_<version>_amd64.deb
+sudo apt install ./p11k_<version>-1_amd64.deb
 ```
 
-预发布版本的文件名把版本号里的连字符改写成波浪号。例如 `1.0.0-alpha.1` 的文件名是 `p11k_1.0.0~alpha.1_amd64.deb`。
+文件名保留版本号原样，只有 GitHub 不保留的字符会改成点号：`1.0.0-alpha.1` 的文件名是 `p11k_1.0.0-alpha.1-1_amd64.deb`，带 `+build` 的版本会显示成 `.build`。包自身的版本用 Debian 的波浪号（`1.0.0~alpha.1-1`），因此预发布版本排在同名正式版本之前。
 
-其它发行版解压 tar 包。`bin/` 与 `share/` 可重定位，词条既从系统目录查找，也从可执行文件旁查找。
+其它发行版解压 tar 包。二进制自包含，`bin/` 可以放到任意位置。
 
 ```bash
-tar xzf p11k-<version>-x86_64-linux.tar.gz -C ~/.local
-~/.local/p11k-<version>-x86_64-linux/bin/p11k --shell zsh
+tar xzf p11k-v1.0.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz -C ~/.local
+~/.local/p11k-v1.0.0-alpha.1-x86_64-unknown-linux-gnu/bin/p11k --shell zsh
 ```
 
-tar 包需要 C 库与 GCC 运行库，常见发行版默认提供。每个 release 还附带 `runtime-dependencies.md`，由 `ldd` 从二进制生成，列出确切依赖。
+gnu 构建需要 glibc 2.17 或更高版本，此外不需要别的运行库。musl 构建是静态的，不需要任何运行库。每个 release 还附带 `runtime-dependencies.md`，从各二进制的动态段读出，列出确切依赖。
 
 从源码构建并安装：
 

@@ -12,17 +12,20 @@ Everything the build and the tests need is pinned in `flake.nix`. The demo recor
 
 ```bash
 nix develop
-just check         # fmt-check + clippy + test: the fast gate
-just nix-check     # the same tests inside the nix sandbox, debug build
+just check         # lint + test: the fast gate
+just verify        # check + deny + differential: everything a pull request must pass
 just build         # the binaries: p11k and p11k-d
 ```
 
-`just verify` is what CI runs on x86_64 and aarch64. The `nix` job runs `just nix-build` and checks the package. `just differential` runs the compatibility tests on both architectures. `just check` is the faster gate without `deny` and `spell`. The MSRV job runs `cargo check --all-targets --locked`. The other recipes cover the rest of the infrastructure:
+CI runs the same recipes as separate jobs, not one aggregate: `just lint` once on x86_64, `just test` and `just differential` on x86_64 and aarch64, `just deny`, `just msrv`, `just nix-verify` and `just render-check`. A workflow step that does not call `just` is a defect, apart from checking out the repository, classifying the change list and publishing a release. The recipes in detail:
 
+- `just lint`: formatting, nix formatting, clippy, typos, actionlint and zizmor
 - `just deny`: dependency licences, bans and advisories
-- `just spell`: typos
+- `just spell`: typos alone
 - `just changelog`: regenerate `CHANGELOG.md` from the commit history
 - `just demo`: re-record `docs/images/`
+- `just dist <triple>`: the release artifacts; see [Releases](#releases)
+- `just msrv`: the check with the MSRV from `Cargo.toml`. It needs rustup, so run it outside the devShell
 
 The devShell exports `LOCALE_ARCHIVE` so the proxy tests can run under `C.UTF-8`.
 
@@ -61,6 +64,7 @@ cargo install iai-callgrind-runner --version 0.16.1   # must match iai-callgrind
 - Commit messages in English.
 - One commit carries one logical change. Unrelated work must not be bundled. A commit that mixes a refactor with a feature will be asked to be split.
 - The subject is at most 72 characters and completes the sentence "if applied, this commit will ...". The body states *why* and does not restate the diff.
+- Install the check once with `git config core.hooksPath .githooks`. The hook runs `cargo xtask commit-msg`, the same code the `lint` job runs.
 
 ## Code style
 
@@ -110,11 +114,16 @@ This repository accepts AI-assisted development, on the following terms. Ignorin
 
 ## Releases
 
-A `v*` tag publishes. The workflow builds `p11k` and `p11k-d`, and attaches a tarball and a `.deb` to that tag's GitHub release.
+A `v*` tag publishes. The `build` workflow builds four targets: x86_64 and aarch64, each with gnu and musl libc. For every target it attaches a tarball and a `.deb` for `p11k` and a tarball and a `.deb` for `p11k-d`, then `assemble` merges the four targets into one `SHA256SUMS` and one `runtime-dependencies.md`. A `nightly` prerelease follows `main`; it is skipped when `main` has not moved since the last successful run.
 
-Before tagging, run `just changelog v<version>` and commit the result. `CHANGELOG.md` is generated from the Conventional Commit history. Without the tag argument the entries stay under `Unreleased`.
+Before tagging:
 
-The tag must match `[workspace.package] version` in `Cargo.toml`. The workflow checks this and fails otherwise.
+1. Run `just changelog v<version>` and commit the result. `CHANGELOG.md` is generated from the Conventional Commit history; without the tag argument the entries stay under `Unreleased`.
+2. Set `[workspace.package] version` in `Cargo.toml`. The tag must match it.
+3. Run `just release-check v<version>`. It checks the tag against the manifest and the changelog.
+4. Push the tag.
+
+The build is reproducible: the glibc floor is 2.17 and lives in the build command (`crates/p11k-xtask/src/target.rs`), the tarballs fix owner, group and timestamp, `dist` fails when the Debian `Depends` field disagrees with the target, and it fails again when a binary needs a `GLIBC_` symbol newer than the floor. A musl build links statically and declares no runtime dependency. `just dist <triple>` produces the same artifacts locally, into `target/dist/<triple>/`.
 
 ## Reporting issues
 

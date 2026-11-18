@@ -1,0 +1,98 @@
+name: Nightly
+
+# A rolling prerelease built from main. It answers one question the pull request CI does not:
+# are today's sources buildable, and what do the artifacts look like.
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  # No new commit since the last successful run means the build would reproduce the same
+  # artifacts. Skip it.
+  check:
+    name: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: tools/ci/nightly-check.sh nightly.yml >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    name: publish
+    needs: [check, build]
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          path: target/dist
+      - uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31
+      - name: Assemble the artifacts
+        run: nix shell --inputs-from . nixpkgs#just --command just assemble
+      # Move the nightly tag to this commit, so the release page follows the last good build.
+      # The refs API needs the token but not git credentials, so the checkout keeps none.
+      - name: Move the nightly tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          # The probe only picks the branch; a failure it swallows is the "tag absent" case
+          # below, and a real API failure surfaces on the write that follows.
+          if gh api "repos/$GH_REPO/git/ref/tags/nightly" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/nightly" \
+              -f sha="$SHA" -F force=true
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f ref="refs/tags/nightly" -f sha="$SHA"
+          fi
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          date=$(date -u +%Y%m%d)
+          body="Nightly build of ${{ github.sha }}, $date. Unstable: it tracks main and may not run.
+
+          Use a tagged release unless you are testing main."
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --title "Nightly $date" --prerelease --notes "$body"
+          else
+            gh release create nightly --prerelease --title "Nightly $date" --notes "$body"
+          fi
+          gh release upload nightly \
+            target/dist/SHA256SUMS \
+            target/dist/runtime-dependencies.md \
+            target/dist/output-*/*.tar.gz \
+            target/dist/output-*/*.deb \
+            --clobber
