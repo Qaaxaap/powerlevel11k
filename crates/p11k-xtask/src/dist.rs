@@ -225,17 +225,11 @@ fn deb(
         );
     }
 
-    let name = if target.is_musl() {
-        format!("{package}-musl")
-    } else {
-        package.to_owned()
-    };
-    let semver = semver::Version::parse(version)
-        .with_context(|| format!("cannot parse the version {version}"))?;
-    let path = out.join(format!(
-        "{name}_{}-1_{}.deb",
-        deb_version(&semver),
-        target.deb_arch()
+    let path = out.join(deb_file_name(
+        package,
+        version,
+        target.deb_arch(),
+        target.is_musl(),
     ));
 
     // `--no-build` keeps cargo-deb from rebuilding; `--no-strip` keeps it from stripping a
@@ -354,17 +348,18 @@ fn file_file_name(path: &Path) -> String {
         .into_owned()
 }
 
-/// The version string cargo-deb writes into the control file.
+/// The release file name of a Debian package.
 ///
-/// cargo-deb spells a pre-release with `~`, so `1.0.0-alpha.1` becomes `1.0.0~alpha.1` and the
-/// package sorts below `1.0.0`.
-fn deb_version(version: &semver::Version) -> String {
-    let base = format!("{}.{}.{}", version.major, version.minor, version.patch);
-    if version.pre.is_empty() {
-        base
+/// The file name keeps the semver spelling while the control file carries the Debian `~`.
+/// GitHub rewrites `~` to `.` in release asset names, and a rewritten name no longer matches
+/// the line in `SHA256SUMS`, so the file name must not contain one.
+fn deb_file_name(package: &str, version: &str, arch: &str, musl: bool) -> String {
+    let name = if musl {
+        format!("{package}-musl")
     } else {
-        format!("{base}~{}", version.pre)
-    }
+        package.to_owned()
+    };
+    format!("{name}_{version}-1_{arch}.deb")
 }
 
 /// Parse `2.28` or `2.2.5` into comparable parts.
@@ -493,14 +488,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deb_version_uses_a_tilde_for_prereleases() {
-        for (semver, deb) in [
-            ("1.2.3", "1.2.3"),
-            ("1.0.0-alpha.1", "1.0.0~alpha.1"),
-            ("2.0.0-rc.2", "2.0.0~rc.2"),
+    fn deb_file_name_holds_no_tilde_github_would_rewrite() {
+        for (package, version, arch, musl, expected) in [
+            ("p11k", "1.2.3", "amd64", false, "p11k_1.2.3-1_amd64.deb"),
+            (
+                "p11k",
+                "1.0.0-alpha.1",
+                "amd64",
+                false,
+                "p11k_1.0.0-alpha.1-1_amd64.deb",
+            ),
+            (
+                "p11k-d",
+                "0.0.0-test.1",
+                "arm64",
+                true,
+                "p11k-d-musl_0.0.0-test.1-1_arm64.deb",
+            ),
         ] {
-            let version = semver::Version::parse(semver).unwrap();
-            assert_eq!(deb_version(&version), deb, "{semver}");
+            let name = deb_file_name(package, version, arch, musl);
+            assert_eq!(name, expected);
+            assert!(!name.contains('~'), "{name}");
         }
     }
 

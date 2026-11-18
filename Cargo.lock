@@ -1051,7 +1051,6 @@ dependencies = [
  "clap",
  "flate2",
  "goblin",
- "semver",
  "serde_json",
  "sha2",
  "tar",
