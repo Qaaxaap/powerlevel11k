@@ -91,7 +91,7 @@ yay -S powerlevel11k
 # or powerlevel11k-git, which follows the latest fixes
 ```
 
-Anywhere else, unpack the tarball. `bin/` and `share/` are relocatable: the catalogs are looked up in the system directory and next to the executables alike.
+Anywhere else, unpack the tarball. The binary is self-contained, so `bin/` can go anywhere.
 
 ```bash
 tar xzf p11k-v1.0.0-alpha.1-x86_64-unknown-linux-gnu.tar.gz -C ~/.local
