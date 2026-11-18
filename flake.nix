@@ -133,8 +133,8 @@
             cargo-deny
             typos
             # `just lint` also checks the workflow files: actionlint for the syntax, zizmor for
-            # the security audits. The severity floor is high, so `unpinned-uses` is the check
-            # that has to stay clean.
+            # the security audits. The severity floor is medium: that tier covers credentials
+            # and caches, while low is advisory.
             actionlint
             zizmor
             # `just dist` builds the release artifacts: zig links against the pinned glibc,

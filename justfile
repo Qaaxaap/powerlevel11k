@@ -26,7 +26,7 @@ spell:
 # Check the workflow files: syntax with actionlint, security with zizmor.
 workflows:
     actionlint .github/workflows/*.yml
-    zizmor --min-severity high .github/workflows
+    zizmor --min-severity medium .github/workflows
 
 # Lint without running the tests: formatting, clippy, spelling and the workflow files.
 lint: fmt-check nix-fmt-check spell workflows
