@@ -1315,43 +1315,58 @@ pub(super) fn assemble_row(
     cols: usize,
     seps: &crate::config::Separators,
     right_indent: usize,
+    fill_empty_right: bool,
 ) -> super::PaintedLine {
     use super::ansi::width;
+
+    fn push_gap(out: &mut String, seps: &crate::config::Separators, count: usize) -> usize {
+        if count == 0 {
+            return 0;
+        }
+        let gap_char = if seps.gap.is_empty() { " " } else { &seps.gap };
+        let gap_str = gap_char.repeat(count);
+        // gap foreground (p10k MULTILINE_FIRST_PROMPT_GAP_FOREGROUND);
+        // unset → emitted as-is (terminal default color).
+        match &seps.gap_foreground {
+            Some(fg) => out.push_str(&paint(
+                &gap_str,
+                &Style {
+                    fg: fg.clone(),
+                    ..Style::default()
+                },
+            )),
+            None => out.push_str(&gap_str),
+        }
+        width(&gap_str)
+    }
+
     let left_parts: Vec<&SegmentText> = left.iter().filter(|s| !s.text.is_empty()).collect();
     let right_parts: Vec<&SegmentText> = right.iter().filter(|s| !s.text.is_empty()).collect();
     let left_line = emit_side(&left_parts, seps, Side::Left);
     let mut out = left_line.text;
     let mut line_width = left_line.width;
+    // The right column keeps `right_indent` columns from the right edge — zsh's
+    // `ZLE_RPROMPT_INDENT` defaults to 1, so p10k's right column always has one cell before the
+    // window border; drawing flush would make it "fit" one column earlier than p10k and reach
+    // the last cell (many terminals wrap there).
+    let edge = cols.saturating_sub(right_indent);
     if !right_parts.is_empty() {
         let right_line = emit_side(&right_parts, seps, Side::Right);
         // Right alignment: gap chars fill the span from the left segments to the right
-        // column's start. The right column keeps `right_indent` columns from the right edge—
-        // zsh's `ZLE_RPROMPT_INDENT` defaults to 1, so p10k's right column always has one cell
-        // before the window border; drawing flush would make it "fit" one column earlier than
-        // p10k and reach the last cell (many terminals wrap there).
-        let edge = cols.saturating_sub(right_indent);
+        // column's start.
         if edge > right_line.width {
             let start = edge - right_line.width; // right column start (0-based)
             if start > line_width {
-                let gap_char = if seps.gap.is_empty() { " " } else { &seps.gap };
-                let gap_str = gap_char.repeat(start - line_width);
-                line_width += width(&gap_str);
-                // gap foreground (p10k MULTILINE_FIRST_PROMPT_GAP_FOREGROUND);
-                // unset → emitted as-is (terminal default color).
-                match &seps.gap_foreground {
-                    Some(fg) => out.push_str(&paint(
-                        &gap_str,
-                        &Style {
-                            fg: fg.clone(),
-                            ..Style::default()
-                        },
-                    )),
-                    None => out.push_str(&gap_str),
-                }
+                line_width += push_gap(&mut out, seps, start - line_width);
             }
         }
         out.push_str(&right_line.text);
         line_width += right_line.width;
+    } else if fill_empty_right && edge > line_width {
+        // An empty right column still leaves the frame's suffix at the right edge: an instant
+        // header has no status, execution time or jobs, so every right segment hides. Fill the
+        // row to the same edge instead of letting the suffix sit next to the left content.
+        line_width += push_gap(&mut out, seps, edge - line_width);
     }
     super::PaintedLine {
         text: out,

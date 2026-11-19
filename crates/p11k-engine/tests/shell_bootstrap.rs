@@ -720,3 +720,53 @@ fn a_real_comma_locale_reports_the_command_duration() {
         let _ = tmux(&sandbox.socket, &["kill-server"]);
     }
 }
+
+/// The instant header has no exit status, execution time or jobs, so its right column can be
+/// empty. The frame's suffix must still land on the right edge: the row is filled with gap
+/// characters instead of ending right after the left content.
+#[test]
+fn the_instant_header_fills_the_row() {
+    assert_on_path("tmux");
+    assert_on_path("zsh");
+    let sandbox = Sandbox::new("instant-width");
+    let work = sandbox.dir.path().join("engine");
+    std::fs::create_dir_all(&work).expect("engine work dir");
+    let theme_dir = sandbox.config.join("p11k");
+    std::fs::create_dir_all(&theme_dir).expect("theme dir");
+    std::fs::write(
+        theme_dir.join("p11k.kdl"),
+        "layout {\n  left { line { dir } }\n  \
+         right { line { status; command_execution_time; background_jobs } }\n}\n\
+         frame {\n  first-prefix \"╭─\"\n  first-suffix \"─╮\"\n  \
+         newline-prefix \"├─\"\n  newline-suffix \"─┤\"\n  last-prefix \"╰─\"\n}\n\
+         separators { gap \"·\" }",
+    )
+    .expect("write the theme");
+    let cmd = format!(
+        "unset P11K_LANG P11K_LOCALEDIR LANGUAGE; export LC_ALL=C.UTF-8; sleep 0.3; cd '{}' && \
+         XDG_STATE_HOME='{}' XDG_CONFIG_HOME='{}' P11K_USER_ZSHRC=/dev/null \
+         P11K_USER_PROFILE=/dev/null exec '{}' --shell zsh",
+        work.display(),
+        sandbox.state.display(),
+        sandbox.config.display(),
+        Sandbox::bin()
+    );
+    new_session(&sandbox.socket, &cmd);
+    let text = screen_until(&sandbox.socket, "❯", 1, Duration::from_secs(10));
+    let header = text
+        .lines()
+        .find(|line| line.starts_with('╭'))
+        .unwrap_or_else(|| panic!("no instant header; screen: {text:?}"));
+    // With an empty right column the gap run is what places the suffix at the right edge. A row
+    // that stops after the left content has no gap at all.
+    let gap = header.matches('·').count();
+    assert!(
+        gap >= 20,
+        "the instant header did not fill the row to its right edge (gap chars: {gap}): {header:?}"
+    );
+    assert!(
+        header.trim_end().ends_with("─╮"),
+        "the instant header lost its frame suffix: {header:?}"
+    );
+    let _ = tmux(&sandbox.socket, &["kill-server"]);
+}
