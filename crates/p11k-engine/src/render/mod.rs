@@ -147,9 +147,8 @@ impl<'a> Renderer<'a> {
                     // hidden at 33 cols and shown at 34, while the content is only 32 cols
                     // wide). Passing cols 0 for the right column alone skips the gap
                     // calculation.
-                    let left_w =
-                        |l: &[SegmentText]| assemble_row(l, &[], body_budget, seps, 0).width;
-                    let right_w = |r: &[SegmentText]| assemble_row(&[], r, 0, seps, 0).width;
+                    let left_w = |l: &[SegmentText]| assemble_row(l, &[], 0, seps, 0, false).width;
+                    let right_w = |r: &[SegmentText]| assemble_row(&[], r, 0, seps, 0, false).width;
                     let fits = |lw: usize, rw: usize| lw + rw + indent < body_budget;
                     // Pass 1: no shortening at all (p10k leaves it as-is when it fits).
                     // Shortening budgets always use the **unshortened** width, otherwise
@@ -158,7 +157,7 @@ impl<'a> Renderer<'a> {
                     let (l0, r0) = render_side(None);
                     let (lw0, rw0) = (left_w(&l0), right_w(&r0));
                     let body = if fits(lw0, rw0) {
-                        assemble_row(&l0, &r0, body_budget, seps, indent)
+                        assemble_row(&l0, &r0, body_budget, seps, indent, !suffix.text.is_empty())
                     } else {
                         // Pass 2: shorten dir by the number of overflowing columns (narrow
                         // terminals shorten, wide terminals do not). Only `dir` depends on the
@@ -175,7 +174,14 @@ impl<'a> Renderer<'a> {
                         let r1 = shorten(right_row, &r0, true);
                         let (lw1, rw1) = (left_w(&l1), right_w(&r1));
                         if fits(lw1, rw1) {
-                            assemble_row(&l1, &r1, body_budget, seps, indent)
+                            assemble_row(
+                                &l1,
+                                &r1,
+                                body_budget,
+                                seps,
+                                indent,
+                                !suffix.text.is_empty(),
+                            )
                         } else {
                             // Pass 3: still does not fit after shortening → drop the whole
                             // right column (gap included). p10k omits the right column when the
@@ -186,7 +192,14 @@ impl<'a> Renderer<'a> {
                             let l2 = left_row
                                 .map(|elements| self.shorten_row(elements, false, l0, budget))
                                 .unwrap_or_default();
-                            assemble_row(&l2, &[], body_budget, seps, indent)
+                            assemble_row(
+                                &l2,
+                                &[],
+                                body_budget,
+                                seps,
+                                indent,
+                                !suffix.text.is_empty(),
+                            )
                         }
                     };
                     row.text.push_str(&body.text);
@@ -552,13 +565,27 @@ mod tests {
             joined_left,
         };
 
-        let plain = assemble_row(&[seg("A", 1, false), seg("B", 2, false)], &[], 0, &seps, 0);
+        let plain = assemble_row(
+            &[seg("A", 1, false), seg("B", 2, false)],
+            &[],
+            0,
+            &seps,
+            0,
+            false,
+        );
         assert!(
             plain.text.contains('>'),
             "different backgrounds without `_joined` should draw the segment arrow, got {plain:?}"
         );
 
-        let joined = assemble_row(&[seg("A", 1, false), seg("B", 2, true)], &[], 0, &seps, 0);
+        let joined = assemble_row(
+            &[seg("A", 1, false), seg("B", 2, true)],
+            &[],
+            0,
+            &seps,
+            0,
+            false,
+        );
         assert!(
             !joined.text.contains('>'),
             "`_joined` should suppress the segment arrow, got {joined:?}"
@@ -620,7 +647,14 @@ mod tests {
             padded: true,
             joined_left,
         };
-        let out = assemble_row(&[seg("A", 1, true), seg("B", 2, false)], &[], 0, &seps, 0);
+        let out = assemble_row(
+            &[seg("A", 1, true), seg("B", 2, false)],
+            &[],
+            0,
+            &seps,
+            0,
+            false,
+        );
         let visible = strip_sgr(&out.text);
         let leading = visible.chars().take_while(|&c| c == ' ').count();
         assert_eq!(
@@ -1982,6 +2016,29 @@ mod tests {
             display_width(&h),
             40 - cfg.layout.right_indent,
             "row width should still align to cols - right-indent, got: {h:?}"
+        );
+    }
+
+    /// An instant header has no exit status, no execution time and no jobs, so every
+    /// right-hand segment can be hidden. The row must still reach the right edge: the frame
+    /// suffix belongs there, not right after the left content.
+    #[test]
+    fn header_fills_the_row_when_the_right_column_is_empty() {
+        let cfg = Config::parse(
+            "frame {\n  first-prefix \"╭─\"\n  first-suffix \"─╮\"\n  \
+             newline-prefix \"├─\"\n  newline-suffix \"─┤\"\n  last-prefix \"╰─\"\n}\n\
+             layout {\n  left { line { os_icon; dir } }\n  \
+             right { line { status; command_execution_time; background_jobs } }\n}\n\
+             segments { dir fg=31\n  status ok-foreground=70 }",
+        )
+        .unwrap();
+        let rows = render_header_lines(&cfg, &info("/tmp", None), None, 80);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            display_width(&rows[0]),
+            80 - cfg.layout.right_indent,
+            "an empty right column should still fill the row, got: {:?}",
+            rows[0]
         );
     }
 
