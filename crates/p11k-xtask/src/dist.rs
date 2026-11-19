@@ -470,7 +470,7 @@ pub fn assemble(args: AssembleArgs) -> Result<()> {
         // The release uploads the artifacts flat, so a `sha256sum -c` in the download
         // directory must find the file name alone, without the artifact directory.
         let name = file_file_name(file);
-        sums.push_str(&format!("{digest:x}  {name}\n"));
+        sums.push_str(&format!("{}  {name}\n", hex::encode(digest)));
     }
     fs::write(dir.join("SHA256SUMS"), sums).context("cannot write SHA256SUMS")?;
 
@@ -573,12 +573,15 @@ mod tests {
         .unwrap();
 
         let sums = fs::read_to_string(dir.path().join("SHA256SUMS")).unwrap();
-        assert!(
-            sums.contains("  p11k-v1.0.0-x86_64-unknown-linux-gnu.tar.gz\n"),
-            "{sums}"
+        assert_eq!(
+            sums,
+            concat!(
+                "90aebae315675cbf04612de4f7d5874850f48e0b8dd82becbeaa47ca93f5ebfb",
+                "  p11k-v1.0.0-x86_64-unknown-linux-gnu.tar.gz\n",
+                "9cfa1468c93fc18652e34a000f0c6614b0fa18f6f4887477ad9b0d36ca6a7eaa",
+                "  p11k_1.0.0_amd64.deb\n",
+            )
         );
-        assert!(sums.contains("  p11k_1.0.0_amd64.deb\n"), "{sums}");
-        assert!(!sums.contains("output-"), "{sums}");
 
         let deps = fs::read_to_string(dir.path().join("runtime-dependencies.md")).unwrap();
         assert!(deps.contains("## x86_64-unknown-linux-gnu\n"), "{deps}");
