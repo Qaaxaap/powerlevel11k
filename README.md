@@ -61,6 +61,10 @@ Once a shell hook announces that the prompt is ready, the engine draws the theme
 
 The geometry rests on a zero-width prompt-ready signal. The shell's prompt string carries `OSC 1337;p11k;p` after the blank rows the header needs. The engine paints the header into those rows when the signal reaches it. The prefix belongs to the shell's prompt, so the line editor draws the buffer right after it. The engine does not parse ANSI sequences out of the pty stream, and it does not touch user input.
 
+## Terminal requirements
+
+p11k needs a usable `TERM` (terminfo) so the line editor can take over the input line. When `TERM` is empty or `dumb`, zsh's zle and pwsh's PSReadLine cannot initialise; input may echo twice or land in the wrong place, and p11k prints a warning. bash's readline and fish keep their own line editing and are not affected.
+
 ## Installing
 
 With Nix, from the flake:

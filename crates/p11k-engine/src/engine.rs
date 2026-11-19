@@ -59,6 +59,29 @@ use crate::theme;
 use crate::window::paint_prompt;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
+/// zsh's zle and pwsh's PSReadLine need terminfo. Without a usable TERM they fall back to plain
+/// line input and the echo comes from the pty instead of the line editor, so the prompt can echo
+/// twice. bash's readline and fish keep their own echo in that case.
+fn terminal_supports_line_editing(shell: Shell, term: Option<&str>) -> bool {
+    if !matches!(shell, Shell::Zsh | Shell::Pwsh) {
+        return true;
+    }
+    matches!(term, Some(value) if !value.is_empty() && !value.eq_ignore_ascii_case("dumb"))
+}
+
+fn warn_on_degraded_terminal(shell: Shell) {
+    let term = std::env::var("TERM").ok();
+    if !terminal_supports_line_editing(shell, term.as_deref()) {
+        let name = term
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "unset".into());
+        eprintln!(
+            "p11k: {}",
+            t_args("engine-terminal-degraded", &[("term", &name)])
+        );
+    }
+}
+
 pub fn run() -> anyhow::Result<()> {
     // The config comes first: it may name the shell, and it carries the frame and the input-line
     // prefix the templates hand to the shell.
@@ -78,6 +101,7 @@ pub fn run() -> anyhow::Result<()> {
         }
     }
     let shell = detect_shell(&config);
+    warn_on_degraded_terminal(shell);
     // The file the theme came from, kept for `p11k reload` (None for a preset or the built-in
     // theme; the engine then has nothing to re-read). Made absolute, because the reload
     // command reads it from wherever the shell happens to be, not from the starting directory.
@@ -961,6 +985,31 @@ fn write_ack(path: &std::path::Path, rows: usize, prefix: &str, fold: bool) -> i
 mod tests {
     use super::*;
     use crate::cli::pick_shell;
+
+    /// zle and PSReadLine fall back to plain input without terminfo, so the engine warns.
+    #[test]
+    fn zsh_and_pwsh_warn_without_a_usable_terminal() {
+        assert!(!terminal_supports_line_editing(Shell::Zsh, None));
+        assert!(!terminal_supports_line_editing(Shell::Zsh, Some("")));
+        assert!(!terminal_supports_line_editing(Shell::Zsh, Some("dumb")));
+        assert!(!terminal_supports_line_editing(Shell::Pwsh, None));
+        assert!(terminal_supports_line_editing(
+            Shell::Zsh,
+            Some("xterm-256color")
+        ));
+        assert!(terminal_supports_line_editing(
+            Shell::Pwsh,
+            Some("screen-256color")
+        ));
+    }
+
+    /// bash and fish keep their own line editing without terminfo, so they stay quiet.
+    #[test]
+    fn bash_and_fish_keep_their_line_editing() {
+        assert!(terminal_supports_line_editing(Shell::Bash, None));
+        assert!(terminal_supports_line_editing(Shell::Fish, None));
+        assert!(terminal_supports_line_editing(Shell::Bash, Some("dumb")));
+    }
 
     #[test]
     fn shell_names_match_the_cli_flag() {

@@ -33,6 +33,7 @@ config-cannot-render = cannot render the theme: { $error }
 
 # ===== engine =====
 engine-inner-shell-failed = the inner shell failed to start
+engine-terminal-degraded = terminal type "{ $term }" does not support line editing; the prompt may echo twice
 main-recursive-launch = recursive launch detected (p11k started inside a p11k session)
 main-bootstrap-hint = make sure the bootstrap line in your shell rc is guarded, e.g.:
 main-cannot-exec-shell = cannot exec the shell: { $detail }
