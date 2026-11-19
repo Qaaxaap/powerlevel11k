@@ -2029,11 +2029,20 @@ mod tests {
              newline-prefix \"├─\"\n  newline-suffix \"─┤\"\n  last-prefix \"╰─\"\n}\n\
              layout {\n  left { line { os_icon; dir } }\n  \
              right { line { status; command_execution_time; background_jobs } }\n}\n\
-             segments { dir fg=31\n  status ok-foreground=70 }",
+             segments { dir fg=31\n  status ok-foreground=70 }\n\
+             separators { gap \"·\" }",
         )
         .unwrap();
         let rows = render_header_lines(&cfg, &info("/tmp", None), None, 80);
         assert_eq!(rows.len(), 1);
+        // The info has no exit code, no execution time and no jobs, so all three right-hand
+        // segments hide. The gap run is what proves the empty column was filled to the edge.
+        let gap = rows[0].matches('·').count();
+        assert!(
+            gap >= 40,
+            "an empty right column should fill the row with gap characters, got {gap}: {:?}",
+            rows[0]
+        );
         assert_eq!(
             display_width(&rows[0]),
             80 - cfg.layout.right_indent,
