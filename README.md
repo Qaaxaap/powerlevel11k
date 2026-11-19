@@ -63,7 +63,7 @@ The geometry rests on a zero-width prompt-ready signal. The shell's prompt strin
 
 ## Terminal requirements
 
-p11k needs a usable `TERM` (terminfo) so the line editor can take over the input line. When `TERM` is empty or `dumb`, zsh's zle and pwsh's PSReadLine cannot initialise; input may echo twice or land in the wrong place, and p11k prints a warning. bash's readline and fish keep their own line editing and are not affected.
+p11k needs a terminfo entry for the terminal so the shell can redraw the prompt in place. An empty or `dumb` `TERM` is treated as missing; zsh, pwsh and fish may then repaint the prompt rows in the wrong place or lose colour, and p11k prints a warning. bash kept its input and redraw correct in the same test and stays quiet. The check only covers an empty or `dumb` `TERM`; a set `TERM` whose terminfo entry is missing is not detected.
 
 ## Installing
 

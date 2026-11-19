@@ -34,7 +34,7 @@ config-cannot-render = 无法渲染主题：{ $error }
 
 # ===== 引擎 =====
 engine-inner-shell-failed = 内部 shell 启动失败
-engine-terminal-degraded = 终端类型 "{ $term }" 不支持行编辑，提示符可能重复回显
+engine-terminal-degraded = 终端类型 "{ $term }" 没有可用的 terminfo 条目，提示符可能无法正确重绘
 main-recursive-launch = 检测到递归启动（在 p11k 会话内再次启动 p11k）
 main-bootstrap-hint = 请确认 shell rc 中的引导行带有保护条件，例如：
 main-cannot-exec-shell = 无法启动 shell：{ $detail }

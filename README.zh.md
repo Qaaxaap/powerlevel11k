@@ -63,7 +63,7 @@ shell 钩子宣告提示符就绪后，引擎绘制主题头部，绘制完成�
 
 ## 终端要求
 
-p11k 需要可用的 `TERM`（terminfo），行编辑器才能接管输入行。`TERM` 为空或为 `dumb` 时，zsh 的 zle 与 pwsh 的 PSReadLine 无法初始化，输入可能重复回显或错位，p11k 会打印警告。bash 的 readline 与 fish 保持自己的行编辑，不受影响。
+p11k 需要终端有可用的 terminfo 条目，shell 才能在原位置重绘提示符。`TERM` 为空或为 `dumb` 时按缺失处理；此时 zsh、pwsh、fish 可能把提示符行画到错误位置或丢失颜色，p11k 会打印警告。bash 在同样测试中保持自己的重绘，不警告。该检查只覆盖空与 `dumb`；`TERM` 有值但 terminfo 条目缺失的情况不会被检测。
 
 ## 安装
 

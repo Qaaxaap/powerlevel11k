@@ -59,11 +59,13 @@ use crate::theme;
 use crate::window::paint_prompt;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-/// zsh's zle and pwsh's PSReadLine need terminfo. Without a usable TERM they fall back to plain
-/// line input and the echo comes from the pty instead of the line editor, so the prompt can echo
-/// twice. bash's readline and fish keep their own echo in that case.
-fn terminal_supports_line_editing(shell: Shell, term: Option<&str>) -> bool {
-    if !matches!(shell, Shell::Zsh | Shell::Pwsh) {
+/// zsh, pwsh and fish consult terminfo when they redraw the prompt. With no usable entry the
+/// prompt rows can be repainted in the wrong place and colours lose their frame sequence. bash's
+/// readline kept the input and the redraw correct in the same test, so it stays quiet. An empty
+/// or `dumb` TERM is the heuristic for a missing entry; a set TERM whose terminfo entry is
+/// missing is not detected.
+fn terminal_is_usable(shell: Shell, term: Option<&str>) -> bool {
+    if shell == Shell::Bash {
         return true;
     }
     matches!(term, Some(value) if !value.is_empty() && !value.eq_ignore_ascii_case("dumb"))
@@ -71,7 +73,7 @@ fn terminal_supports_line_editing(shell: Shell, term: Option<&str>) -> bool {
 
 fn warn_on_degraded_terminal(shell: Shell) {
     let term = std::env::var("TERM").ok();
-    if !terminal_supports_line_editing(shell, term.as_deref()) {
+    if !terminal_is_usable(shell, term.as_deref()) {
         let name = term
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "unset".into());
@@ -986,29 +988,23 @@ mod tests {
     use super::*;
     use crate::cli::pick_shell;
 
-    /// zle and PSReadLine fall back to plain input without terminfo, so the engine warns.
+    /// zle, PSReadLine and fish consult terminfo for prompt redraws, so they warn.
     #[test]
-    fn zsh_and_pwsh_warn_without_a_usable_terminal() {
-        assert!(!terminal_supports_line_editing(Shell::Zsh, None));
-        assert!(!terminal_supports_line_editing(Shell::Zsh, Some("")));
-        assert!(!terminal_supports_line_editing(Shell::Zsh, Some("dumb")));
-        assert!(!terminal_supports_line_editing(Shell::Pwsh, None));
-        assert!(terminal_supports_line_editing(
-            Shell::Zsh,
-            Some("xterm-256color")
-        ));
-        assert!(terminal_supports_line_editing(
-            Shell::Pwsh,
-            Some("screen-256color")
-        ));
+    fn shells_that_need_terminfo_warn_when_it_is_missing() {
+        for shell in [Shell::Zsh, Shell::Pwsh, Shell::Fish] {
+            assert!(!terminal_is_usable(shell, None));
+            assert!(!terminal_is_usable(shell, Some("")));
+            assert!(!terminal_is_usable(shell, Some("dumb")));
+            assert!(!terminal_is_usable(shell, Some("DUMB")));
+            assert!(terminal_is_usable(shell, Some("xterm-256color")));
+        }
     }
 
-    /// bash and fish keep their own line editing without terminfo, so they stay quiet.
+    /// bash kept its input and redraw correct in the same test, so it stays quiet.
     #[test]
-    fn bash_and_fish_keep_their_line_editing() {
-        assert!(terminal_supports_line_editing(Shell::Bash, None));
-        assert!(terminal_supports_line_editing(Shell::Fish, None));
-        assert!(terminal_supports_line_editing(Shell::Bash, Some("dumb")));
+    fn bash_keeps_its_own_redraw() {
+        assert!(terminal_is_usable(Shell::Bash, None));
+        assert!(terminal_is_usable(Shell::Bash, Some("dumb")));
     }
 
     #[test]
