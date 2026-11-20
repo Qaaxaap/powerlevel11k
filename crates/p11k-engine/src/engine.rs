@@ -128,10 +128,6 @@ pub fn run() -> anyhow::Result<()> {
     // The zle edit mode reported by the shell hook. It travels into the renderer as data; no
     // global state.
     let mut vi_mode = crate::model::ViMode::Unreported;
-    // Defer the prompt repaint after a resize: wait for zle's repainted prompt and buffer to
-    // pass through (~60ms) before painting the header, so it is not painted before zle has
-    // moved the input line into place.
-    let mut resize_prompt_at: Option<std::time::Instant> = None;
     // Last raw bytes judged to be user input; diagnostics logging only (escaped).
     let mut last_input: Vec<u8> = Vec::new();
     // Time of the last empty enter sent on pwsh's behalf (dragging a window fires SIGWINCH
@@ -477,10 +473,6 @@ pub fn run() -> anyhow::Result<()> {
                                     vi_mode,
                                 )?;
                                 stdout.flush()?;
-                                resize_prompt_at = Some(
-                                    std::time::Instant::now()
-                                        + std::time::Duration::from_millis(60),
-                                );
                             } else {
                                 debug("r: wait for the shell to reprint the prompt");
                             }
@@ -671,17 +663,6 @@ pub fn run() -> anyhow::Result<()> {
             }
             // Input line not ready: last_vcs is already updated and the `p`/marker backfill
             // picks it up, so no extra paint.
-        }
-
-        // Deferred prompt repaint after a resize.
-        if let Some(deadline) = resize_prompt_at
-            && std::time::Instant::now() >= deadline
-        {
-            resize_prompt_at = None;
-            let text = crate::render::input_prefix(&config, current_info.as_ref(), vi_mode).text;
-            theme::render_prompt(&mut stdout, &text)?;
-            stdout.flush()?;
-            debug("deferred prompt drawn");
         }
     }
 
