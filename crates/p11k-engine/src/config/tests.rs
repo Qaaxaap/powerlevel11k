@@ -690,3 +690,14 @@ fn prompt_char_char_property_rolls_back() {
         "the char fallback needs a warning: {warnings:?}"
     );
 }
+
+/// Two `state` nodes with the same name inside one segment merge by field, not replace.
+#[test]
+fn repeated_state_nodes_merge_by_field() {
+    let c =
+        Config::parse("layout {}\nsegments { dir { state \"X\" fg=1; state \"X\" bold=#true } }")
+            .unwrap();
+    let st = &c.segment("dir").states["X"];
+    assert_eq!(st.style.fg, Some(Color::Xterm(1)));
+    assert_eq!(st.style.bold, Some(true));
+}

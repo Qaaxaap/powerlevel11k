@@ -4,6 +4,8 @@ use super::*;
 use crate::i18n::{t, t_args};
 use kdl::{KdlNode, KdlValue};
 
+/// Parse the top-level `icon` node: each child is the override for one icon name, and the
+/// override fields are its children (e.g. `ok { all "✔" ascii "V" }`, one each for all/nf/compat/ascii).
 pub(super) fn parse_icon_table(node: &KdlNode) -> BTreeMap<String, IconOverride> {
     let mut out = BTreeMap::new();
     if let Some(ch) = node.children() {
@@ -295,13 +297,23 @@ pub(super) fn parse_segment(node: &KdlNode) -> Result<Segment, String> {
                     };
                     let st = Style::from_mixed_entries(child.entries())?;
                     let ch = named_str(child, "char");
-                    seg.states.insert(
-                        nm,
-                        StateSpec {
-                            style: st,
-                            char: ch,
-                        },
-                    );
+                    let spec = StateSpec {
+                        style: st,
+                        char: ch,
+                    };
+                    match seg.states.get_mut(&nm) {
+                        Some(existing) => {
+                            // Repeated `state` nodes in one block merge by field, like repeated
+                            // segment declarations do.
+                            existing.style = merge_style(&spec.style, &existing.style);
+                            if spec.char.is_some() {
+                                existing.char = spec.char;
+                            }
+                        }
+                        None => {
+                            seg.states.insert(nm, spec);
+                        }
+                    }
                 }
                 // Attached text slots: left/middle/right. The positional string is the text, `fg` is optional.
                 "text-left" | "text-middle" | "text-right" => {

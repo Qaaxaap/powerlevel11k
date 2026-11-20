@@ -102,7 +102,5 @@ impl Config {
     }
 }
 
-/// Parse the top-level `icon` node: each child is the override for one icon name, and the
-/// override fields are its children (e.g. `ok { all "✔" ascii "V" }`, one each for all/nf/compat/ascii).
 use super::locale::*;
 use super::parse_helpers::*;
