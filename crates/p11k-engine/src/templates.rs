@@ -217,4 +217,45 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// A user fish config may define `fish_prompt` (starship, tide, a hand-written prompt).
+    /// The engine owns the prompt: after the user rc it must still emit the announce and the
+    /// prompt signal.
+    #[test]
+    fn the_engine_prompt_survives_a_user_fish_prompt() {
+        let dir = std::env::temp_dir().join(format!("p11k-fish-prompt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("fish")).expect("fish config dir");
+        std::fs::write(dir.join("fish/config.fish"), FISH_TEMPLATE).expect("config.fish");
+        let user = dir.join("user.fish");
+        std::fs::write(&user, "function fish_prompt; echo USER-PROMPT; end\n").expect("user rc");
+        let announce = dir.join("announce");
+        let ack = dir.join("ack");
+        std::fs::write(&ack, "1\nOK> \n0\n").expect("ack");
+        let out = std::process::Command::new("fish")
+            .args(["-i", "-c", "fish_prompt"])
+            .env("XDG_CONFIG_HOME", &dir)
+            .env("P11K_ANNOUNCE", &announce)
+            .env("P11K_ACK", &ack)
+            .env("P11K_PREFIX_OK", "OK> ")
+            .env("P11K_PREFIX_ERR", "ERR> ")
+            .env("P11K_USER_ZSHRC", &user)
+            .output()
+            .expect("fish");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("1337;p11k;p"),
+            "the engine prompt signal is missing: {stdout:?}"
+        );
+        assert!(
+            !stdout.contains("USER-PROMPT"),
+            "the user fish_prompt won: {stdout:?}"
+        );
+        let announce = std::fs::read_to_string(&announce).unwrap_or_default();
+        assert!(
+            announce.starts_with("h\t"),
+            "the engine prompt announced nothing: {announce:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

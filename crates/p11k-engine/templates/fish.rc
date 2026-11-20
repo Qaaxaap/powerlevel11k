@@ -86,6 +86,11 @@ function fish_prompt
     printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
 end
 
+# A user config may define fish_prompt (starship, tide, a hand-written prompt). Keep a copy of
+# the engine prompt and restore it after the user rc, so the announce and the prompt signal are
+# still emitted.
+functions --copy fish_prompt _p11k_engine_prompt
+
 # ===== user config =====
 # Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
 # on the current line; without this break, the rc output would be written after the typed text.
@@ -97,6 +102,11 @@ if test -n "$P11K_USER_ZSHRC"; and test -r "$P11K_USER_ZSHRC"
 else if test -r "$HOME/.config/fish/config.fish"
     source "$HOME/.config/fish/config.fish"
 end
+
+# A user config may have replaced fish_prompt. Restore the engine prompt so the announce and
+# the prompt signal are still emitted.
+functions --erase fish_prompt
+functions --copy _p11k_engine_prompt fish_prompt
 
 # ===== protocol invariants =====
 # The greeting prints a line between the instant header and the first prompt, which pushes the
