@@ -1103,10 +1103,14 @@ impl Config {
         let mut shell: Option<String> = None;
         let mut instant_prompt = true;
         let mut icon_padding = IconPadding::default();
+        let mut seen_layout = false;
 
         for node in doc.nodes() {
             match node.name().value() {
-                "layout" => layout = parse_layout(node)?,
+                "layout" => {
+                    layout = parse_layout(node)?;
+                    seen_layout = true;
+                }
                 "segments" => {
                     if let Some(ch) = node.children() {
                         for seg in ch.nodes() {
@@ -1146,6 +1150,9 @@ impl Config {
                 }
                 _ => warn_unknown_key(node.name().value()),
             }
+        }
+        if !seen_layout {
+            return Err(t("config-layout-required"));
         }
         Ok(Config {
             layout,
@@ -1931,10 +1938,10 @@ mod tests {
     /// The accepted colour forms keep their meaning, including uppercase hex and names.
     #[test]
     fn valid_colours_are_read() {
-        let d = Config::parse("defaults fg=\"#ABCDEF\" bg=\"red\"").unwrap();
+        let d = Config::parse("layout {}\ndefaults fg=\"#ABCDEF\" bg=\"red\"").unwrap();
         assert_eq!(d.defaults.fg, Some(Color::Rgb(0xab, 0xcd, 0xef)));
         assert_eq!(d.defaults.bg, Some(Color::Named("red".into())));
-        let d = Config::parse("defaults fg=196 bg=default").unwrap();
+        let d = Config::parse("layout {}\ndefaults fg=196 bg=default").unwrap();
         assert_eq!(d.defaults.fg, Some(Color::Xterm(196)));
         assert_eq!(d.defaults.bg, Some(Color::Default));
     }
@@ -2071,7 +2078,7 @@ mod tests {
     /// Directory classification rules keep their pattern, state and icon through a round trip.
     #[test]
     fn dir_classes_parse_and_round_trip() {
-        let src = "dir-classes {\n    class \"src/**\" state=\"WORK\" icon=\"x\"\n    class \"docs/**\";\n}\n";
+        let src = "layout {}\ndir-classes {\n    class \"src/**\" state=\"WORK\" icon=\"x\"\n    class \"docs/**\";\n}\n";
         let cfg = Config::parse(src).unwrap();
         assert_eq!(cfg.dir_classes.len(), 2);
         assert_eq!(cfg.dir_classes[0].pattern, "src/**");
@@ -2085,8 +2092,16 @@ mod tests {
         assert_eq!(cfg.dir_classes, again.dir_classes);
 
         // A rule without the pattern argument is skipped instead of creating an empty rule.
-        let cfg = Config::parse("dir-classes { class state=\"WORK\" }").unwrap();
+        let cfg = Config::parse("layout {}\ndir-classes { class state=\"WORK\" }").unwrap();
         assert!(cfg.dir_classes.is_empty());
+    }
+
+    #[test]
+    fn layout_is_required() {
+        assert!(
+            Config::parse("mode \"ascii\"\nsegments { dir fg=31 }\n").is_err(),
+            "a config without a layout block must be rejected"
+        );
     }
 
     /// Invalid input is either reported or ignored with the documented fallback; it never panics.
@@ -2102,7 +2117,8 @@ mod tests {
         assert!(!cfg.layout.left.is_empty());
 
         // Unknown enum values fall back to the defaults.
-        let cfg = Config::parse("mode \"not-a-mode\"\nicon-padding \"not-a-padding\"\n").unwrap();
+        let cfg = Config::parse("layout {}\nmode \"not-a-mode\"\nicon-padding \"not-a-padding\"\n")
+            .unwrap();
         assert_eq!(cfg.mode, IconMode::NerdfontComplete);
         assert_eq!(cfg.icon_padding, IconPadding::None);
     }
@@ -2443,7 +2459,7 @@ segments {
     #[test]
     fn locale_fallback_rolls_back_declared_glyphs() {
         let mut c = Config::parse(
-            "mode \"nerdfont-complete\"\n\
+            "layout {}\nmode \"nerdfont-complete\"\n\
              frame { last-prefix \"╰─\" first-suffix \"─╮\" }\n\
              separators { segment \"\" gap \"·\" }\n\
              segments {\n\
@@ -2481,7 +2497,8 @@ segments {
     #[test]
     fn locale_fallback_keeps_glyphs_for_utf8() {
         let mut c =
-            Config::parse("mode \"nerdfont-complete\"\nframe { last-prefix \"╰─\" }\n").unwrap();
+            Config::parse("layout {}\nmode \"nerdfont-complete\"\nframe { last-prefix \"╰─\" }\n")
+                .unwrap();
         let warnings = c
             .apply_locale_fallback_with(IconMode::NerdfontComplete)
             .unwrap();
@@ -2494,7 +2511,8 @@ segments {
     /// roll back.
     #[test]
     fn locale_fallback_keeps_a_declared_ascii_mode() {
-        let mut c = Config::parse("mode \"ascii\"\nframe { last-prefix \"╰─\" }\n").unwrap();
+        let mut c =
+            Config::parse("layout {}\nmode \"ascii\"\nframe { last-prefix \"╰─\" }\n").unwrap();
         let warnings = c
             .apply_locale_fallback_with(IconMode::NerdfontComplete)
             .unwrap();
@@ -2506,7 +2524,7 @@ segments {
     /// The last-resort check reports the field of a glyph that no fallback removed.
     #[test]
     fn unrenderable_glyph_reports_the_field() {
-        let c = Config::parse("frame { last-prefix \"╰─\" }\n").unwrap();
+        let c = Config::parse("layout {}\nframe { last-prefix \"╰─\" }\n").unwrap();
         let error = c.unrenderable_glyph(&IconMode::Ascii).unwrap();
         assert!(error.contains("frame last-prefix"), "got {error:?}");
     }
@@ -2516,7 +2534,7 @@ segments {
     #[test]
     fn compatible_keeps_powerline_glyphs() {
         let mut c = Config::parse(
-            "mode \"compatible\"\n\
+            "layout {}\nmode \"compatible\"\n\
              separators { segment \"\u{e0b0}\" }\n\
              segments { dir prefix=\"\u{e0b1}\" }\n\
              icon { lock { compat \"\u{e0a2}\" } }\n",
@@ -2536,7 +2554,7 @@ segments {
     #[test]
     fn inactive_icon_slots_do_not_block_startup() {
         let mut c = Config::parse(
-            "mode \"nerdfont-complete\"\n\
+            "layout {}\nmode \"nerdfont-complete\"\n\
              icon {\n\
                  folder {\n\
                      nf \"\u{f07c}\"\n\
@@ -2557,7 +2575,7 @@ segments {
     #[test]
     fn prompt_char_char_property_rolls_back() {
         let mut c = Config::parse(
-            "mode \"nerdfont-complete\"\n\
+            "layout {}\nmode \"nerdfont-complete\"\n\
              segments { prompt_char char=\"❯\" }\n",
         )
         .unwrap();

@@ -1687,7 +1687,7 @@ mod tests {
         // p10k's STATUS_EXTENDED_STATES: $pipestatus distinguishes a pipeline from a plain
         // failure, and an exit code above 128 means death by signal.
         let cfg = Config::parse(
-            "segments { prompt_char {\n\
+            "layout {}\nsegments { prompt_char {\n\
                state \"OK_PIPE\" fg=70\n\
                state \"ERROR_PIPE\" fg=160\n\
                state \"ERROR_SIGNAL\" fg=160\n\
@@ -1727,7 +1727,8 @@ mod tests {
 
         // Undeclared extended states fall back to ERROR (and OK_PIPE to no state), so a
         // config that only knows OK/ERROR keeps behaving as before.
-        let plain = Config::parse("segments { prompt_char { state \"ERROR\" fg=196 } }").unwrap();
+        let plain = Config::parse("layout {}\nsegments { prompt_char { state \"ERROR\" fg=196 } }")
+            .unwrap();
         assert_eq!(
             prompt_state(&plain, Some(&info_with(1, &[0, 1])), ViMode::Unreported),
             Some("ERROR")

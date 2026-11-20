@@ -25,6 +25,7 @@ config-expected-colour = { $key }: expected a colour (0-255, #rrggbb, a colour n
 config-kdl-parse-error = KDL parse error: { $detail }
 config-state-needs-name = `state` needs a name (a positional string)
 config-element-needs-text = { $element } needs text (a positional string)
+config-layout-required = the config needs a layout block
 config-unknown-key = unknown config key: { $key }
 config-mode-fallback = "{ $declared }" cannot be displayed by this locale; falling back to "{ $effective }"
 config-glyph-fallback = { $field } "{ $glyph }": cannot be displayed; using the built-in default
