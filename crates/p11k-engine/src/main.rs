@@ -46,6 +46,7 @@ mod pattern;
 mod presets;
 mod protocol;
 mod render;
+mod session;
 mod state;
 mod templates;
 mod theme;

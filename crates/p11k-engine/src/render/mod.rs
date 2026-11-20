@@ -25,8 +25,8 @@ use self::segment::{Ctx, IconStyle, SegmentValue};
 pub(crate) use self::segments::clear_cmd_cache;
 use self::segments::*;
 pub use self::style::{
-    input_prefix, prefix_text, prefix_text_bash, prefix_text_zsh, prompt_state, strip_ansi,
-    transient_prompt_zsh,
+    InputPrefix, input_prefix, prefix_text, prefix_text_bash, prefix_text_zsh, prompt_state,
+    strip_ansi, transient_prompt_zsh,
 };
 use self::style::{named_256, paint, paint_attach};
 use std::collections::HashMap;
