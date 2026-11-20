@@ -758,4 +758,32 @@ mod tests {
             "pwsh reads rows and prefix from ack lines 0-1"
         );
     }
+
+    /// The templates are shell code. Let each shell's own parser check them: a syntax error
+    /// otherwise only shows up when a user starts that shell.
+    #[test]
+    fn templates_parse_with_their_shell() {
+        let dir = std::env::temp_dir().join(format!("p11k-templates-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (shell, name, source) in [
+            ("zsh", "zsh.rc", ZSHRC_TEMPLATE),
+            ("bash", "bash.rc", BASHRC_TEMPLATE),
+            ("fish", "fish.rc", FISH_TEMPLATE),
+        ] {
+            let path = dir.join(name);
+            std::fs::write(&path, source).unwrap();
+            let out = std::process::Command::new(shell)
+                .arg("-n")
+                .arg(&path)
+                .output()
+                .unwrap_or_else(|e| panic!("{shell} is needed for the template syntax check: {e}"));
+            assert!(
+                out.status.success(),
+                "{shell} rejected {name}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
