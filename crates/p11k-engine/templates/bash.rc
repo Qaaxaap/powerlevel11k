@@ -1,0 +1,132 @@
+# p11k engine bootstrap (bash) -- protocol layer + user config.
+# Zero-width prompt-ready signal. `\[...\]` tells readline the sequence takes no columns; a bare
+# OSC would be counted as visible width and the buffer would start in the wrong column.
+_p11k_signal=$'\e]1337;p11k;p\a'
+PS1="\[$_p11k_signal\]"
+# Last prompt shape from the engine ack, kept across prompts so a dead or stuck engine cannot
+# block the prompt forever: _p11k_prompt_command falls back to these values after the ack timeout.
+_p11k_rows=1
+_p11k_prefix=$P11K_PREFIX_OK
+
+# Command timing for bash. Bash has no CMD_DURATION and no preexec. A DEBUG trap records
+# EPOCHREALTIME before the first simple command after a prompt. `_p11k_cmd_start` is set once
+# per command. A pipeline or a compound command does not overwrite the start with a later
+# element.
+_p11k_cmd_start=
+_p11k_preexec() {
+  # The trap also fires for the PROMPT_COMMAND function itself. That call is not a user
+  # command. It must not start a timer.
+  [[ $BASH_COMMAND == _p11k_prompt_command ]] && return
+  [[ -n ${_p11k_cmd_start:-} ]] && return
+  _p11k_cmd_start=${EPOCHREALTIME:-}
+}
+trap '_p11k_preexec' DEBUG
+
+# PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
+# then wait for the engine ack before returning.
+_p11k_prompt_command() {
+  # Read both in one `local`: any command in between, `local` included, resets $PIPESTATUS, so
+  # capturing $? first would leave the pipeline statuses reporting the `local` that read it.
+  local _pipes="${PIPESTATUS[*]}" _st=$?
+  # Milliseconds between the DEBUG trap and this prompt command. The field is empty on the
+  # first prompt. It is also empty when the shell cannot measure the duration. The engine then
+  # falls back to its own timing.
+  local _dur=
+  if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
+    # Snapshot both timestamps before splitting: EPOCHREALTIME is dynamic, so a second
+    # reference can land on the other side of a second boundary and mix the seconds of one
+    # instant with the fraction of another.
+    local _start=$_p11k_cmd_start _now=$EPOCHREALTIME
+    # The fraction separator follows LC_NUMERIC: it_IT prints a comma, other locales print
+    # other characters. Do not assume one: split on the first non-digit and keep the digits.
+    # The fractional part holds six digits (microseconds). Seconds and microseconds are
+    # converted separately, so no separator character reaches the arithmetic.
+    local _start_s=${_start%%[!0-9]*} _start_f=${_start#*[!0-9]}
+    local _now_s=${_now%%[!0-9]*} _now_f=${_now#*[!0-9]}
+    _start_f=${_start_f//[!0-9]/} _now_f=${_now_f//[!0-9]/}
+    (( _dur = ( 10#$_now_s * 1000000 + 10#${_now_f:0:6} - 10#$_start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
+    _p11k_cmd_start=
+  fi
+  # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
+  # a newline or a backslash, which would split or merge fields.
+  local _pwd_esc=${PWD//\\/\\\\}
+  _pwd_esc=${_pwd_esc//$'\t'/\\t}
+  _pwd_esc=${_pwd_esc//$'\n'/\\n}
+  _pwd_esc=${_pwd_esc//$'\r'/\\r}
+  printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$_pwd_esc" "$(jobs -p | wc -l)" "" "$_pipes" "$_dur" >> "$P11K_ANNOUNCE"
+  # Wait at most two seconds for the ack. A dead or stuck engine must not block the shell at
+  # the prompt; the previous prompt shape is reused and the fallback is reported once.
+  local _wait=0
+  until [[ -f "$P11K_ACK" ]]; do
+    sleep 0.005
+    _wait=$(( _wait + 1 ))
+    if (( _wait >= 400 )); then break; fi
+  done
+  if [[ -f "$P11K_ACK" ]]; then
+    # The ack carries the prompt shape: header height on the first line, then the two prefix
+    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    local -a _ack
+    mapfile -t _ack < "$P11K_ACK"
+    rm -f "$P11K_ACK"
+    _p11k_rows=${_ack[0]:-1}
+    _p11k_prefix=${_ack[1]:-$P11K_PREFIX_OK}
+  elif [[ -z "${_p11k_ack_warned:-}" ]]; then
+    _p11k_ack_warned=1
+    if (( _st == 0 )); then
+      _p11k_prefix=$P11K_PREFIX_OK
+    else
+      _p11k_prefix=$P11K_PREFIX_ERR
+    fi
+    printf 'p11k: %s\n' "the engine did not answer in time; the prompt is drawn without a header" >&2
+  fi
+  # The prefix belongs in PS1: readline draws the buffer right after it, and painting it later
+  # would overwrite the first characters on a completion redraw.
+  #
+  # Every prompt prints its own header rows. On the first prompt the instant header stays above
+  # as history instead of being overwritten.
+  # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
+  # newline, so the capture would always come back empty and the shell would print no blank rows
+  # at all — the header would then be backfilled over the command output above it.
+  local _lead=''
+  if [[ -n "${P11K_INSTANT:-}" ]]; then
+    unset P11K_INSTANT
+  fi
+  local _i
+  for (( _i = 0; _i < ${_p11k_rows:-1}; _i++ )); do
+    _lead+=$'\n'
+  done
+  # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
+  # before the shell starts, and without this readline would append the prompt after it.
+  PS1='\r'"$_lead\[$_p11k_signal\]${_p11k_prefix:-$P11K_PREFIX_OK}"
+}
+PROMPT_COMMAND=_p11k_prompt_command
+
+# resize: after SIGWINCH bash updates COLUMNS/LINES; the trap detects the change, announces `r`.
+_p11k_last_cols=$COLUMNS
+_p11k_last_rows=$LINES
+_p11k_winch() {
+  if [[ $COLUMNS != $_p11k_last_cols || $LINES != $_p11k_last_rows ]]; then
+    _p11k_last_cols=$COLUMNS
+    _p11k_last_rows=$LINES
+    printf 'r\n' >> "$P11K_ANNOUNCE"
+  fi
+}
+trap '_p11k_winch' WINCH
+
+# ===== user config =====
+# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
+# on the current line; without this break, the rc output would be written after the typed text.
+if [[ -n "${P11K_INSTANT:-}" ]]; then
+  printf '\r\n'
+fi
+if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
+  source "$P11K_USER_ZSHRC"
+elif [[ -r "$HOME/.bashrc" ]]; then
+  source "$HOME/.bashrc"
+fi
+
+# ===== protocol invariants =====
+PS1="\[$_p11k_signal\]"
+PROMPT_COMMAND=_p11k_prompt_command
+trap '_p11k_winch' WINCH
+trap '_p11k_preexec' DEBUG

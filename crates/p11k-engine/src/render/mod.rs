@@ -229,14 +229,14 @@ impl<'a> Renderer<'a> {
             .map(|el| match el {
                 Element::Seg(name) => self.segment(name, right, dir_budget, false),
                 Element::Joined(name) => self.segment(name, right, dir_budget, true),
-                Element::Text(t) => {
+                Element::Text(t) | Element::NamedText(_, t) => {
                     let text = config.segment("text");
                     let mut style = text.effective_style(None, &config.defaults);
                     // `text` inherits fg and bold from defaults, never the background: the
                     // terminal's own background shows through unless the `text` segment sets a
                     // bg.
-                    if text.style.bg == Color::Default {
-                        style.bg = Color::Default;
+                    if !text.style.has_bg() {
+                        style.bg = None;
                     }
                     let text = paint(&expand_env(t), &style);
                     let width = display_width(&text);
@@ -248,6 +248,13 @@ impl<'a> Renderer<'a> {
                         joined_left: false,
                     }
                 }
+                Element::Disabled(_) => SegmentText {
+                    text: String::new(),
+                    width: 0,
+                    style: Style::default(),
+                    padded: false,
+                    joined_left: false,
+                },
             })
             .collect()
     }
@@ -266,7 +273,7 @@ impl<'a> Renderer<'a> {
             let (name, joined) = match el {
                 Element::Seg(name) => (name.as_str(), false),
                 Element::Joined(name) => (name.as_str(), true),
-                Element::Text(_) => continue,
+                Element::Text(_) | Element::NamedText(_, _) | Element::Disabled(_) => continue,
             };
             if registry::find(name).is_some_and(|meta| meta.render.width_dependent()) {
                 *part = self.segment(name, right, Some(dir_budget), joined);
@@ -334,7 +341,7 @@ impl<'a> Renderer<'a> {
         // (p10k's `POWERLEVEL9K_BACKGROUND`) → transparent when neither (the terminal's own
         // color). The `effective_style` inheritance already does this layer; the bg here is the
         // result.
-        let has_real_bg = style.bg != Color::Default;
+        let has_real_bg = style.has_bg();
         let text = value.text;
         // Segment icon: config `icon` (auto-overrides the applicable mode by char class) →
         // otherwise the built-in default table.
@@ -558,7 +565,7 @@ mod tests {
             text: text.to_string(),
             width: text.chars().count(),
             style: Style {
-                bg: Color::Xterm(bg),
+                bg: Some(Color::Xterm(bg)),
                 ..Default::default()
             },
             padded: true,
@@ -641,7 +648,7 @@ mod tests {
             text: text.to_string(),
             width: text.chars().count(),
             style: Style {
-                bg: Color::Xterm(bg),
+                bg: Some(Color::Xterm(bg)),
                 ..Default::default()
             },
             padded: true,
@@ -1319,7 +1326,7 @@ mod tests {
         cfg.layout.left = vec![vec![Element::Seg("dir".into())]];
         cfg.segments.insert("dir".into(), {
             let mut d = crate::config::Segment::default();
-            d.style.bg = Color::Xterm(31);
+            d.style.bg = Some(Color::Xterm(31));
             d
         });
         cfg.separators.left_tail = "\u{e0b2}".into();
@@ -1402,12 +1409,8 @@ mod tests {
             false,
             None,
         );
-        assert_eq!(
-            row[0].style.bg,
-            Color::Default,
-            "text must stay transparent"
-        );
-        assert_eq!(row[0].style.fg, Color::Xterm(200));
+        assert_eq!(row[0].style.bg, None, "text must stay transparent");
+        assert_eq!(row[0].style.fg, Some(Color::Xterm(200)));
 
         let cfg = Config::parse("defaults bg=236\nsegments { text bg=31 }\nlayout {}").unwrap();
         let row = Renderer::new(&cfg, &info("/tmp", None), None, 0, ViMode::Unreported).row(
@@ -1417,7 +1420,7 @@ mod tests {
         );
         assert_eq!(
             row[0].style.bg,
-            Color::Xterm(31),
+            Some(Color::Xterm(31)),
             "an explicit text bg applies"
         );
     }
@@ -1431,7 +1434,7 @@ mod tests {
             false,
             None,
         );
-        assert_eq!(row[0].style.bg, Color::Default);
+        assert_eq!(row[0].style.bg, None);
     }
 
     #[test]
@@ -1561,15 +1564,15 @@ mod tests {
         )
         .unwrap();
         let mut cfg = cfg;
-        cfg.segments.get_mut("dir").unwrap().style.bg = Color::Xterm(39);
-        cfg.segments.get_mut("dir").unwrap().style.fg = Color::Xterm(0);
+        cfg.segments.get_mut("dir").unwrap().style.bg = Some(Color::Xterm(39));
+        cfg.segments.get_mut("dir").unwrap().style.fg = Some(Color::Xterm(0));
         cfg.segments.insert(
             "vcs".into(),
             crate::config::Segment {
                 style: crate::config::Style {
-                    fg: Color::Xterm(0),
-                    bg: Color::Xterm(76),
-                    bold: false,
+                    fg: Some(Color::Xterm(0)),
+                    bg: Some(Color::Xterm(76)),
+                    bold: None,
                 },
                 ..Default::default()
             },
@@ -1684,7 +1687,7 @@ mod tests {
         // p10k's STATUS_EXTENDED_STATES: $pipestatus distinguishes a pipeline from a plain
         // failure, and an exit code above 128 means death by signal.
         let cfg = Config::parse(
-            "segments { prompt_char {\n\
+            "layout {}\nsegments { prompt_char {\n\
                state \"OK_PIPE\" fg=70\n\
                state \"ERROR_PIPE\" fg=160\n\
                state \"ERROR_SIGNAL\" fg=160\n\
@@ -1724,7 +1727,8 @@ mod tests {
 
         // Undeclared extended states fall back to ERROR (and OK_PIPE to no state), so a
         // config that only knows OK/ERROR keeps behaving as before.
-        let plain = Config::parse("segments { prompt_char { state \"ERROR\" fg=196 } }").unwrap();
+        let plain = Config::parse("layout {}\nsegments { prompt_char { state \"ERROR\" fg=196 } }")
+            .unwrap();
         assert_eq!(
             prompt_state(&plain, Some(&info_with(1, &[0, 1])), ViMode::Unreported),
             Some("ERROR")

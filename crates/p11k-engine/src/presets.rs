@@ -25,9 +25,9 @@ fn x(n: u8) -> Color {
 
 fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> Segment {
     let mut s = Segment::default();
-    s.style.fg = x(fg);
+    s.style.fg = Some(x(fg));
     if let Some(b) = bg {
-        s.style.bg = x(b);
+        s.style.bg = Some(x(b));
     }
     s.props.insert(
         "shorten-strategy".into(),
@@ -38,7 +38,7 @@ fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> 
         "SHORTENED".into(),
         StateSpec {
             style: Style {
-                fg: x(short),
+                fg: Some(x(short)),
                 ..Style::default()
             },
             char: None,
@@ -48,8 +48,8 @@ fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> 
         "ANCHOR".into(),
         StateSpec {
             style: Style {
-                fg: x(anchor),
-                bold: anchor_bold,
+                fg: Some(x(anchor)),
+                bold: Some(anchor_bold),
                 ..Style::default()
             },
             char: None,
@@ -69,10 +69,10 @@ fn vcs_seg(
 ) -> Segment {
     let mut s = Segment::default();
     if let Some(f) = fg {
-        s.style.fg = x(f);
+        s.style.fg = Some(x(f));
     }
     if let Some(b) = bg {
-        s.style.bg = x(b);
+        s.style.bg = Some(x(b));
     }
     s.props
         .insert("clean-foreground".into(), Prop::Int(clean as i64));
@@ -102,7 +102,7 @@ fn vcs_seg(
 fn status_seg(ok: u8, err: u8, bg: Option<u8>) -> Segment {
     let mut s = Segment::default();
     if let Some(b) = bg {
-        s.style.bg = x(b);
+        s.style.bg = Some(x(b));
     }
     s.props.insert("ok-foreground".into(), Prop::Int(ok as i64));
     s.props
@@ -113,9 +113,9 @@ fn status_seg(ok: u8, err: u8, bg: Option<u8>) -> Segment {
 
 fn exec_seg(fg: u8, bg: Option<u8>) -> Segment {
     let mut s = Segment::default();
-    s.style.fg = x(fg);
+    s.style.fg = Some(x(fg));
     if let Some(b) = bg {
-        s.style.bg = x(b);
+        s.style.bg = Some(x(b));
     }
     s.props.insert("threshold-seconds".into(), Prop::Int(3));
     s.props.insert("precision".into(), Prop::Int(0));
@@ -124,9 +124,9 @@ fn exec_seg(fg: u8, bg: Option<u8>) -> Segment {
 
 fn jobs_seg(fg: u8, bg: Option<u8>) -> Segment {
     let mut s = Segment::default();
-    s.style.fg = x(fg);
+    s.style.fg = Some(x(fg));
     if let Some(b) = bg {
-        s.style.bg = x(b);
+        s.style.bg = Some(x(b));
     }
     s.props.insert("verbose".into(), Prop::Bool(false));
     s
@@ -134,21 +134,21 @@ fn jobs_seg(fg: u8, bg: Option<u8>) -> Segment {
 
 fn os_icon_seg(fg: u8, bg: Option<u8>) -> Segment {
     let mut s = Segment::default();
-    s.style.fg = x(fg);
+    s.style.fg = Some(x(fg));
     if let Some(b) = bg {
-        s.style.bg = x(b);
+        s.style.bg = Some(x(b));
     }
     s
 }
 
 fn prompt_char_seg(ok: u8, err: u8) -> Segment {
     let mut s = Segment::default();
-    s.style.fg = x(ok);
+    s.style.fg = Some(x(ok));
     s.states.insert(
         "ERROR".into(),
         StateSpec {
             style: Style {
-                fg: x(err),
+                fg: Some(x(err)),
                 ..Style::default()
             },
             char: None,
@@ -163,7 +163,7 @@ fn prompt_char_seg(ok: u8, err: u8) -> Segment {
 /// The frame-level fg colors every piece (aligns with p10k `%<frame_color>F╭─`).
 fn powerline_frame(color: u8) -> Frame {
     let mut f = Frame::default();
-    f.style.fg = x(color);
+    f.style.fg = Some(x(color));
     f.first_prefix = FramePiece {
         text: "╭─".into(),
         style: None,
@@ -379,26 +379,26 @@ pub fn pure(snazzy: bool) -> Config {
     cfg.layout.right = Vec::new();
 
     let mut context = Segment::default();
-    context.style.fg = grey.clone();
+    context.style.fg = Some(grey.clone());
     cfg.segments.insert("context".into(), context);
 
     let mut dir = dir_seg(0, 0, 0, false, None);
-    dir.style.fg = blue.clone();
-    dir.states.get_mut("SHORTENED").unwrap().style.fg = grey.clone();
-    dir.states.get_mut("ANCHOR").unwrap().style.fg = blue.clone();
+    dir.style.fg = Some(blue.clone());
+    dir.states.get_mut("SHORTENED").unwrap().style.fg = Some(grey.clone());
+    dir.states.get_mut("ANCHOR").unwrap().style.fg = Some(blue.clone());
     cfg.segments.insert("dir".into(), dir);
 
     let mut vcs = Segment::default();
-    vcs.style.fg = grey.clone();
+    vcs.style.fg = Some(grey.clone());
     cfg.segments.insert("vcs".into(), vcs);
 
     let mut exec = exec_seg(0, None);
-    exec.style.fg = yellow.clone();
+    exec.style.fg = Some(yellow.clone());
     cfg.segments.insert("command_execution_time".into(), exec);
 
     let mut pc = prompt_char_seg(0, 0);
-    pc.style.fg = magenta.clone();
-    pc.states.get_mut("ERROR").unwrap().style.fg = red.clone();
+    pc.style.fg = Some(magenta.clone());
+    pc.states.get_mut("ERROR").unwrap().style.fg = Some(red.clone());
     cfg.segments.insert("prompt_char".into(), pc);
     cfg
 }
@@ -494,30 +494,25 @@ mod tests {
             for seg in ["os_icon", "dir", "vcs", "status", "command_execution_time"] {
                 assert_eq!(
                     c.segment(seg).style.bg,
-                    x(want),
+                    Some(x(want)),
                     "shade {color}: segment {seg} bg should be {want}"
                 );
             }
             assert_eq!(
-                c.defaults.bg,
-                crate::config::Color::Default,
+                c.defaults.bg, None,
                 "defaults should have no bg (otherwise frame chars get tinted)"
             );
             // Frame piece style: foreground only, no background.
             let piece = c.frame_piece_style(&c.frame.first_prefix);
-            assert_eq!(
-                piece.bg,
-                crate::config::Color::Default,
-                "frame chars must be transparent"
-            );
+            assert_eq!(piece.bg, None, "frame chars must be transparent");
         }
         // lean/pure/rainbow are globally transparent; rainbow gives each segment its own background.
-        assert_eq!(lean(false).defaults.bg, crate::config::Color::Default);
-        assert_eq!(pure(false).defaults.bg, crate::config::Color::Default);
-        assert_eq!(rainbow(1).defaults.bg, crate::config::Color::Default);
+        assert_eq!(lean(false).defaults.bg, None);
+        assert_eq!(pure(false).defaults.bg, None);
+        assert_eq!(rainbow(1).defaults.bg, None);
         assert_eq!(
             rainbow(1).segment("os_icon").style.bg,
-            x(7),
+            Some(x(7)),
             "rainbow gives every segment its own bg"
         );
     }
@@ -574,7 +569,7 @@ mod tests {
         // p10k rainbow: the vcs segment background is green 2 and all its text is black 0 (it must not match the background, or the text becomes invisible).
         let rb = rainbow(1);
         let vcs = rb.segment("vcs");
-        assert_eq!(vcs.style.bg, x(2));
+        assert_eq!(vcs.style.bg, Some(x(2)));
         assert_eq!(int(&rb, "vcs", "clean-foreground"), Some(0));
         assert_eq!(int(&rb, "vcs", "modified-foreground"), Some(0));
         assert_eq!(int(&rb, "vcs", "untracked-foreground"), Some(0));

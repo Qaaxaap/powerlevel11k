@@ -5,575 +5,19 @@
 /// Sequence: precmd announces `h` → polls ack → zsh prints the prompt string (header blank
 /// rows + zero-width signal + prefix) through zle → the engine backfills the header. The prompt
 /// string is printed by zle or its equivalent; the theme is always the engine's job.
-pub const ZSHRC_TEMPLATE: &str = r#"# p11k engine bootstrap -- protocol layer + user config.
-# ===== engine protocol =====
-# Empty when the engine does not enable transient; clear it so a stale value
-# left in the outer environment cannot make zle-line-finish fold wrongly.
-[[ -n "${P11K_TRANSIENT_PROMPT:-}" ]] || unset P11K_TRANSIENT_PROMPT
-# Zero-width prompt-ready signal: `%{...%}` is how zle is told a sequence takes no columns.
-# Without it the OSC bytes are counted as visible width and the buffer lands in the wrong column.
-_p11k_signal=$'%{\e]1337;p11k;p\a%}'
-_p11k_status=0
-_p11k_pwd=$PWD
-# Last prompt shape from the engine ack, kept across prompts so a dead or stuck engine cannot
-# block the prompt forever: precmd falls back to these values after the ack timeout.
-typeset -g _p11k_rows=1
-typeset -g _p11k_prefix=$P11K_PREFIX_OK
-typeset -g _p11k_fold=1
-
-# Command timing for zsh. Zsh has no CMD_DURATION. A preexec hook records EPOCHREALTIME
-# before the command runs. Precmd turns the difference into milliseconds for the announce.
-# Without the datetime module, EPOCHREALTIME stays empty and the engine uses its own timing.
-zmodload -i zsh/datetime
-typeset -g _p11k_cmd_start
-_p11k_preexec() { _p11k_cmd_start=${EPOCHREALTIME:-} }
-autoload -Uz add-zsh-hook
-add-zsh-hook preexec _p11k_preexec
-
-_p11k_precmd() {
-  _p11k_status=$?
-  # Capture $pipestatus right away: any command below resets it.
-  _p11k_pipes="${pipestatus}"
-  _p11k_pwd=$PWD
-  # Milliseconds between preexec and this precmd. The field stays empty on the first
-  # prompt. It also stays empty when the shell cannot measure the duration. The engine then
-  # uses its Enter → precmd timing.
-  local _dur=
-  if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
-    # The fraction separator follows LC_NUMERIC: it_IT prints a comma, other locales print
-    # other characters. Do not assume one: split on the first non-digit and keep the digits.
-    # The fractional part is longer than six digits; the first six are the microseconds.
-    local _start=$_p11k_cmd_start _now=$EPOCHREALTIME
-    local _start_s=${_start%%[^0-9]*} _start_f=${_start#*[^0-9]}
-    local _now_s=${_now%%[^0-9]*} _now_f=${_now#*[^0-9]}
-    _start_f=${_start_f//[^0-9]/} _now_f=${_now_f//[^0-9]/}
-    (( _dur = ( 10#$_now_s * 1000000 + 10#${_now_f:0:6} - 10#$_start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
-    _p11k_cmd_start=
-  fi
-  # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
-  # a newline or a backslash, which would split or merge fields.
-  local _pwd_esc=${_p11k_pwd//\\/\\\\}
-  _pwd_esc=${_pwd_esc//$'\t'/\\t}
-  _pwd_esc=${_pwd_esc//$'\n'/\\n}
-  _pwd_esc=${_pwd_esc//$'\r'/\\r}
-  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_pwd_esc"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes"$'\t'"$_dur" >> "$P11K_ANNOUNCE"
-  # Wait at most two seconds for the ack. A dead or stuck engine must not block the shell at
-  # the prompt; the previous prompt shape is reused and the fallback is reported once.
-  local _wait=0
-  until [[ -f "$P11K_ACK" ]]; do
-    sleep 0.005
-    _wait=$(( _wait + 1 ))
-    if (( _wait >= 400 )); then break; fi
-  done
-  if [[ -f "$P11K_ACK" ]]; then
-    # The ack carries the prompt shape: header height on the first line, then the two prefix
-    # strings. Reading them every prompt is what lets a reload change either without a restart.
-    local -a _ack=("${(@f)$(<"$P11K_ACK")}")
-    rm -f "$P11K_ACK"
-    typeset -g _p11k_rows=${_ack[1]:-1}
-    typeset -g _p11k_prefix=${_ack[2]:-$P11K_PREFIX_OK}
-    # Third ack line: whether this prompt folds (transient). The hook that folds runs later,
-    # after the ack is gone, so the answer is kept in a global.
-    typeset -g _p11k_fold=${_ack[3]:-1}
-  elif (( ! ${+_p11k_ack_warned} )); then
-    typeset -g _p11k_ack_warned=1
-    if (( _p11k_status == 0 )); then
-      typeset -g _p11k_prefix=$P11K_PREFIX_OK
-    else
-      typeset -g _p11k_prefix=$P11K_PREFIX_ERR
-    fi
-    print -u2 -- "p11k: the engine did not answer in time; the prompt is drawn without a header"
-  fi
-  # The prompt is the blank rows + prompt-ready signal + the prefix for this exit code. The
-  # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
-  # painting it later would overwrite the first characters on a completion redraw.
-  #
-  # The first prompt prints the same blank rows as every later one. The instant header
-  # already sits on those rows, so the cursor has to step back over them first: zle then
-  # starts its prompt area on the header rows, and the transient fold clears the header
-  # exactly like it does for every later prompt. Without the step the header stays above the
-  # prompt area and survives the fold.
-  # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
-  # newline, so the capture would always come back empty and the shell would print no blank rows
-  # at all — the header would then be backfilled over the command output above it.
-  local _lead=''
-  local _i
-  for (( _i = 0; _i < ${_p11k_rows:-1}; _i++ )); do
-    _lead+=$'\n'
-  done
-  if [[ -n "${P11K_INSTANT:-}" ]]; then
-    unset P11K_INSTANT
-  fi
-  PROMPT="$_lead$_p11k_signal${_p11k_prefix:-$P11K_PREFIX_OK}"
-}
-
-# zle calls this when it takes over the input line. The prompt is already on screen by then
-# (the signal drew the header, the prompt string carries the prefix), so the hook only reports
-# the keymap. It writes the file; the engine polls (~5ms).
-_p11k_line_init() {
-  [[ ${CONTEXT:-start} == cont ]] && return
-  if [[ -n "${_p11k_user_line_init:-}" ]] && (( $+functions[$_p11k_user_line_init] )); then
-    "$_p11k_user_line_init"   # user-registered handler (e.g. autosuggestions) runs first
-  fi
-  # Report the current keymap: vi mode (zle resets to viins at prompt-ready) reports viins →
-  # INSERT; emacs (main) reports main → the vi_mode segment hides. Switching (NORMAL/VISUAL)
-  # is reported by keymap-select.
-  if [[ ${options[vi]} == on ]]; then
-    print -r -- "v"$'\t'"viins" >> "$P11K_ANNOUNCE"
-  else
-    print -r -- "v"$'\t'"main" >> "$P11K_ANNOUNCE"
-  fi
-  # Prompt is ready, clear the anti-recursion flag
-  unset P11K_ENGINE
-}
-
-# ===== user config =====
-# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
-# on the current line; without this break, the rc output would be written after the typed text.
-if [[ -n "${P11K_INSTANT:-}" ]]; then
-  print -rn -- $'\r\n'
-fi
-# Prefer $P11K_USER_ZSHRC, otherwise default to $HOME/.zshrc.
-if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
-  source "$P11K_USER_ZSHRC"
-elif [[ -r "$HOME/.zshrc" ]]; then
-  source "$HOME/.zshrc"
-fi
-
-# ===== protocol invariants =====
-# PROMPT carries the zero-width prompt-ready signal (OSC 1337;p11k;p) and the input-line prefix.
-# The signal is what a serialised prompt protocol keys on: it occupies no columns and the
-# engine reads it out of the byte stream.
-PROMPT="$_p11k_signal$P11K_PREFIX_OK"
-RPROMPT=''
-PROMPT2='> '
-# zsh prints its EOF mark (a reverse-video `%` at an unterminated output line) before the first
-# prompt. On the instant header the mark shows as a flash just before the real redraw. p11k owns
-# the prompt, so hide the mark; this runs after the user rc so a later assignment cannot bring it
-# back. Only the mark is cleared, not `PROMPT_SP` itself: the rest of that output terminates the
-# line before the prompt, and the engine's signal handling relies on it.
-PROMPT_EOL_MARK=''
-precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
-# zle-line-init takes one handler: keep the user's, then register the engine announce.
-if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p11k_line_init ]]; then
-  _p11k_user_line_init=${widgets[zle-line-init]#user:}
-fi
-zle -N zle-line-init _p11k_line_init
-# vi_mode: report the current keymap to the engine on zle-keymap-select.
-_p11k_vi_mode() {
-  local m=$KEYMAP
-  if [[ ${options[vi]} == on ]]; then
-    case $KEYMAP in
-      vicmd|vis|viopp) m=$KEYMAP;;
-      *) m=viins;;  # zsh may report main while inserting → normalize to viins
-    esac
-  else
-    m=main
-  fi
-  print -r -- "v"$'\t'"$m" >> "$P11K_ANNOUNCE"
-}
-if [[ -n "${widgets[zle-keymap-select]:-}" && "${widgets[zle-keymap-select]}" != user:_p11k_vi_mode ]]; then
-  _p11k_user_vi_mode=${widgets[zle-keymap-select]#user:}
-fi
-zle -N zle-keymap-select _p11k_vi_mode
-# transient: on command submit fold the multi-line header into a single ❯ line.
-# Let zsh render the folded prompt itself.
-#
-# Call the widget that was bound to `zle-line-finish` before this one.
-# zsh-autocomplete and zsh-syntax-highlighting bind their own hooks there.
-# Replacing that binding instead of chaining to it breaks them.
-#
-# `zle -A` stores the previous widget under an alias.
-# `zle .<alias>` calls it with the widget context intact.
-# A saved function name loses that context.
-# p10k chains the same way.
-#
-# The guard below stops re-entry.
-# A plugin hook can call `reset-prompt`, which enters this widget again.
-# Without the guard, zsh prints "job table full or recursion limit exceeded" on each command.
-# `$CONTEXT` stays `start` for the whole chain, so it cannot detect the re-entry.
-_p11k_line_finish() {
-  ((${+_p11k_busy})) && return 0
-  typeset -g _p11k_busy=1
-  {
-    # The previous widget runs inside the guard too: a re-entrant call must not run the plugin
-    # hook a second time.
-    zle ._p11k_prev_line_finish -- "$@"
-    # The engine decides whether this prompt folds: it knows the previous and the current
-    # workdir, so `transient-prompt "same-dir"` needs no bookkeeping here. The answer arrived in
-    # the ack at prompt time and was kept in `_p11k_fold`, because the ack is gone by now.
-    if [[ -n "${P11K_TRANSIENT_PROMPT:-}" && "${_p11k_fold:-1}" == 1 ]]; then
-      PROMPT="$P11K_TRANSIENT_PROMPT"
-      RPROMPT=''
-      # `.reset-prompt` names the builtin widget.
-      # The undotted form resolves by widget name and can land on a plugin's own widget.
-      zle .reset-prompt
-    fi
-  } always {
-    unset _p11k_busy
-  }
-}
-# The chained widget must exist before the hook calls it.
-# With an empty user rc there is no previous `zle-line-finish`.
-# `zle .name` for a missing widget then fails and prints "No such widget" over the prompt.
-# The code installs a no-op first, then replaces it with the real previous widget when there is one.
-_p11k_noop() { :; }
-zle -N ._p11k_prev_line_finish _p11k_noop
-[[ -n "${widgets[zle-line-finish]:-}" ]] && zle -A zle-line-finish ._p11k_prev_line_finish
-zle -N zle-line-finish _p11k_line_finish
-# resize announce: SIGWINCH → zsh defers the TRAPWINCH run,
-# detects the change, announces `r`; the engine clears and repaints the prompt window.
-_p11k_last_cols=$COLUMNS
-_p11k_last_rows=$LINES
-TRAPWINCH() {
-  if (( COLUMNS != _p11k_last_cols || LINES != _p11k_last_rows )); then
-    _p11k_last_cols=$COLUMNS
-    _p11k_last_rows=$LINES
-    print -r -- "r" >> "$P11K_ANNOUNCE"
-  fi
-}
-
-# Completion: compinit plus complist/menu select.
-# Do not touch the completion coloring (list-colors) here: setting it empty makes zsh fall
-# back to its built-in default, directories turn bold red, unlike the user rc
-# (oh-my-zsh derives di=01;34 blue from LS_COLORS).
-autoload -Uz compinit && compinit
-zmodload -i zsh/complist
-setopt auto_menu complete_in_word always_to_end
-unsetopt menu_complete
-zstyle ':completion:*:*:*:*:*' menu select
-zstyle ':completion:*' matcher-list 'm:{[:lower:][:upper:]}={[:upper:][:lower:]}' 'r:|=*' 'l:|=* r:|=*'
-zstyle ':completion:*' special-dirs true
-zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories
-"#;
+pub const ZSHRC_TEMPLATE: &str = include_str!("../templates/zsh.rc");
 
 /// bash has no `p` announce: after the ack bash prints PS1 (the prompt lead + signal + prefix)
 /// directly, and the engine reads the signal out of the stream to backfill the header. resize
 /// detects size changes via trap WINCH and announces `r`.
-pub const BASHRC_TEMPLATE: &str = r#"# p11k engine bootstrap (bash) -- protocol layer + user config.
-# Zero-width prompt-ready signal. `\[...\]` tells readline the sequence takes no columns; a bare
-# OSC would be counted as visible width and the buffer would start in the wrong column.
-_p11k_signal=$'\e]1337;p11k;p\a'
-PS1="\[$_p11k_signal\]"
-# Last prompt shape from the engine ack, kept across prompts so a dead or stuck engine cannot
-# block the prompt forever: _p11k_prompt_command falls back to these values after the ack timeout.
-_p11k_rows=1
-_p11k_prefix=$P11K_PREFIX_OK
-
-# Command timing for bash. Bash has no CMD_DURATION and no preexec. A DEBUG trap records
-# EPOCHREALTIME before the first simple command after a prompt. `_p11k_cmd_start` is set once
-# per command. A pipeline or a compound command does not overwrite the start with a later
-# element.
-_p11k_cmd_start=
-_p11k_preexec() {
-  # The trap also fires for the PROMPT_COMMAND function itself. That call is not a user
-  # command. It must not start a timer.
-  [[ $BASH_COMMAND == _p11k_prompt_command ]] && return
-  [[ -n ${_p11k_cmd_start:-} ]] && return
-  _p11k_cmd_start=${EPOCHREALTIME:-}
-}
-trap '_p11k_preexec' DEBUG
-
-# PROMPT_COMMAND runs before PS1 is displayed: record the exit code, announce `h`,
-# then wait for the engine ack before returning.
-_p11k_prompt_command() {
-  # Read both in one `local`: any command in between, `local` included, resets $PIPESTATUS, so
-  # capturing $? first would leave the pipeline statuses reporting the `local` that read it.
-  local _pipes="${PIPESTATUS[*]}" _st=$?
-  # Milliseconds between the DEBUG trap and this prompt command. The field is empty on the
-  # first prompt. It is also empty when the shell cannot measure the duration. The engine then
-  # falls back to its own timing.
-  local _dur=
-  if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
-    # Snapshot both timestamps before splitting: EPOCHREALTIME is dynamic, so a second
-    # reference can land on the other side of a second boundary and mix the seconds of one
-    # instant with the fraction of another.
-    local _start=$_p11k_cmd_start _now=$EPOCHREALTIME
-    # The fraction separator follows LC_NUMERIC: it_IT prints a comma, other locales print
-    # other characters. Do not assume one: split on the first non-digit and keep the digits.
-    # The fractional part holds six digits (microseconds). Seconds and microseconds are
-    # converted separately, so no separator character reaches the arithmetic.
-    local _start_s=${_start%%[!0-9]*} _start_f=${_start#*[!0-9]}
-    local _now_s=${_now%%[!0-9]*} _now_f=${_now#*[!0-9]}
-    _start_f=${_start_f//[!0-9]/} _now_f=${_now_f//[!0-9]/}
-    (( _dur = ( 10#$_now_s * 1000000 + 10#${_now_f:0:6} - 10#$_start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
-    _p11k_cmd_start=
-  fi
-  # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
-  # a newline or a backslash, which would split or merge fields.
-  local _pwd_esc=${PWD//\\/\\\\}
-  _pwd_esc=${_pwd_esc//$'\t'/\\t}
-  _pwd_esc=${_pwd_esc//$'\n'/\\n}
-  _pwd_esc=${_pwd_esc//$'\r'/\\r}
-  printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_st" "$_pwd_esc" "$(jobs -p | wc -l)" "" "$_pipes" "$_dur" >> "$P11K_ANNOUNCE"
-  # Wait at most two seconds for the ack. A dead or stuck engine must not block the shell at
-  # the prompt; the previous prompt shape is reused and the fallback is reported once.
-  local _wait=0
-  until [[ -f "$P11K_ACK" ]]; do
-    sleep 0.005
-    _wait=$(( _wait + 1 ))
-    if (( _wait >= 400 )); then break; fi
-  done
-  if [[ -f "$P11K_ACK" ]]; then
-    # The ack carries the prompt shape: header height on the first line, then the two prefix
-    # strings. Reading them every prompt is what lets a reload change either without a restart.
-    local -a _ack
-    mapfile -t _ack < "$P11K_ACK"
-    rm -f "$P11K_ACK"
-    _p11k_rows=${_ack[0]:-1}
-    _p11k_prefix=${_ack[1]:-$P11K_PREFIX_OK}
-  elif [[ -z "${_p11k_ack_warned:-}" ]]; then
-    _p11k_ack_warned=1
-    if (( _st == 0 )); then
-      _p11k_prefix=$P11K_PREFIX_OK
-    else
-      _p11k_prefix=$P11K_PREFIX_ERR
-    fi
-    printf 'p11k: %s\n' "the engine did not answer in time; the prompt is drawn without a header" >&2
-  fi
-  # The prefix belongs in PS1: readline draws the buffer right after it, and painting it later
-  # would overwrite the first characters on a completion redraw.
-  #
-  # Every prompt prints its own header rows. On the first prompt the instant header stays above
-  # as history instead of being overwritten.
-  # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
-  # newline, so the capture would always come back empty and the shell would print no blank rows
-  # at all — the header would then be backfilled over the command output above it.
-  local _lead=''
-  if [[ -n "${P11K_INSTANT:-}" ]]; then
-    unset P11K_INSTANT
-  fi
-  local _i
-  for (( _i = 0; _i < ${_p11k_rows:-1}; _i++ )); do
-    _lead+=$'\n'
-  done
-  # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
-  # before the shell starts, and without this readline would append the prompt after it.
-  PS1='\r'"$_lead\[$_p11k_signal\]${_p11k_prefix:-$P11K_PREFIX_OK}"
-}
-PROMPT_COMMAND=_p11k_prompt_command
-
-# resize: after SIGWINCH bash updates COLUMNS/LINES; the trap detects the change, announces `r`.
-_p11k_last_cols=$COLUMNS
-_p11k_last_rows=$LINES
-_p11k_winch() {
-  if [[ $COLUMNS != $_p11k_last_cols || $LINES != $_p11k_last_rows ]]; then
-    _p11k_last_cols=$COLUMNS
-    _p11k_last_rows=$LINES
-    printf 'r\n' >> "$P11K_ANNOUNCE"
-  fi
-}
-trap '_p11k_winch' WINCH
-
-# ===== user config =====
-# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
-# on the current line; without this break, the rc output would be written after the typed text.
-if [[ -n "${P11K_INSTANT:-}" ]]; then
-  printf '\r\n'
-fi
-if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
-  source "$P11K_USER_ZSHRC"
-elif [[ -r "$HOME/.bashrc" ]]; then
-  source "$HOME/.bashrc"
-fi
-
-# ===== protocol invariants =====
-PS1="\[$_p11k_signal\]"
-PROMPT_COMMAND=_p11k_prompt_command
-trap '_p11k_winch' WINCH
-trap '_p11k_preexec' DEBUG
-"#;
+pub const BASHRC_TEMPLATE: &str = include_str!("../templates/bash.rc");
 
 /// fish protocol layer (injected via XDG_CONFIG_HOME redirection). fish_prompt + announce.
 ///
 /// fish has no precmd/zle/PROMPT_COMMAND: the `h` announce lives in `fish_prompt`, which prints
 /// the prompt string after the ack; the engine reads the signal out of that string and backfills
 /// the header. resize uses `--on-signal WINCH`.
-pub const FISH_TEMPLATE: &str = r#"# p11k engine bootstrap (fish) -- protocol layer + user config.
-
-set -g _p11k_last_cols $COLUMNS
-set -g _p11k_last_rows $LINES
-# Prompt shape, refreshed from the ack on every prompt; the resize path reuses it.
-set -g _p11k_rows 1
-set -g _p11k_prefix "$P11K_PREFIX_OK"
-
-# fish_prompt is called when the main prompt is rendered. Two cases:
-# - size change (resize repaint): announce `r`.
-# - normal prompt: announce `h`, then wait for the engine ack before returning.
-function fish_prompt
-    set -l _st $status
-    # Capture $pipestatus right away: any command below resets it.
-    set -l _pipes "$pipestatus"
-    # Every prompt prints its own header rows. On the first prompt the instant header stays
-    # above as history instead of being overwritten.
-    set -l _lead ''
-    if test -n "$P11K_INSTANT"
-        set -e P11K_INSTANT
-    end
-    if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
-        set -g _p11k_last_cols $COLUMNS
-        set -g _p11k_last_rows $LINES
-        printf 'r\n' >> $P11K_ANNOUNCE
-        printf '\r'
-        # Print the blank header rows directly: `string collect` drops the final newline, so a
-        # single row would become an empty string and the engine would cover one row too many.
-        # The resize reflow above the header is cleared by the engine.
-        printf '\n%.0s' (seq 1 $_p11k_rows)
-        printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
-        return
-    end
-    # $CMD_DURATION is fish's own measurement of the previous command in milliseconds.
-    # Fish sets it before the prompt renders. Send it to the engine. The engine then does not
-    # infer the duration from the Enter → precmd wall clock. That clock races with a delayed
-    # announce.
-    set -l _cmd_ms ''
-    if set -q CMD_DURATION
-        set _cmd_ms $CMD_DURATION
-    end
-    # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
-    # a newline or a backslash, which would split or merge fields.
-    # The two-line quoted string is exactly one newline. Command substitution strips trailing
-    # newlines, so the pattern cannot come from printf; the closing quote stays in column 1.
-    set -l _nl '
-'
-    set -l _pwd_esc $PWD
-    # `string collect` keeps the newline: command substitution splits a multi-line result into
-    # a list, which would drop the newline from the escaped path.
-    set _pwd_esc (string replace -a '\\' '\\\\' -- $_pwd_esc | string collect)
-    set _pwd_esc (string replace -a (printf '\t') '\t' -- $_pwd_esc | string collect)
-    set _pwd_esc (string replace -a $_nl '\n' -- $_pwd_esc | string collect)
-    set _pwd_esc (string replace -a (printf '\r') '\r' -- $_pwd_esc | string collect)
-    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $_pwd_esc (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
-    # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
-    # the previous prompt shape is reused and the fallback is reported once.
-    set -l _wait 0
-    while not test -f $P11K_ACK
-        sleep 0.005
-        set _wait (math $_wait + 1)
-        if test $_wait -ge 400
-            break
-        end
-    end
-    if test -f $P11K_ACK
-        # The ack carries the prompt shape: header height on the first line, then the two prefix
-        # strings. Reading them every prompt is what lets a reload change either without a restart.
-        set -l _ack (cat $P11K_ACK)
-        rm -f $P11K_ACK
-        set -g _p11k_rows $_ack[1]
-        set -g _p11k_prefix $_ack[2]
-    else if not set -q _p11k_ack_warned
-        set -g _p11k_ack_warned 1
-        if test $_st -eq 0
-            set -g _p11k_prefix $P11K_PREFIX_OK
-        else
-            set -g _p11k_prefix $P11K_PREFIX_ERR
-        end
-        echo "p11k: the engine did not answer in time; the prompt is drawn without a header" >&2
-    end
-    # Print the blank header rows directly: `string collect` drops the final newline, so a
-    # single row would become an empty string and the engine would cover one row too many.
-    printf '\r'
-    printf '\n%.0s' (seq 1 $_p11k_rows)
-    printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
-end
-
-# ===== user config =====
-# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
-# on the current line; without this break, the rc output would be written after the typed text.
-if test -n "$P11K_INSTANT"
-    printf '\r\n'
-end
-if test -n "$P11K_USER_ZSHRC"; and test -r "$P11K_USER_ZSHRC"
-    source "$P11K_USER_ZSHRC"
-else if test -r "$HOME/.config/fish/config.fish"
-    source "$HOME/.config/fish/config.fish"
-end
-
-# ===== protocol invariants =====
-# The greeting prints a line between the instant header and the first prompt, which pushes the
-# header up and leaves a copy of it on screen. p11k owns the prompt area, so it is disabled.
-set -g fish_greeting ''
-set -g _p11k_last_cols $COLUMNS
-set -g _p11k_last_rows $LINES
-# Prompt shape, refreshed from the ack on every prompt; the resize path reuses it.
-set -g _p11k_rows 1
-set -g _p11k_prefix "$P11K_PREFIX_OK"
-function fish_prompt
-    set -l _st $status
-    # Capture $pipestatus right away: any command below resets it.
-    set -l _pipes "$pipestatus"
-    # Every prompt prints its own header rows. On the first prompt the instant header stays
-    # above as history instead of being overwritten.
-    set -l _lead ''
-    if test -n "$P11K_INSTANT"
-        set -e P11K_INSTANT
-    end
-    if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
-        set -g _p11k_last_cols $COLUMNS
-        set -g _p11k_last_rows $LINES
-        printf 'r\n' >> $P11K_ANNOUNCE
-        printf '\r'
-        # Print the blank header rows directly: `string collect` drops the final newline, so a
-        # single row would become an empty string and the engine would cover one row too many.
-        # The resize reflow above the header is cleared by the engine.
-        printf '\n%.0s' (seq 1 $_p11k_rows)
-        printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
-        return
-    end
-    # $CMD_DURATION is fish's own measurement of the previous command in milliseconds, taken
-    # before the prompt renders. Send it so the engine does not have to infer the duration from
-    # the Enter → precmd wall clock, which races with a delayed announce.
-    set -l _cmd_ms ''
-    if set -q CMD_DURATION
-        set _cmd_ms $CMD_DURATION
-    end
-    # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
-    # a newline or a backslash, which would split or merge fields.
-    # The two-line quoted string is exactly one newline. Command substitution strips trailing
-    # newlines, so the pattern cannot come from printf; the closing quote stays in column 1.
-    set -l _nl '
-'
-    set -l _pwd_esc $PWD
-    # `string collect` keeps the newline: command substitution splits a multi-line result into
-    # a list, which would drop the newline from the escaped path.
-    set _pwd_esc (string replace -a '\\' '\\\\' -- $_pwd_esc | string collect)
-    set _pwd_esc (string replace -a (printf '\t') '\t' -- $_pwd_esc | string collect)
-    set _pwd_esc (string replace -a $_nl '\n' -- $_pwd_esc | string collect)
-    set _pwd_esc (string replace -a (printf '\r') '\r' -- $_pwd_esc | string collect)
-    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $_pwd_esc (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
-    # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
-    # the previous prompt shape is reused and the fallback is reported once.
-    set -l _wait 0
-    while not test -f $P11K_ACK
-        sleep 0.005
-        set _wait (math $_wait + 1)
-        if test $_wait -ge 400
-            break
-        end
-    end
-    if test -f $P11K_ACK
-        # The ack carries the prompt shape: header height on the first line, then the two prefix
-        # strings. Reading them every prompt is what lets a reload change either without a restart.
-        set -l _ack (cat $P11K_ACK)
-        rm -f $P11K_ACK
-        set -g _p11k_rows $_ack[1]
-        set -g _p11k_prefix $_ack[2]
-    else if not set -q _p11k_ack_warned
-        set -g _p11k_ack_warned 1
-        if test $_st -eq 0
-            set -g _p11k_prefix $P11K_PREFIX_OK
-        else
-            set -g _p11k_prefix $P11K_PREFIX_ERR
-        end
-        echo "p11k: the engine did not answer in time; the prompt is drawn without a header" >&2
-    end
-    # Print the blank header rows directly: `string collect` drops the final newline, so a
-    # single row would become an empty string and the engine would cover one row too many.
-    printf '\r'
-    printf '\n%.0s' (seq 1 $_p11k_rows)
-    printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
-end
-"#;
+pub const FISH_TEMPLATE: &str = include_str!("../templates/fish.rc");
 
 /// pwsh protocol layer (injected via `-NoProfile -NoExit -Command ". <rc>"`).
 ///
@@ -584,101 +28,7 @@ end
 ///
 /// The body is a standalone function and prompt only forwards: after a user profile
 /// overrides prompt, the tail points it back at the engine implementation.
-pub const PWSH_TEMPLATE: &str = r#"# p11k engine bootstrap (pwsh) -- protocol layer + user config.
-$P11kAnnounce = $env:P11K_ANNOUNCE
-$P11kAck = $env:P11K_ACK
-# Last prompt shape from the engine ack; reused when the engine does not answer (ack timeout).
-$script:P11kHeaderRows = 1
-$script:P11kPrefix = $env:P11K_PREFIX_OK
-$script:P11kAckWarned = $false
-$script:P11kCols = $Host.UI.RawUI.WindowSize.Width
-$script:P11kRows = $Host.UI.RawUI.WindowSize.Height
-
-function global:P11kEnginePrompt {
-    # $? must be read on the first line: any later statement in prompt overwrites it.
-    $P11kCode = if ($?) { 0 } elseif ($global:LASTEXITCODE -is [int]) { $global:LASTEXITCODE } else { 1 }
-    $P11kSize = $Host.UI.RawUI.WindowSize
-    if ($P11kSize.Width -ne $script:P11kCols -or $P11kSize.Height -ne $script:P11kRows) {
-        $script:P11kCols = $P11kSize.Width
-        $script:P11kRows = $P11kSize.Height
-        # Announcing only `r` and returning would leave the old prompt on screen: the engine
-        # may not be in prompt state right now (just pressed enter), so it would not repaint.
-        # Hence fall through to the normal announce.
-        [IO.File]::AppendAllText($script:P11kAnnounce, "r`n")
-    }
-    $P11kJobs = @(Get-Job -ErrorAction SilentlyContinue).Count
-    # Send the command number, not the history count: zsh reports HISTCMD, and
-    # HistoryInfo.Id is PowerShell's nearest equivalent (session-unique and
-    # monotonic). .Count drops when MaximumHistoryCount trims; Id survives that.
-    # After Clear-History there is nothing left to read, so it reports 0.
-    $P11kLast = Get-History -Count 1
-    $P11kHist = if ($P11kLast) { $P11kLast.Id } else { 0 }
-    # PowerShell records the command start and end on the history entry. Send the duration in
-    # milliseconds. The engine then does not infer it from the Enter → precmd wall clock.
-    $P11kExecMs = if ($P11kLast.StartExecutionTime -and $P11kLast.EndExecutionTime) {
-        [int]($P11kLast.EndExecutionTime - $P11kLast.StartExecutionTime).TotalMilliseconds
-    } else { '' }
-    # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
-    # a newline or a backslash, which would split or merge fields.
-    $P11kPwdEsc = $PWD.Path.Replace('\', '\\').Replace("`t", '\t').Replace("`n", '\n').Replace("`r", '\r')
-    [IO.File]::AppendAllText($script:P11kAnnounce, "h`t$P11kCode`t$P11kPwdEsc`t$P11kJobs`t$P11kHist`t$P11kExecMs`n")
-    # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
-    # the previous prompt shape is reused and the fallback is reported once.
-    $P11kWait = 0
-    while (-not [IO.File]::Exists($script:P11kAck)) {
-        Start-Sleep -Milliseconds 5
-        $P11kWait++
-        if ($P11kWait -ge 400) { break }
-    }
-    if ([IO.File]::Exists($script:P11kAck)) {
-        # The ack carries the prompt shape: header height on the first line, then the two prefix
-        # strings. Reading them every prompt is what lets a reload change either without a restart.
-        $P11kAckLines = @(Get-Content $script:P11kAck)
-        [IO.File]::Delete($script:P11kAck)
-        $script:P11kHeaderRows = [int]$P11kAckLines[0]
-        $script:P11kPrefix = $P11kAckLines[1]
-    } elseif (-not $script:P11kAckWarned) {
-        $script:P11kAckWarned = $true
-        if ($P11kCode -eq 0) {
-            $script:P11kPrefix = $env:P11K_PREFIX_OK
-        } else {
-            $script:P11kPrefix = $env:P11K_PREFIX_ERR
-        }
-        [Console]::Error.WriteLine("p11k: the engine did not answer in time; the prompt is drawn without a header")
-    }
-    # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
-    # p11k started later in the session is then not treated as a recursive load.
-    if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
-    # The prefix belongs in the prompt string: PSReadLine draws the buffer right after it.
-    # Every prompt prints its own header rows. On the first prompt the instant header stays
-    # above as history instead of being overwritten.
-    if ($env:P11K_INSTANT) {
-        Remove-Item Env:P11K_INSTANT -ErrorAction SilentlyContinue
-    }
-    $P11kLead = "`n" * $script:P11kHeaderRows
-    "$P11kLead`e]1337;p11k;p`a$($script:P11kPrefix)"
-}
-
-function global:prompt { P11kEnginePrompt }
-
-# ===== user config =====
-# Start the user profile on a fresh line. During the instant phase the prefix and the typed text
-# are on the current line; without this break, the profile output would follow the typed text.
-if ($env:P11K_INSTANT) {
-    [Console]::Out.Write("`r`n")
-}
-$P11kUserProfile = if ($env:P11K_USER_PROFILE) { $env:P11K_USER_PROFILE } else { $PROFILE }
-if ($P11kUserProfile -and (Test-Path -LiteralPath $P11kUserProfile)) {
-    # A failed dot-source must not break the later protocol invariants that re-declare prompt.
-    try { . $P11kUserProfile } catch { Write-Warning "p11k: cannot load $P11kUserProfile`: $_" }
-}
-
-# ===== protocol invariants =====
-# The user profile may replace prompt; point it back to the engine implementation here.
-$P11kAnnounce = $env:P11K_ANNOUNCE
-$P11kAck = $env:P11K_ACK
-function global:prompt { P11kEnginePrompt }
-"#;
+pub const PWSH_TEMPLATE: &str = include_str!("../templates/pwsh.ps1");
 
 #[cfg(test)]
 mod tests {
@@ -802,5 +152,110 @@ mod tests {
             !ZSHRC_TEMPLATE.contains(r#"print -rn -- $'\e['${_ack[1]:-0}'A'"#),
             "zsh must not step back over the instant header"
         );
+    }
+
+    /// The announce line and the ack are a contract with `protocol.rs`: the field order is
+    /// fixed, and so are the ack line numbers. Pin both next to the templates.
+    #[test]
+    fn templates_share_the_announce_and_ack_contract() {
+        let h = "printf 'h\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n'";
+        assert!(
+            ZSHRC_TEMPLATE.contains("print -r -- \"h\"$'\\t'"),
+            "zsh: announce field order"
+        );
+        for (name, template) in [
+            ("BASHRC_TEMPLATE", BASHRC_TEMPLATE),
+            ("FISH_TEMPLATE", FISH_TEMPLATE),
+        ] {
+            assert!(template.contains(h), "{name}: announce field order");
+        }
+        assert!(
+            ZSHRC_TEMPLATE.contains("_ack[1]")
+                && ZSHRC_TEMPLATE.contains("_ack[2]")
+                && ZSHRC_TEMPLATE.contains("_ack[3]"),
+            "zsh reads rows, prefix and fold from ack lines 1-3"
+        );
+        assert!(
+            BASHRC_TEMPLATE.contains("_ack[0]") && BASHRC_TEMPLATE.contains("_ack[1]"),
+            "bash reads rows and prefix from ack lines 0-1"
+        );
+        assert!(
+            FISH_TEMPLATE.contains("$_ack[1]") && FISH_TEMPLATE.contains("$_ack[2]"),
+            "fish reads rows and prefix from ack lines 1-2"
+        );
+        assert!(
+            PWSH_TEMPLATE.contains("$P11kAckLines[0]")
+                && PWSH_TEMPLATE.contains("$P11kAckLines[1]"),
+            "pwsh reads rows and prefix from ack lines 0-1"
+        );
+    }
+
+    /// The templates are shell code. Let each shell's own parser check them: a syntax error
+    /// otherwise only shows up when a user starts that shell.
+    #[test]
+    fn templates_parse_with_their_shell() {
+        let dir = std::env::temp_dir().join(format!("p11k-templates-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (shell, name, source) in [
+            ("zsh", "zsh.rc", ZSHRC_TEMPLATE),
+            ("bash", "bash.rc", BASHRC_TEMPLATE),
+            ("fish", "fish.rc", FISH_TEMPLATE),
+        ] {
+            let path = dir.join(name);
+            std::fs::write(&path, source).unwrap();
+            let out = std::process::Command::new(shell)
+                .arg("-n")
+                .arg(&path)
+                .output()
+                .unwrap_or_else(|e| panic!("{shell} is needed for the template syntax check: {e}"));
+            assert!(
+                out.status.success(),
+                "{shell} rejected {name}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A user fish config may define `fish_prompt` (starship, tide, a hand-written prompt).
+    /// The engine owns the prompt: after the user rc it must still emit the announce and the
+    /// prompt signal.
+    #[test]
+    fn the_engine_prompt_survives_a_user_fish_prompt() {
+        let dir = std::env::temp_dir().join(format!("p11k-fish-prompt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("fish")).expect("fish config dir");
+        std::fs::write(dir.join("fish/config.fish"), FISH_TEMPLATE).expect("config.fish");
+        let user = dir.join("user.fish");
+        std::fs::write(&user, "function fish_prompt; echo USER-PROMPT; end\n").expect("user rc");
+        let announce = dir.join("announce");
+        let ack = dir.join("ack");
+        std::fs::write(&ack, "1\nOK> \n0\n").expect("ack");
+        let out = std::process::Command::new("fish")
+            .args(["-i", "-c", "fish_prompt"])
+            .env("XDG_CONFIG_HOME", &dir)
+            .env("P11K_ANNOUNCE", &announce)
+            .env("P11K_ACK", &ack)
+            .env("P11K_PREFIX_OK", "OK> ")
+            .env("P11K_PREFIX_ERR", "ERR> ")
+            .env("P11K_USER_ZSHRC", &user)
+            .output()
+            .expect("fish");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("1337;p11k;p"),
+            "the engine prompt signal is missing: {stdout:?}"
+        );
+        assert!(
+            !stdout.contains("USER-PROMPT"),
+            "the user fish_prompt won: {stdout:?}"
+        );
+        let announce = std::fs::read_to_string(&announce).unwrap_or_default();
+        assert!(
+            announce.starts_with("h\t"),
+            "the engine prompt announced nothing: {announce:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -834,7 +834,7 @@ pub(super) fn dir_seg_text(
         if i == last {
             st = prop_style(seg, &st, "path-highlight-foreground");
             if highlight_bold {
-                st.bold = true;
+                st.bold = Some(true);
             }
         }
         s.push_str(&paint(&part.text, &st));
@@ -923,7 +923,7 @@ pub(super) fn expand_env(s: &str) -> String {
 pub(super) fn prop_style(seg: &Segment, style: &Style, prop: &str) -> Style {
     match seg.prop(prop) {
         Some(crate::config::Prop::Int(n)) => Style {
-            fg: Color::Xterm(i64::clamp(*n, 0, 255) as u8),
+            fg: Some(Color::Xterm(i64::clamp(*n, 0, 255) as u8)),
             ..style.clone()
         },
         _ => style.clone(),
@@ -1237,9 +1237,9 @@ fn emit_side(
     let mut line_width = 0usize;
     if !start_cap.is_empty()
         && let Some(first) = parts.first()
-        && first.style.bg != Color::Default
+        && first.style.has_bg()
     {
-        out.push_str(&arrow(start_cap, first.style.bg.clone(), Color::Default));
+        out.push_str(&arrow(start_cap, first.style.bg_color(), Color::Default));
         line_width += width(start_cap);
     }
     let mut prev: Option<&SegmentText> = None;
@@ -1247,20 +1247,20 @@ fn emit_side(
         match prev {
             None => {
                 // A joined first segment has no left neighbor, so its leading space stays.
-                if s.joined_left && (side == Side::Right || s.style.bg != Color::Default) {
+                if s.joined_left && (side == Side::Right || s.style.has_bg()) {
                     out.push_str(&paint(" ", &s.style));
                     line_width += 1;
                 }
             }
             Some(p) if !s.joined_left => {
-                let prev_has = p.style.bg != Color::Default;
+                let prev_has = p.style.has_bg();
                 if prev_has {
-                    let same = s.style.bg != Color::Default && s.style.bg == p.style.bg;
+                    let same = s.style.has_bg() && s.style.bg == p.style.bg;
                     if same {
                         if !sub.is_empty() {
                             let st = match sub_fg {
                                 Some(fg) => Style {
-                                    fg: fg.clone(),
+                                    fg: Some(fg.clone()),
                                     ..s.style.clone()
                                 },
                                 None => s.style.clone(),
@@ -1276,8 +1276,8 @@ fn emit_side(
                         // Right: the arrow fg is the current bg (the triangle points left at
                         // the previous bg).
                         let (fg, bg) = match side {
-                            Side::Left => (p.style.bg.clone(), s.style.bg.clone()),
-                            Side::Right => (s.style.bg.clone(), p.style.bg.clone()),
+                            Side::Left => (p.style.bg_color(), s.style.bg_color()),
+                            Side::Right => (s.style.bg_color(), p.style.bg_color()),
                         };
                         out.push_str(&arrow(sep, fg, bg));
                         line_width += width(sep);
@@ -1298,9 +1298,9 @@ fn emit_side(
     }
     if !end_cap.is_empty()
         && let Some(last) = parts.last()
-        && last.style.bg != Color::Default
+        && last.style.has_bg()
     {
-        out.push_str(&arrow(end_cap, last.style.bg.clone(), Color::Default));
+        out.push_str(&arrow(end_cap, last.style.bg_color(), Color::Default));
         line_width += width(end_cap);
     }
     super::PaintedLine {
@@ -1331,7 +1331,7 @@ pub(super) fn assemble_row(
             Some(fg) => out.push_str(&paint(
                 &gap_str,
                 &Style {
-                    fg: fg.clone(),
+                    fg: Some(fg.clone()),
                     ..Style::default()
                 },
             )),
