@@ -1344,7 +1344,7 @@ mod tests {
         assert!(h.contains("\u{f00c}"), "header: {h:?}");
         assert!(
             !h.contains('❯'),
-            "input line prefix ❯ is drawn by render_prompt and should not be in the header"
+            "input line prefix ❯ is drawn by the shell prompt string and should not be in the header"
         );
         assert_eq!(h.split("\r\n").count(), 1, "lean header should be one line");
     }
