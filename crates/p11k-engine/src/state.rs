@@ -250,8 +250,13 @@ impl Drop for RawTerminal {
 
 /// Real terminal size (TIOCGWINSZ on stdout), including pixel dimensions.
 pub fn tty_size() -> Option<(u16, u16, u16, u16)> {
+    tty_size_on(libc::STDOUT_FILENO)
+}
+
+/// Terminal size of one descriptor. Split from [`tty_size`] so a test can pass a non-terminal.
+fn tty_size_on(fd: i32) -> Option<(u16, u16, u16, u16)> {
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
-    let rc = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) };
+    let rc = unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) };
     if rc == 0 && ws.ws_col > 0 && ws.ws_row > 0 {
         Some((ws.ws_row, ws.ws_col, ws.ws_xpixel, ws.ws_ypixel))
     } else {
@@ -386,6 +391,58 @@ mod tests {
         assert!(!state.current_config.exists());
 
         drop(state);
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A descriptor that is not a terminal has no window size. The invalid descriptor also
+    /// covers an ioctl that fails before writing anything.
+    #[test]
+    fn tty_size_is_none_without_a_terminal() {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        assert_eq!(tty_size_on(fds[0]), None);
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+        assert_eq!(tty_size_on(-1), None);
+    }
+
+    /// Raw mode leaves a non-terminal alone: `tcgetattr` fails, no original state is saved,
+    /// and Drop has nothing to restore.
+    #[test]
+    fn raw_mode_tolerates_a_non_terminal() {
+        let mut fds = [0i32; 2];
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        let raw = RawTerminal::enter(fds[0]).expect("a non-terminal enters without a saved state");
+        drop(raw);
+        unsafe {
+            libc::close(fds[0]);
+            libc::close(fds[1]);
+        }
+    }
+
+    /// A file where the state directory belongs is an error, not a partially created session.
+    #[test]
+    fn state_dir_rejects_a_file_as_base() {
+        let base = temp_base("file-base");
+        fs::write(&base, b"not a directory").unwrap();
+        assert!(StateDir::create_in(&base, Shell::Zsh).is_err());
+        let _ = fs::remove_file(&base);
+    }
+
+    /// Writing the session's current theme after the run directory disappeared reports the
+    /// error; the engine logs it instead of pretending the reload state is current.
+    #[test]
+    fn write_current_config_reports_io_errors() {
+        let base = temp_base("config-error");
+        let state = StateDir::create_in(&base, Shell::Zsh).unwrap();
+        fs::remove_dir_all(&state.dir).expect("remove the run directory");
+        assert!(
+            state
+                .write_current_config(Some(Path::new("/tmp/theme.kdl")))
+                .is_err()
+        );
         let _ = fs::remove_dir_all(&base);
     }
 }
