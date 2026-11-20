@@ -723,4 +723,39 @@ mod tests {
             "zsh must not step back over the instant header"
         );
     }
+
+    /// The announce line and the ack are a contract with `protocol.rs`: the field order is
+    /// fixed, and so are the ack line numbers. Pin both next to the templates.
+    #[test]
+    fn templates_share_the_announce_and_ack_contract() {
+        let h = "printf 'h\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n'";
+        assert!(
+            ZSHRC_TEMPLATE.contains("print -r -- \"h\"$'\\t'"),
+            "zsh: announce field order"
+        );
+        for (name, template) in [
+            ("BASHRC_TEMPLATE", BASHRC_TEMPLATE),
+            ("FISH_TEMPLATE", FISH_TEMPLATE),
+        ] {
+            assert!(template.contains(h), "{name}: announce field order");
+        }
+        assert!(
+            ZSHRC_TEMPLATE.contains("_ack[1]")
+                && ZSHRC_TEMPLATE.contains("_ack[2]")
+                && ZSHRC_TEMPLATE.contains("_ack[3]"),
+            "zsh reads rows, prefix and fold from ack lines 1-3"
+        );
+        assert!(
+            BASHRC_TEMPLATE.contains("_ack[0]") && BASHRC_TEMPLATE.contains("_ack[1]"),
+            "bash reads rows and prefix from ack lines 0-1"
+        );
+        assert!(
+            FISH_TEMPLATE.contains("$_ack[1]") && FISH_TEMPLATE.contains("$_ack[2]"),
+            "fish reads rows and prefix from ack lines 1-2"
+        );
+        assert!(
+            PWSH_TEMPLATE.contains("$P11kAckLines[0]") && PWSH_TEMPLATE.contains("$P11kAckLines[1]"),
+            "pwsh reads rows and prefix from ack lines 0-1"
+        );
+    }
 }
