@@ -553,4 +553,32 @@ mod tests {
         assert_eq!(LogLevel::Debug.as_filter(), log::LevelFilter::Debug);
         assert_eq!(LogLevel::Info.as_filter(), log::LevelFilter::Info);
     }
+
+    /// The defaults mirror gitstatusd `options.cc:58-79`. A drift here changes what the zsh
+    /// side asks the daemon to do, so pin every field.
+    #[test]
+    fn defaults_match_the_original_gitstatusd() {
+        let o = Options::default();
+        assert_eq!(o.lock_fd, -1);
+        assert_eq!(o.parent_pid, -1);
+        assert_eq!(o.num_threads, 1);
+        assert_eq!(o.log_level, LogLevel::Info);
+        assert_eq!(o.repo_ttl_seconds, 3600);
+        assert_eq!(o.max_commit_summary_length, 256);
+        assert_eq!(
+            (
+                o.max_num_staged,
+                o.max_num_unstaged,
+                o.max_num_conflicted,
+                o.max_num_untracked,
+            ),
+            (1, 1, 1, 1)
+        );
+        assert_eq!(o.dirty_max_index_size, -1);
+        assert!(!o.recurse_untracked_dirs);
+        assert!(!o.ignore_status_show_untracked_files);
+        assert!(!o.ignore_bash_show_untracked_files);
+        assert!(!o.ignore_bash_show_dirty_state);
+        assert_eq!(o.version_glob, None);
+    }
 }
