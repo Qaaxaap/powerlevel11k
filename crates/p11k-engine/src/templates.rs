@@ -754,7 +754,8 @@ mod tests {
             "fish reads rows and prefix from ack lines 1-2"
         );
         assert!(
-            PWSH_TEMPLATE.contains("$P11kAckLines[0]") && PWSH_TEMPLATE.contains("$P11kAckLines[1]"),
+            PWSH_TEMPLATE.contains("$P11kAckLines[0]")
+                && PWSH_TEMPLATE.contains("$P11kAckLines[1]"),
             "pwsh reads rows and prefix from ack lines 0-1"
         );
     }
