@@ -145,7 +145,7 @@ impl SegmentRender for Symfony2TestsSegment {
                 .effective_style(Some(state), &ctx.config.defaults)
         } else {
             Style {
-                fg: crate::config::Color::Xterm(default_fg),
+                fg: Some(crate::config::Color::Xterm(default_fg)),
                 ..style
             }
         };

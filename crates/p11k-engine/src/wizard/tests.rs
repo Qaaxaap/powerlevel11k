@@ -231,7 +231,7 @@ fn time_options_set_the_format_and_the_background() {
     // Classic derives the background from the existing dir segment.
     let mut cfg = presets::classic(2);
     let bg = match cfg.segment("dir").style.bg {
-        Color::Xterm(n) => Some(n),
+        Some(Color::Xterm(n)) => Some(n),
         _ => None,
     };
     let (answer, _) = run_question(b"2", |o, i| ask_time(o, i, &mut cfg, PresetKind::Classic));
@@ -241,11 +241,8 @@ fn time_options_set_the_format_and_the_background() {
         time.props.get("time-format"),
         Some(&Prop::Str("12h".into()))
     );
-    assert_eq!(time.style.fg, Color::Xterm(66));
-    assert_eq!(
-        time.style.bg,
-        bg.map(Color::Xterm).unwrap_or(Color::Default)
-    );
+    assert_eq!(time.style.fg, Some(Color::Xterm(66)));
+    assert_eq!(time.style.bg, bg.map(Color::Xterm));
 
     let (answer, _) = run_question(b"3", |o, i| ask_time(o, i, &mut cfg, PresetKind::Classic));
     assert!(matches!(answer, Ok(())));

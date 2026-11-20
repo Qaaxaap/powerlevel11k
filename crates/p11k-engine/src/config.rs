@@ -117,12 +117,35 @@ impl fmt::Display for Color {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Style {
-    pub fg: Color,
-    pub bg: Color,
-    pub bold: bool,
+    /// `None` = not set here (inherit); `Some(Color::Default)` = explicitly transparent.
+    pub fg: Option<Color>,
+    /// `None` = not set here (inherit); `Some(Color::Default)` = explicitly transparent.
+    pub bg: Option<Color>,
+    /// `None` = not set here (inherit); `Some(false)` = explicitly not bold.
+    pub bold: Option<bool>,
 }
 
 impl Style {
+    /// The foreground a renderer uses: unset and explicit default both draw the terminal default.
+    pub fn fg_color(&self) -> Color {
+        self.fg.clone().unwrap_or(Color::Default)
+    }
+
+    /// The background a renderer uses: unset and explicit default are both transparent.
+    pub fn bg_color(&self) -> Color {
+        self.bg.clone().unwrap_or(Color::Default)
+    }
+
+    /// Whether the renderer emits bold.
+    pub fn bold_or_false(&self) -> bool {
+        self.bold.unwrap_or(false)
+    }
+
+    /// Whether a background is actually drawn: unset and explicit default are both transparent.
+    pub fn has_bg(&self) -> bool {
+        self.bg.as_ref().is_some_and(|c| *c != Color::Default)
+    }
+
     /// Style of a node whose properties are all style properties (`defaults`, `frame` and its
     /// pieces): anything else is a typo, so report it.
     fn from_style_entries(entries: &[kdl::KdlEntry]) -> Result<Style, String> {
@@ -141,9 +164,9 @@ impl Style {
         for e in entries {
             let Some(name) = e.name() else { continue };
             match name.value() {
-                "fg" => s.fg = Color::from_value(e.value(), "fg")?,
-                "bg" => s.bg = Color::from_value(e.value(), "bg")?,
-                "bold" => s.bold = bool_val(e.value()),
+                "fg" => s.fg = Some(Color::from_value(e.value(), "fg")?),
+                "bg" => s.bg = Some(Color::from_value(e.value(), "bg")?),
+                "bold" => s.bold = Some(bool_val(e.value())),
                 _ if warn => warn_unknown_key(name.value()),
                 _ => {}
             }
@@ -161,6 +184,11 @@ pub enum Element {
     Joined(String),
     /// Static text (e.g. `text "some text"`): emitted verbatim, never interpreted as a segment.
     Text(String),
+    /// A named node with a string value, e.g. `dir "some text"`. It renders like `text` but
+    /// keeps its name, so `to_kdl` writes the same shape back.
+    NamedText(String, String),
+    /// A commented-out segment (`dir #false`): kept so `to_kdl` does not drop it, never drawn.
+    Disabled(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1199,7 +1227,7 @@ fn leaf(name: &str, value: impl Into<KdlValue>) -> KdlNode {
 
 fn color_value(c: &Color) -> KdlValue {
     match c {
-        Color::Default => KdlValue::Null,
+        Color::Default => KdlValue::from("default"),
         Color::Xterm(n) => KdlValue::from(*n as i128),
         Color::Rgb(r, g, b) => KdlValue::from(format!("#{r:02x}{g:02x}{b:02x}")),
         Color::Named(n) => KdlValue::from(n.clone()),
@@ -1209,14 +1237,14 @@ fn color_value(c: &Color) -> KdlValue {
 /// Style → KDL properties (fg/bg/bold, only non-default entries emitted).
 fn style_entries(style: &Style) -> Vec<KdlEntry> {
     let mut v = Vec::new();
-    if style.fg != Color::Default {
-        v.push(KdlEntry::new_prop("fg", color_value(&style.fg)));
+    if let Some(fg) = &style.fg {
+        v.push(KdlEntry::new_prop("fg", color_value(fg)));
     }
-    if style.bg != Color::Default {
-        v.push(KdlEntry::new_prop("bg", color_value(&style.bg)));
+    if let Some(bg) = &style.bg {
+        v.push(KdlEntry::new_prop("bg", color_value(bg)));
     }
-    if style.bold {
-        v.push(KdlEntry::new_prop("bold", true));
+    if let Some(bold) = style.bold {
+        v.push(KdlEntry::new_prop("bold", bold));
     }
     v
 }
@@ -1244,6 +1272,16 @@ fn line_node(row: &[Element]) -> KdlNode {
             }
             Element::Text(t) => {
                 ch.nodes_mut().push(leaf("text", t.clone()));
+            }
+            Element::NamedText(name, t) => {
+                let mut n = KdlNode::new(name.as_str());
+                n.entries_mut().push(KdlEntry::new(t.clone()));
+                ch.nodes_mut().push(n);
+            }
+            Element::Disabled(name) => {
+                let mut n = KdlNode::new(name.as_str());
+                n.entries_mut().push(KdlEntry::new(false));
+                ch.nodes_mut().push(n);
             }
         }
     }
@@ -1434,14 +1472,14 @@ fn glyph_fallback(field: &str, glyph: &str) -> String {
 
 /// Merge multiple nodes with the same segment name: non-Default styles override, text/icons take the later value, states/props accumulate.
 fn merge_segment(a: &mut Segment, b: Segment) {
-    if b.style.fg != Color::Default {
+    if b.style.fg.is_some() {
         a.style.fg = b.style.fg;
     }
-    if b.style.bg != Color::Default {
+    if b.style.bg.is_some() {
         a.style.bg = b.style.bg;
     }
-    if b.style.bold {
-        a.style.bold = true;
+    if b.style.bold.is_some() {
+        a.style.bold = b.style.bold;
     }
     if b.content.is_some() {
         a.content = b.content;
@@ -1465,7 +1503,19 @@ fn merge_segment(a: &mut Segment, b: Segment) {
         a.shown = false;
     }
     for (k, v) in b.states {
-        a.states.insert(k, v);
+        match a.states.get_mut(&k) {
+            Some(existing) => {
+                // A later state declaration overrides only the fields it sets; the rest of the
+                // earlier declaration survives.
+                existing.style = merge_style(&v.style, &existing.style);
+                if v.char.is_some() {
+                    existing.char = v.char;
+                }
+            }
+            None => {
+                a.states.insert(k, v);
+            }
+        }
     }
     for (k, v) in b.props {
         a.props.insert(k, v);
@@ -1614,15 +1664,25 @@ fn parse_line(node: &KdlNode) -> Vec<Element> {
     let mut out = Vec::new();
     if let Some(ch) = node.children() {
         for child in ch.nodes() {
-            // A string value → static text (e.g. `text "some text"`); otherwise treat it as a segment.
+            // A string value → static text (e.g. `text "some text"`); keep the node name so
+            // `to_kdl` writes the same shape back. Otherwise treat it as a segment.
             if let Some(KdlValue::String(s)) = first_value(child) {
-                out.push(Element::Text(s.clone()));
+                if child.name().value() == "text" {
+                    out.push(Element::Text(s.clone()));
+                } else {
+                    out.push(Element::NamedText(
+                        child.name().value().to_string(),
+                        s.clone(),
+                    ));
+                }
                 continue;
             }
             let name = child.name().value();
-            // An absent value means enabled; an explicit #false disables it.
+            // An absent value means enabled; an explicit #false disables it. The node is kept
+            // so a configure round trip does not delete the commented-out segment.
             let enabled = first_value(child).map(bool_val).unwrap_or(true);
             if !enabled {
+                out.push(Element::Disabled(name.to_string()));
                 continue;
             }
             if let Some(base) = name.strip_suffix("_joined") {
@@ -1778,9 +1838,9 @@ fn parse_separators(node: &KdlNode) -> Result<Separators, String> {
 
 static EMPTY_SEG: Segment = Segment {
     style: Style {
-        fg: Color::Default,
-        bg: Color::Default,
-        bold: false,
+        fg: None,
+        bg: None,
+        bold: None,
     },
     states: BTreeMap::new(),
     content: None,
@@ -1793,20 +1853,13 @@ static EMPTY_SEG: Segment = Segment {
     props: BTreeMap::new(),
 };
 
-/// Merge: the upper layer's non-Default fields override the lower layer (the tail end of the three-way fallback).
+/// Merge: the upper layer's set fields override the lower layer (the tail end of the three-way
+/// fallback). `Some(Color::Default)` and `Some(false)` are explicit values and still override.
 fn merge_style(over: &Style, base: &Style) -> Style {
     Style {
-        fg: if over.fg == Color::Default {
-            base.fg.clone()
-        } else {
-            over.fg.clone()
-        },
-        bg: if over.bg == Color::Default {
-            base.bg.clone()
-        } else {
-            over.bg.clone()
-        },
-        bold: over.bold || base.bold,
+        fg: over.fg.clone().or_else(|| base.fg.clone()),
+        bg: over.bg.clone().or_else(|| base.bg.clone()),
+        bold: over.bold.or(base.bold),
     }
 }
 
@@ -1879,11 +1932,11 @@ mod tests {
     #[test]
     fn valid_colours_are_read() {
         let d = Config::parse("defaults fg=\"#ABCDEF\" bg=\"red\"").unwrap();
-        assert_eq!(d.defaults.fg, Color::Rgb(0xab, 0xcd, 0xef));
-        assert_eq!(d.defaults.bg, Color::Named("red".into()));
+        assert_eq!(d.defaults.fg, Some(Color::Rgb(0xab, 0xcd, 0xef)));
+        assert_eq!(d.defaults.bg, Some(Color::Named("red".into())));
         let d = Config::parse("defaults fg=196 bg=default").unwrap();
-        assert_eq!(d.defaults.fg, Color::Xterm(196));
-        assert_eq!(d.defaults.bg, Color::Default);
+        assert_eq!(d.defaults.fg, Some(Color::Xterm(196)));
+        assert_eq!(d.defaults.bg, Some(Color::Default));
     }
 
     #[test]
@@ -1937,6 +1990,82 @@ mod tests {
         let cfg =
             Config::parse("layout {\n    left { line { dir } }\n    right-indent 99\n}\n").unwrap();
         assert_eq!(cfg.layout.right_indent, 9);
+    }
+
+    /// An explicit `fg=default` or `bold=#false` is a real value: a later layer can clear a
+    /// colour or a bold flag with it, so it must survive the serializer too.
+    #[test]
+    fn explicit_default_and_false_survive_a_round_trip() {
+        let c =
+            Config::parse("layout {}\nsegments { dir fg=default bg=default bold=#false }").unwrap();
+        let d = c.segment("dir");
+        assert_eq!(d.style.fg, Some(Color::Default));
+        assert_eq!(d.style.bg, Some(Color::Default));
+        assert_eq!(d.style.bold, Some(false));
+        let again = Config::parse(&c.to_kdl()).unwrap();
+        assert_eq!(again.segment("dir").style, d.style);
+    }
+
+    /// Two declarations of the same state merge by field: the later one only overrides the
+    /// values it sets.
+    #[test]
+    fn later_state_declaration_merges_by_field() {
+        let mut a = Segment::default();
+        a.states.insert(
+            "SHORTENED".into(),
+            StateSpec {
+                style: Style {
+                    fg: Some(Color::Xterm(103)),
+                    bold: Some(true),
+                    ..Style::default()
+                },
+                char: None,
+            },
+        );
+        let mut b = Segment::default();
+        b.states.insert(
+            "SHORTENED".into(),
+            StateSpec {
+                style: Style {
+                    fg: Some(Color::Xterm(200)),
+                    ..Style::default()
+                },
+                char: Some("x".into()),
+            },
+        );
+        merge_segment(&mut a, b);
+        let st = &a.states["SHORTENED"];
+        assert_eq!(st.style.fg, Some(Color::Xterm(200)));
+        assert_eq!(st.style.bold, Some(true), "the earlier bold survives");
+        assert_eq!(st.char.as_deref(), Some("x"));
+    }
+
+    /// A segment override can clear a value: `fg=default` and `bold=#false` are explicit, not
+    /// "unset".
+    #[test]
+    fn explicit_defaults_override_segment_style() {
+        let mut a = Segment::default();
+        a.style.fg = Some(Color::Xterm(1));
+        a.style.bold = Some(true);
+        let mut b = Segment::default();
+        b.style.fg = Some(Color::Default);
+        b.style.bold = Some(false);
+        merge_segment(&mut a, b);
+        assert_eq!(a.style.fg, Some(Color::Default));
+        assert_eq!(a.style.bold, Some(false));
+    }
+
+    /// A named text node and a commented-out segment keep their shape through `to_kdl`.
+    #[test]
+    fn named_text_and_disabled_elements_round_trip() {
+        let c = Config::parse("layout { left { line { dir \"x\"; time #false } } }").unwrap();
+        assert_eq!(
+            c.layout.left[0][0],
+            Element::NamedText("dir".into(), "x".into())
+        );
+        assert_eq!(c.layout.left[0][1], Element::Disabled("time".into()));
+        let again = Config::parse(&c.to_kdl()).unwrap();
+        assert_eq!(again.layout.left[0], c.layout.left[0]);
     }
 
     /// Directory classification rules keep their pattern, state and icon through a round trip.
@@ -2119,13 +2248,20 @@ icon {
 
     #[test]
     fn parses_joined_element_and_disabled() {
-        // "dir_joined" shares the background; segments explicitly set to #false are skipped.
+        // "dir_joined" shares the background; an explicit #false keeps the segment commented
+        // out in the layout so a configure round trip does not drop it.
         let c = Config::parse(
             "layout {\n  left {\n    line { dir_joined #true; vcs #true; time #false }\n  }\n}",
         )
         .unwrap();
         assert_eq!(c.layout.left[0][0], Element::Joined("dir".into()));
-        assert_eq!(c.layout.left[0].len(), 2, "#false time should be skipped");
+        assert_eq!(c.layout.left[0].len(), 3, "#false time is kept");
+        assert_eq!(c.layout.left[0][2], Element::Disabled("time".into()));
+        let again = Config::parse(&c.to_kdl()).unwrap();
+        assert_eq!(
+            again.layout.left[0], c.layout.left[0],
+            "the commented-out segment survives the round trip"
+        );
     }
 
     /// `transient-prompt` accepts the boolean form earlier themes used plus p10k's `same-dir`
@@ -2177,13 +2313,13 @@ icon {
         )
         .unwrap();
         let d = c.segment("dir");
-        assert_eq!(d.style.fg, Color::Xterm(39));
+        assert_eq!(d.style.fg, Some(Color::Xterm(39)));
         assert_eq!(
             d.props["shorten-strategy"],
             Prop::Str("truncate_to_unique".into())
         );
-        assert_eq!(d.states["SHORTENED"].style.fg, Color::Xterm(103));
-        assert!(d.states["ANCHOR"].style.bold);
+        assert_eq!(d.states["SHORTENED"].style.fg, Some(Color::Xterm(103)));
+        assert_eq!(d.states["ANCHOR"].style.bold, Some(true));
     }
 
     #[test]
@@ -2198,15 +2334,15 @@ icon {
             c.segment("dir")
                 .effective_style(Some("SHORTENED"), &c.defaults)
                 .fg,
-            Color::Xterm(103)
+            Some(Color::Xterm(103))
         );
         assert_eq!(
             c.segment("dir").effective_style(None, &c.defaults).fg,
-            Color::Xterm(39)
+            Some(Color::Xterm(39))
         );
         assert_eq!(
             c.segment("nope").effective_style(None, &c.defaults).fg,
-            Color::Xterm(200)
+            Some(Color::Xterm(200))
         );
     }
 
@@ -2229,7 +2365,7 @@ icon {
         );
         assert!(c.segment("dir").props.contains_key("shorten-strategy"));
         // The prompt_char segment is still there (to color the input line prefix) but is not in the header layout.
-        assert_eq!(c.segment("prompt_char").style.fg, Color::Xterm(76));
+        assert_eq!(c.segment("prompt_char").style.fg, Some(Color::Xterm(76)));
         assert!(
             !c.layout
                 .left
@@ -2253,8 +2389,8 @@ segments {
 }"##,
         )
         .unwrap();
-        assert_eq!(c.defaults.fg, Color::Rgb(255, 255, 255));
-        assert!(c.segment("a").style.bold);
+        assert_eq!(c.defaults.fg, Some(Color::Rgb(255, 255, 255)));
+        assert_eq!(c.segment("a").style.bold, Some(true));
         assert_eq!(c.segment("a").props["x"], Prop::Int(3));
     }
 

@@ -126,7 +126,7 @@ pub(super) fn paint_zsh(text: &str, style: &Style) -> String {
     if text.is_empty() {
         return String::new();
     }
-    format!("{}{}%f", zsh_fg(&style.fg), text)
+    format!("{}{}%f", zsh_fg(&style.fg_color()), text)
 }
 
 /// Computes the input line prefix (e.g. `╰─❯`). `last_prefix` (frame style) and the prompt
@@ -153,8 +153,8 @@ pub fn transient_prompt_zsh(config: &Config) -> String {
     let ch = pc.char_for(None, default_char);
     let ok = pc.effective_style(None, &config.defaults);
     let err = pc.effective_style(Some("ERROR"), &config.defaults);
-    let ok_prompt = format!("{}{} ", zsh_fg(&ok.fg), ch);
-    let err_prompt = format!("{}{} ", zsh_fg(&err.fg), ch);
+    let ok_prompt = format!("{}{} ", zsh_fg(&ok.fg_color()), ch);
+    let err_prompt = format!("{}{} ", zsh_fg(&err.fg_color()), ch);
     format!("%(?\u{1}{}\u{1}{})%f", ok_prompt, err_prompt)
 }
 
@@ -173,7 +173,7 @@ pub(super) fn zsh_fg(c: &Color) -> String {
 pub(super) fn paint_attach(style: &Style, a: &AttachText) -> String {
     let mut st = style.clone();
     if let Some(fg) = &a.fg {
-        st.fg = fg.clone();
+        st.fg = Some(fg.clone());
     }
     paint(&a.text, &st)
 }
@@ -228,19 +228,19 @@ pub(super) fn named_256(name: &str) -> u8 {
 /// ANSI SGR sequence that turns on the given style; empty when the style asks for nothing.
 pub(super) fn ansi_style(style: &Style) -> String {
     let mut s = String::new();
-    match &style.fg {
+    match &style.fg_color() {
         Color::Default => {}
         Color::Xterm(n) => write!(s, "\x1b[38;5;{n}m").unwrap(),
         Color::Rgb(r, g, b) => write!(s, "\x1b[38;2;{r};{g};{b}m").unwrap(),
         Color::Named(n) => write!(s, "\x1b[38;5;{}m", named_256(n)).unwrap(),
     }
-    match &style.bg {
+    match &style.bg_color() {
         Color::Default => {}
         Color::Xterm(n) => write!(s, "\x1b[48;5;{n}m").unwrap(),
         Color::Rgb(r, g, b) => write!(s, "\x1b[48;2;{r};{g};{b}m").unwrap(),
         Color::Named(n) => write!(s, "\x1b[48;5;{}m", named_256(n)).unwrap(),
     }
-    if style.bold {
+    if style.bold_or_false() {
         s.push_str("\x1b[1m");
     }
     s

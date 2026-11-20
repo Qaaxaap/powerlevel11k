@@ -196,9 +196,9 @@ pub(super) fn ask_time(
                 let bg = time_bg(kind, c);
                 let t = c.segments.entry("time".into()).or_insert_with(|| {
                     let mut s = Segment::default();
-                    s.style.fg = Color::Xterm(66);
+                    s.style.fg = Some(Color::Xterm(66));
                     if let Some(b) = bg {
-                        s.style.bg = Color::Xterm(b);
+                        s.style.bg = Some(Color::Xterm(b));
                     }
                     s
                 });
@@ -218,7 +218,7 @@ pub(super) fn time_bg(kind: PresetKind, cfg: &Config) -> Option<u8> {
     match kind {
         PresetKind::Rainbow => Some(7),
         PresetKind::Classic => match cfg.segment("dir").style.bg {
-            Color::Xterm(n) => Some(n),
+            Some(Color::Xterm(n)) => Some(n),
             _ => None,
         },
         PresetKind::Lean | PresetKind::Pure => None,
