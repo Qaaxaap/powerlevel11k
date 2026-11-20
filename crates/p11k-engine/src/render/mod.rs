@@ -25,8 +25,8 @@ use self::segment::{Ctx, IconStyle, SegmentValue};
 pub(crate) use self::segments::clear_cmd_cache;
 use self::segments::*;
 pub use self::style::{
-    input_prefix, prefix_text, prefix_text_bash, prefix_text_zsh, prompt_state, strip_ansi,
-    transient_prompt_zsh,
+    InputPrefix, input_prefix, prefix_text, prefix_text_bash, prefix_text_zsh, prompt_state,
+    strip_ansi, transient_prompt_zsh,
 };
 use self::style::{named_256, paint, paint_attach};
 use std::collections::HashMap;
@@ -1344,7 +1344,7 @@ mod tests {
         assert!(h.contains("\u{f00c}"), "header: {h:?}");
         assert!(
             !h.contains('❯'),
-            "input line prefix ❯ is drawn by render_prompt and should not be in the header"
+            "input line prefix ❯ is drawn by the shell prompt string and should not be in the header"
         );
         assert_eq!(h.split("\r\n").count(), 1, "lean header should be one line");
     }

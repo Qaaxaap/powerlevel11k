@@ -220,16 +220,14 @@ pub struct SignalScanner {
     pending: Vec<u8>,
 }
 
-/// What one read contributed: the bytes before the last signal, how many signals it held, and
-/// the bytes after the last signal.
+/// What one read contributed, split around every complete signal in it.
 pub struct Scan {
-    /// Everything up to the last complete signal (the blank rows the shell printed for the
-    /// header). Forward this first.
-    pub before: Vec<u8>,
-    /// Complete signals seen in this chunk.
-    pub signals: usize,
-    /// What follows the last signal (the input-line prefix). Forward this after painting.
-    pub after: Vec<u8>,
+    /// Bytes before each signal, in order. Write one segment, paint the prompt, then continue
+    /// with the next segment; `tail` follows the last paint. Empty when the chunk has no signal.
+    pub segments: Vec<Vec<u8>>,
+    /// What follows the last signal (the input-line prefix), or the whole chunk when it has no
+    /// signal. Forward this after painting.
+    pub tail: Vec<u8>,
 }
 
 impl SignalScanner {
@@ -241,35 +239,18 @@ impl SignalScanner {
     /// until the next read completes it.
     pub fn push(&mut self, chunk: &[u8]) -> Scan {
         self.pending.extend_from_slice(chunk);
-        let mut before = Vec::new();
-        let mut after: Vec<u8> = Vec::new();
-        let mut signals = 0;
+        let mut segments: Vec<Vec<u8>> = Vec::new();
         let mut from = 0;
         while let Some(rel) = find_bytes(&self.pending[from..], PROMPT_SIGNAL) {
             let at = from + rel;
-            let target = if signals == 0 {
-                &mut before
-            } else {
-                &mut after
-            };
-            target.extend_from_slice(&self.pending[from..at]);
-            signals += 1;
+            segments.push(self.pending[from..at].to_vec());
             from = at + PROMPT_SIGNAL.len();
         }
         let rest = &self.pending[from..];
         let keep = signal_prefix_tail(rest, PROMPT_SIGNAL);
-        let tail = &rest[..rest.len() - keep];
-        if signals == 0 {
-            before.extend_from_slice(tail);
-        } else {
-            after.extend_from_slice(tail);
-        }
+        let tail = rest[..rest.len() - keep].to_vec();
         self.pending = rest[rest.len() - keep..].to_vec();
-        Scan {
-            before,
-            signals,
-            after,
-        }
+        Scan { segments, tail }
     }
 }
 
@@ -278,33 +259,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn signal_scanner_splits_before_and_after_the_last_signal() {
+    fn signal_scanner_splits_around_every_signal() {
         let mut s = SignalScanner::new();
         let scan = s.push(b"abc");
-        assert_eq!(
-            (scan.before.as_slice(), scan.signals, scan.after.as_slice()),
-            (b"abc".as_slice(), 0, b"".as_slice())
-        );
+        assert!(scan.segments.is_empty());
+        assert_eq!(scan.tail.as_slice(), b"abc".as_slice());
 
         // A signal cut in the middle must not leak its head as output.
         let scan = s.push(b"\x1b]1337;p11");
         assert!(
-            scan.before.is_empty() && scan.after.is_empty(),
+            scan.segments.is_empty() && scan.tail.is_empty(),
             "head of a split signal leaked"
         );
-        assert_eq!(scan.signals, 0);
         let scan = s.push(b"k;p\x07tail");
-        assert_eq!(
-            (scan.before.as_slice(), scan.signals, scan.after.as_slice()),
-            (b"".as_slice(), 1, b"tail".as_slice())
-        );
+        assert_eq!(scan.segments, vec![Vec::<u8>::new()]);
+        assert_eq!(scan.tail.as_slice(), b"tail".as_slice());
 
-        // Blank rows ahead of the signal go to `before`, the prefix behind it to `after`.
+        // Blank rows ahead of the signal go to the segment, the prefix behind it to the tail.
         let scan = s.push(b"\r\n\x1b]1337;p11k;p\x07\xe2\x9d\xaf ");
-        assert_eq!(
-            (scan.before.as_slice(), scan.signals, scan.after.as_slice()),
-            (b"\r\n".as_slice(), 1, "\u{276f} ".as_bytes())
-        );
+        assert_eq!(scan.segments, vec![b"\r\n".to_vec()]);
+        assert_eq!(scan.tail.as_slice(), "\u{276f} ".as_bytes());
+    }
+
+    /// Two signals in one read: each segment is the content before its own signal, so the caller
+    /// writes it before painting that prompt instead of holding it until the last paint.
+    #[test]
+    fn signal_scanner_keeps_every_segment_in_order() {
+        let mut s = SignalScanner::new();
+        let scan = s.push(b"a\x1b]1337;p11k;p\x07b\x1b]1337;p11k;p\x07c");
+        assert_eq!(scan.segments, vec![b"a".to_vec(), b"b".to_vec()]);
+        assert_eq!(scan.tail.as_slice(), b"c".as_slice());
     }
 
     #[test]
@@ -312,10 +296,8 @@ mod tests {
         let mut s = SignalScanner::new();
         // A lone ESC is not a prefix of the signal, so it goes out immediately.
         let scan = s.push(b"\x1b[31m");
-        assert_eq!(
-            (scan.before.as_slice(), scan.signals, scan.after.as_slice()),
-            (b"\x1b[31m".as_slice(), 0, b"".as_slice())
-        );
+        assert!(scan.segments.is_empty());
+        assert_eq!(scan.tail.as_slice(), b"\x1b[31m".as_slice());
     }
 
     #[test]
