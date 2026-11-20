@@ -583,9 +583,9 @@ pub fn run() -> anyhow::Result<()> {
                     // follows the signal is forwarded after that. A completion list, Ctrl-L or a
                     // pager page reprints the whole prompt, which arrives as another signal.
                     let scan = scanner.push(&buf[..n]);
-                    let before = rewrite_pwsh_prefix(&scan.before, shell, pwsh_prefix.as_ref());
-                    stdout.write_all(&before)?;
-                    for _ in 0..scan.signals {
+                    for segment in &scan.segments {
+                        let before = rewrite_pwsh_prefix(segment, shell, pwsh_prefix.as_ref());
+                        stdout.write_all(&before)?;
                         if resize_extra_rows > 0 {
                             // The reflowed rows sit above the header the shell just reprinted;
                             // clear them before the repaint covers the header itself.
@@ -621,7 +621,7 @@ pub fn run() -> anyhow::Result<()> {
                         instant_drawn = false;
                         prompt = PromptState::Prompt;
                     }
-                    let after = rewrite_pwsh_prefix(&scan.after, shell, pwsh_prefix.as_ref());
+                    let after = rewrite_pwsh_prefix(&scan.tail, shell, pwsh_prefix.as_ref());
                     stdout.write_all(&after)?;
                     // Instant-phase bookkeeping: a newline means the shell printed something
                     // during init (rc echo/warning), so the rows we drew have been pushed down.
