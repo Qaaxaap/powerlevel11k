@@ -1,0 +1,240 @@
+# p11k engine bootstrap -- protocol layer + user config.
+# ===== engine protocol =====
+# Empty when the engine does not enable transient; clear it so a stale value
+# left in the outer environment cannot make zle-line-finish fold wrongly.
+[[ -n "${P11K_TRANSIENT_PROMPT:-}" ]] || unset P11K_TRANSIENT_PROMPT
+# Zero-width prompt-ready signal: `%{...%}` is how zle is told a sequence takes no columns.
+# Without it the OSC bytes are counted as visible width and the buffer lands in the wrong column.
+_p11k_signal=$'%{\e]1337;p11k;p\a%}'
+_p11k_status=0
+_p11k_pwd=$PWD
+# Last prompt shape from the engine ack, kept across prompts so a dead or stuck engine cannot
+# block the prompt forever: precmd falls back to these values after the ack timeout.
+typeset -g _p11k_rows=1
+typeset -g _p11k_prefix=$P11K_PREFIX_OK
+typeset -g _p11k_fold=1
+
+# Command timing for zsh. Zsh has no CMD_DURATION. A preexec hook records EPOCHREALTIME
+# before the command runs. Precmd turns the difference into milliseconds for the announce.
+# Without the datetime module, EPOCHREALTIME stays empty and the engine uses its own timing.
+zmodload -i zsh/datetime
+typeset -g _p11k_cmd_start
+_p11k_preexec() { _p11k_cmd_start=${EPOCHREALTIME:-} }
+autoload -Uz add-zsh-hook
+add-zsh-hook preexec _p11k_preexec
+
+_p11k_precmd() {
+  _p11k_status=$?
+  # Capture $pipestatus right away: any command below resets it.
+  _p11k_pipes="${pipestatus}"
+  _p11k_pwd=$PWD
+  # Milliseconds between preexec and this precmd. The field stays empty on the first
+  # prompt. It also stays empty when the shell cannot measure the duration. The engine then
+  # uses its Enter → precmd timing.
+  local _dur=
+  if [[ -n ${_p11k_cmd_start:-} && -n ${EPOCHREALTIME:-} ]]; then
+    # The fraction separator follows LC_NUMERIC: it_IT prints a comma, other locales print
+    # other characters. Do not assume one: split on the first non-digit and keep the digits.
+    # The fractional part is longer than six digits; the first six are the microseconds.
+    local _start=$_p11k_cmd_start _now=$EPOCHREALTIME
+    local _start_s=${_start%%[^0-9]*} _start_f=${_start#*[^0-9]}
+    local _now_s=${_now%%[^0-9]*} _now_f=${_now#*[^0-9]}
+    _start_f=${_start_f//[^0-9]/} _now_f=${_now_f//[^0-9]/}
+    (( _dur = ( 10#$_now_s * 1000000 + 10#${_now_f:0:6} - 10#$_start_s * 1000000 - 10#${_start_f:0:6} ) / 1000 ))
+    _p11k_cmd_start=
+  fi
+  # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
+  # a newline or a backslash, which would split or merge fields.
+  local _pwd_esc=${_p11k_pwd//\\/\\\\}
+  _pwd_esc=${_pwd_esc//$'\t'/\\t}
+  _pwd_esc=${_pwd_esc//$'\n'/\\n}
+  _pwd_esc=${_pwd_esc//$'\r'/\\r}
+  print -r -- "h"$'\t'"$_p11k_status"$'\t'"$_pwd_esc"$'\t'"${#jobstates}"$'\t'"$HISTCMD"$'\t'"$_p11k_pipes"$'\t'"$_dur" >> "$P11K_ANNOUNCE"
+  # Wait at most two seconds for the ack. A dead or stuck engine must not block the shell at
+  # the prompt; the previous prompt shape is reused and the fallback is reported once.
+  local _wait=0
+  until [[ -f "$P11K_ACK" ]]; do
+    sleep 0.005
+    _wait=$(( _wait + 1 ))
+    if (( _wait >= 400 )); then break; fi
+  done
+  if [[ -f "$P11K_ACK" ]]; then
+    # The ack carries the prompt shape: header height on the first line, then the two prefix
+    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    local -a _ack=("${(@f)$(<"$P11K_ACK")}")
+    rm -f "$P11K_ACK"
+    typeset -g _p11k_rows=${_ack[1]:-1}
+    typeset -g _p11k_prefix=${_ack[2]:-$P11K_PREFIX_OK}
+    # Third ack line: whether this prompt folds (transient). The hook that folds runs later,
+    # after the ack is gone, so the answer is kept in a global.
+    typeset -g _p11k_fold=${_ack[3]:-1}
+  elif (( ! ${+_p11k_ack_warned} )); then
+    typeset -g _p11k_ack_warned=1
+    if (( _p11k_status == 0 )); then
+      typeset -g _p11k_prefix=$P11K_PREFIX_OK
+    else
+      typeset -g _p11k_prefix=$P11K_PREFIX_ERR
+    fi
+    print -u2 -- "p11k: the engine did not answer in time; the prompt is drawn without a header"
+  fi
+  # The prompt is the blank rows + prompt-ready signal + the prefix for this exit code. The
+  # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
+  # painting it later would overwrite the first characters on a completion redraw.
+  #
+  # The first prompt prints the same blank rows as every later one. The instant header
+  # already sits on those rows, so the cursor has to step back over them first: zle then
+  # starts its prompt area on the header rows, and the transient fold clears the header
+  # exactly like it does for every later prompt. Without the step the header stays above the
+  # prompt area and survives the fold.
+  # Built with a loop, not `$(printf '\n%.0s' ...)`: command substitution strips every trailing
+  # newline, so the capture would always come back empty and the shell would print no blank rows
+  # at all — the header would then be backfilled over the command output above it.
+  local _lead=''
+  local _i
+  for (( _i = 0; _i < ${_p11k_rows:-1}; _i++ )); do
+    _lead+=$'\n'
+  done
+  if [[ -n "${P11K_INSTANT:-}" ]]; then
+    unset P11K_INSTANT
+  fi
+  PROMPT="$_lead$_p11k_signal${_p11k_prefix:-$P11K_PREFIX_OK}"
+}
+
+# zle calls this when it takes over the input line. The prompt is already on screen by then
+# (the signal drew the header, the prompt string carries the prefix), so the hook only reports
+# the keymap. It writes the file; the engine polls (~5ms).
+_p11k_line_init() {
+  [[ ${CONTEXT:-start} == cont ]] && return
+  if [[ -n "${_p11k_user_line_init:-}" ]] && (( $+functions[$_p11k_user_line_init] )); then
+    "$_p11k_user_line_init"   # user-registered handler (e.g. autosuggestions) runs first
+  fi
+  # Report the current keymap: vi mode (zle resets to viins at prompt-ready) reports viins →
+  # INSERT; emacs (main) reports main → the vi_mode segment hides. Switching (NORMAL/VISUAL)
+  # is reported by keymap-select.
+  if [[ ${options[vi]} == on ]]; then
+    print -r -- "v"$'\t'"viins" >> "$P11K_ANNOUNCE"
+  else
+    print -r -- "v"$'\t'"main" >> "$P11K_ANNOUNCE"
+  fi
+  # Prompt is ready, clear the anti-recursion flag
+  unset P11K_ENGINE
+}
+
+# ===== user config =====
+# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
+# on the current line; without this break, the rc output would be written after the typed text.
+if [[ -n "${P11K_INSTANT:-}" ]]; then
+  print -rn -- $'\r\n'
+fi
+# Prefer $P11K_USER_ZSHRC, otherwise default to $HOME/.zshrc.
+if [[ -n "${P11K_USER_ZSHRC:-}" && -r "$P11K_USER_ZSHRC" ]]; then
+  source "$P11K_USER_ZSHRC"
+elif [[ -r "$HOME/.zshrc" ]]; then
+  source "$HOME/.zshrc"
+fi
+
+# ===== protocol invariants =====
+# PROMPT carries the zero-width prompt-ready signal (OSC 1337;p11k;p) and the input-line prefix.
+# The signal is what a serialised prompt protocol keys on: it occupies no columns and the
+# engine reads it out of the byte stream.
+PROMPT="$_p11k_signal$P11K_PREFIX_OK"
+RPROMPT=''
+PROMPT2='> '
+# zsh prints its EOF mark (a reverse-video `%` at an unterminated output line) before the first
+# prompt. On the instant header the mark shows as a flash just before the real redraw. p11k owns
+# the prompt, so hide the mark; this runs after the user rc so a later assignment cannot bring it
+# back. Only the mark is cleared, not `PROMPT_SP` itself: the rest of that output terminates the
+# line before the prompt, and the engine's signal handling relies on it.
+PROMPT_EOL_MARK=''
+precmd_functions=(${precmd_functions:#_p11k_precmd} _p11k_precmd)
+# zle-line-init takes one handler: keep the user's, then register the engine announce.
+if [[ -n "${widgets[zle-line-init]:-}" && "${widgets[zle-line-init]}" != user:_p11k_line_init ]]; then
+  _p11k_user_line_init=${widgets[zle-line-init]#user:}
+fi
+zle -N zle-line-init _p11k_line_init
+# vi_mode: report the current keymap to the engine on zle-keymap-select.
+_p11k_vi_mode() {
+  local m=$KEYMAP
+  if [[ ${options[vi]} == on ]]; then
+    case $KEYMAP in
+      vicmd|vis|viopp) m=$KEYMAP;;
+      *) m=viins;;  # zsh may report main while inserting → normalize to viins
+    esac
+  else
+    m=main
+  fi
+  print -r -- "v"$'\t'"$m" >> "$P11K_ANNOUNCE"
+}
+if [[ -n "${widgets[zle-keymap-select]:-}" && "${widgets[zle-keymap-select]}" != user:_p11k_vi_mode ]]; then
+  _p11k_user_vi_mode=${widgets[zle-keymap-select]#user:}
+fi
+zle -N zle-keymap-select _p11k_vi_mode
+# transient: on command submit fold the multi-line header into a single ❯ line.
+# Let zsh render the folded prompt itself.
+#
+# Call the widget that was bound to `zle-line-finish` before this one.
+# zsh-autocomplete and zsh-syntax-highlighting bind their own hooks there.
+# Replacing that binding instead of chaining to it breaks them.
+#
+# `zle -A` stores the previous widget under an alias.
+# `zle .<alias>` calls it with the widget context intact.
+# A saved function name loses that context.
+# p10k chains the same way.
+#
+# The guard below stops re-entry.
+# A plugin hook can call `reset-prompt`, which enters this widget again.
+# Without the guard, zsh prints "job table full or recursion limit exceeded" on each command.
+# `$CONTEXT` stays `start` for the whole chain, so it cannot detect the re-entry.
+_p11k_line_finish() {
+  ((${+_p11k_busy})) && return 0
+  typeset -g _p11k_busy=1
+  {
+    # The previous widget runs inside the guard too: a re-entrant call must not run the plugin
+    # hook a second time.
+    zle ._p11k_prev_line_finish -- "$@"
+    # The engine decides whether this prompt folds: it knows the previous and the current
+    # workdir, so `transient-prompt "same-dir"` needs no bookkeeping here. The answer arrived in
+    # the ack at prompt time and was kept in `_p11k_fold`, because the ack is gone by now.
+    if [[ -n "${P11K_TRANSIENT_PROMPT:-}" && "${_p11k_fold:-1}" == 1 ]]; then
+      PROMPT="$P11K_TRANSIENT_PROMPT"
+      RPROMPT=''
+      # `.reset-prompt` names the builtin widget.
+      # The undotted form resolves by widget name and can land on a plugin's own widget.
+      zle .reset-prompt
+    fi
+  } always {
+    unset _p11k_busy
+  }
+}
+# The chained widget must exist before the hook calls it.
+# With an empty user rc there is no previous `zle-line-finish`.
+# `zle .name` for a missing widget then fails and prints "No such widget" over the prompt.
+# The code installs a no-op first, then replaces it with the real previous widget when there is one.
+_p11k_noop() { :; }
+zle -N ._p11k_prev_line_finish _p11k_noop
+[[ -n "${widgets[zle-line-finish]:-}" ]] && zle -A zle-line-finish ._p11k_prev_line_finish
+zle -N zle-line-finish _p11k_line_finish
+# resize announce: SIGWINCH → zsh defers the TRAPWINCH run,
+# detects the change, announces `r`; the engine clears and repaints the prompt window.
+_p11k_last_cols=$COLUMNS
+_p11k_last_rows=$LINES
+TRAPWINCH() {
+  if (( COLUMNS != _p11k_last_cols || LINES != _p11k_last_rows )); then
+    _p11k_last_cols=$COLUMNS
+    _p11k_last_rows=$LINES
+    print -r -- "r" >> "$P11K_ANNOUNCE"
+  fi
+}
+
+# Completion: compinit plus complist/menu select.
+# Do not touch the completion coloring (list-colors) here: setting it empty makes zsh fall
+# back to its built-in default, directories turn bold red, unlike the user rc
+# (oh-my-zsh derives di=01;34 blue from LS_COLORS).
+autoload -Uz compinit && compinit
+zmodload -i zsh/complist
+setopt auto_menu complete_in_word always_to_end
+unsetopt menu_complete
+zstyle ':completion:*:*:*:*:*' menu select
+zstyle ':completion:*' matcher-list 'm:{[:lower:][:upper:]}={[:upper:][:lower:]}' 'r:|=*' 'l:|=* r:|=*'
+zstyle ':completion:*' special-dirs true
+zstyle ':completion:*:cd:*' tag-order local-directories directory-stack path-directories

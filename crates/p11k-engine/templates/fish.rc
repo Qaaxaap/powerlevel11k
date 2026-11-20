@@ -1,0 +1,104 @@
+# p11k engine bootstrap (fish) -- protocol layer + user config.
+
+set -g _p11k_last_cols $COLUMNS
+set -g _p11k_last_rows $LINES
+# Prompt shape, refreshed from the ack on every prompt; the resize path reuses it.
+set -g _p11k_rows 1
+set -g _p11k_prefix "$P11K_PREFIX_OK"
+
+# fish_prompt is called when the main prompt is rendered. Two cases:
+# - size change (resize repaint): announce `r`.
+# - normal prompt: announce `h`, then wait for the engine ack before returning.
+function fish_prompt
+    set -l _st $status
+    # Capture $pipestatus right away: any command below resets it.
+    set -l _pipes "$pipestatus"
+    # Every prompt prints its own header rows. On the first prompt the instant header stays
+    # above as history instead of being overwritten.
+    set -l _lead ''
+    if test -n "$P11K_INSTANT"
+        set -e P11K_INSTANT
+    end
+    if test $COLUMNS != $_p11k_last_cols; or test $LINES != $_p11k_last_rows
+        set -g _p11k_last_cols $COLUMNS
+        set -g _p11k_last_rows $LINES
+        printf 'r\n' >> $P11K_ANNOUNCE
+        printf '\r'
+        # Print the blank header rows directly: `string collect` drops the final newline, so a
+        # single row would become an empty string and the engine would cover one row too many.
+        # The resize reflow above the header is cleared by the engine.
+        printf '\n%.0s' (seq 1 $_p11k_rows)
+        printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
+        return
+    end
+    # $CMD_DURATION is fish's own measurement of the previous command in milliseconds.
+    # Fish sets it before the prompt renders. Send it to the engine. The engine then does not
+    # infer the duration from the Enter → precmd wall clock. That clock races with a delayed
+    # announce.
+    set -l _cmd_ms ''
+    if set -q CMD_DURATION
+        set _cmd_ms $CMD_DURATION
+    end
+    # Escape the cwd for the tab-separated announce line: a directory name can contain a tab,
+    # a newline or a backslash, which would split or merge fields.
+    # The two-line quoted string is exactly one newline. Command substitution strips trailing
+    # newlines, so the pattern cannot come from printf; the closing quote stays in column 1.
+    set -l _nl '
+'
+    set -l _pwd_esc $PWD
+    # `string collect` keeps the newline: command substitution splits a multi-line result into
+    # a list, which would drop the newline from the escaped path.
+    set _pwd_esc (string replace -a '\\' '\\\\' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a (printf '\t') '\t' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a $_nl '\n' -- $_pwd_esc | string collect)
+    set _pwd_esc (string replace -a (printf '\r') '\r' -- $_pwd_esc | string collect)
+    printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $_pwd_esc (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
+    # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
+    # the previous prompt shape is reused and the fallback is reported once.
+    set -l _wait 0
+    while not test -f $P11K_ACK
+        sleep 0.005
+        set _wait (math $_wait + 1)
+        if test $_wait -ge 400
+            break
+        end
+    end
+    if test -f $P11K_ACK
+        # The ack carries the prompt shape: header height on the first line, then the two prefix
+        # strings. Reading them every prompt is what lets a reload change either without a restart.
+        set -l _ack (cat $P11K_ACK)
+        rm -f $P11K_ACK
+        set -g _p11k_rows $_ack[1]
+        set -g _p11k_prefix $_ack[2]
+    else if not set -q _p11k_ack_warned
+        set -g _p11k_ack_warned 1
+        if test $_st -eq 0
+            set -g _p11k_prefix $P11K_PREFIX_OK
+        else
+            set -g _p11k_prefix $P11K_PREFIX_ERR
+        end
+        echo "p11k: the engine did not answer in time; the prompt is drawn without a header" >&2
+    end
+    # Print the blank header rows directly: `string collect` drops the final newline, so a
+    # single row would become an empty string and the engine would cover one row too many.
+    printf '\r'
+    printf '\n%.0s' (seq 1 $_p11k_rows)
+    printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
+end
+
+# ===== user config =====
+# Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
+# on the current line; without this break, the rc output would be written after the typed text.
+if test -n "$P11K_INSTANT"
+    printf '\r\n'
+end
+if test -n "$P11K_USER_ZSHRC"; and test -r "$P11K_USER_ZSHRC"
+    source "$P11K_USER_ZSHRC"
+else if test -r "$HOME/.config/fish/config.fish"
+    source "$HOME/.config/fish/config.fish"
+end
+
+# ===== protocol invariants =====
+# The greeting prints a line between the instant header and the first prompt, which pushes the
+# header up and leaves a copy of it on screen. p11k owns the prompt area, so it is disabled.
+set -g fish_greeting ''
