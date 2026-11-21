@@ -454,6 +454,30 @@ fn fish_pads_the_right_part_by_the_indent() {
     let _ = tmux(&sandbox.socket, &["kill-server"]);
 }
 
+/// zsh draws the right part through `RPROMPT`, and the indent goes through
+/// `ZLE_RPROMPT_INDENT`, which zle applies itself. This case covers ack lines 4-5 reaching
+/// `RPROMPT`; the indent itself is pinned by the template and the manual runs.
+#[test]
+fn zsh_prints_the_right_part() {
+    let mut sandbox = Sandbox::new("zsh-right");
+    sandbox.copy_engine_rc("zsh");
+    std::fs::write(&sandbox.ack, "1\n1\nLEFT> \nRIGHT\n3\n").expect("write the ack");
+    new_session(&sandbox.socket, &sandbox.shell_cmd("zsh"));
+    // The first prompt takes the ack; plant it again for the prompt this case captures.
+    screen_until(&sandbox.socket, "LEFT>", 1, Duration::from_secs(10));
+    let capture = sandbox.dir.path().join("capture");
+    pipe_pane(&sandbox.socket, &capture);
+    std::fs::write(&sandbox.ack, "1\n1\nLEFT> \nRIGHT\n3\n").expect("write the ack");
+    let out = tmux(&sandbox.socket, &["send-keys", "-t", SESSION, "C-m"]);
+    assert!(out.status.success(), "send-keys C-m failed");
+    let text = capture_until(&capture, "RIGHT", Duration::from_secs(10));
+    assert!(
+        text.contains("RIGHT"),
+        "zsh should print the right part: {text:?}"
+    );
+    let _ = tmux(&sandbox.socket, &["kill-server"]);
+}
+
 /// The generated templates must parse with their own shell. A syntax error in a template only
 /// shows up as a broken prompt at runtime, where it is much harder to place.
 #[test]
