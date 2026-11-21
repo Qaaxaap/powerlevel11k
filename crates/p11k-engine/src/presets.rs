@@ -42,6 +42,7 @@ struct DirColours {
 /// `vcs` colours: either the five count properties, or a foreground for the whole segment.
 struct VcsColours {
     fg: Option<Color>,
+    /// `clean`, `modified`, `conflicted`, `untracked`, `meta` foregrounds, in that order.
     counts: Option<(u8, u8, u8, u8, u8)>,
     bg: Option<Color>,
 }
@@ -315,8 +316,8 @@ fn base() -> Config {
 /// p10k lean-8colors).
 pub fn lean(colors_8: bool) -> Config {
     let colours = if colors_8 {
-        // p10k lean-8colors: clean 2 / modified 3 / untracked 4 (blue) / conflicted 1,
-        // with meta on the default foreground (0 here).
+        // p10k lean-8colors: clean 2 / modified 3 / conflicted 1 / untracked 4 (blue), with meta
+        // on the default foreground (0 here). The tuple order is the one on `VcsColours::counts`.
         Colours {
             os_icon: None,
             dir: DirColours {
