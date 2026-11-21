@@ -52,7 +52,10 @@ pub fn path() -> PathBuf {
 /// while the engine runs.
 pub fn init() {
     if let Err(e) = rotate_if_oversized(&path()) {
-        eprintln!("p11k: cannot rotate the engine log: {e}");
+        eprintln!(
+            "p11k: {}",
+            crate::i18n::t_args("log-rotate-failed", &[("error", &e.to_string())])
+        );
     }
 }
 
@@ -103,7 +106,10 @@ pub fn log(level: Level, msg: &str) {
     if let Err(e) = append(&path, msg)
         && !WRITE_ERROR_REPORTED.swap(true, Ordering::Relaxed)
     {
-        eprintln!("p11k: cannot write the engine log: {e}");
+        eprintln!(
+            "p11k: {}",
+            crate::i18n::t_args("log-write-failed", &[("error", &e.to_string())])
+        );
     }
 }
 

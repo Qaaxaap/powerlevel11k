@@ -116,3 +116,5 @@ wizard-overwrite = p11k 配置文件 { $path } 已存在，是否覆盖？
 wizard-new-config = 新配置：{ $path }。
 wizard-add-to-rc = 将对应的一行加入 shell rc：
 wizard-engine-is-theme = 引擎即主题：请先移除原有的 ZSH_THEME/主题设置，否则会叠加。
+log-rotate-failed = 无法轮转引擎日志：{ $error }
+log-write-failed = 无法写入引擎日志：{ $error }
