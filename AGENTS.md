@@ -11,7 +11,7 @@ p11k (powerlevel11k) is a prompt engine written in Rust. The engine runs as a lo
    nix develop
    ```
 
-3. Use the project recipes. `just check` is the fast gate; `just verify` is the full local gate.
+3. Use the project recipes. `just check` is the fast gate; `just verify` is the full local gate. Running `just verify` usually only takes about 1 min; please run it unless you have special requirements.
 
    ```bash
    nix develop --command just verify
@@ -45,6 +45,7 @@ review, with two exceptions: the change classifier in `tools/ci/`, and publishin
 - Do not make unrelated refactors. Do not format whole files. Do not leave debug output or temporary files.
 - Do not commit `.cache/`, `target/`, or agent directories for one tool (`.dsh/`, `.claude/`, `.cursor/`). The project agent assets are this file, `docs/glossary.md` and `.agents/skills/`.
 - Do not change generated files (`docs/images/`) without saying so. Change a generated file only by running its generator.
+- Do not avoid adding dependencies. When you need a new feature, first look for a crate according to the following criteria; if no suitable one exists, then write it by hand.
 
 ## Decisions
 
@@ -75,8 +76,8 @@ review, with two exceptions: the change classifier in `tools/ci/`, and publishin
 
 ## Interactive environment
 
-- The engine depends on a real terminal: kitty, tmux, the user's zsh config. Mark behaviour you cannot reproduce locally as unverified. The maintainer accepts it.
-- Run terminal experiments in a controlled session. Do not touch the user's terminal windows. Do not `pkill` the engine.
+- The engine depends on a real terminal: kitty, tmux, the user's zsh config. Mark behaviour you cannot reproduce locally as unverified. The maintainer does not accept unverified behaviour. The user must test it before you open a pull request.
+- Run terminal experiments in a controlled session. Do not touch the user's terminal windows. Do not `pkill` the engine. Please switch to exact matching for one or more PIDs to avoid killing user shells.
 
 ## Project skills
 
