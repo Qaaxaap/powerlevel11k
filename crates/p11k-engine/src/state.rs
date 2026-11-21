@@ -220,6 +220,7 @@ impl RawTerminal {
         unsafe {
             let mut t: libc::termios = std::mem::zeroed();
             if libc::tcgetattr(fd, &mut t) != 0 {
+                // Not a terminal: leave it alone and let the caller report the missing raw mode.
                 return Ok(Self { fd, orig: None });
             }
             let orig = t;
@@ -235,6 +236,13 @@ impl RawTerminal {
                 orig: Some(orig),
             })
         }
+    }
+
+    /// Whether the terminal accepted raw mode. False on a non-terminal: the kernel then echoes
+    /// and line-buffers the input itself, so line editing and the echo the engine expects do not
+    /// apply.
+    pub fn is_raw(&self) -> bool {
+        self.orig.is_some()
     }
 }
 
