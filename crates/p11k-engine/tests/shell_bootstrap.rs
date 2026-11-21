@@ -388,6 +388,45 @@ fn a_written_ack_sets_the_prompt_prefix() {
     }
 }
 
+/// zsh expands `$(…)` in PROMPT when `prompt_subst` is on. The engine renders the prompt from
+/// theme text (directory and branch names), so the template turns the option off after the user
+/// rc; otherwise a crafted name would run on every prompt.
+#[test]
+fn zsh_does_not_run_prompt_subst_from_the_row() {
+    let mut sandbox = Sandbox::new("prompt-subst");
+    sandbox.copy_engine_rc("zsh");
+    let user_rc = sandbox.dir.path().join("user.zshrc");
+    std::fs::write(&user_rc, "setopt prompt_subst\n").expect("user rc");
+    let marker = sandbox.dir.path().join("pwned");
+    std::fs::write(
+        &sandbox.ack,
+        format!("1\n1\n$(touch {})> \n\n1\n", marker.display()),
+    )
+    .expect("write the ack");
+    // The ack carries the row, so the test needs no engine; the copied template is enough.
+    let cmd = format!(
+        "unset P11K_LANG P11K_LOCALEDIR LANGUAGE; export LC_ALL=C.UTF-8; cd '{}' && \
+         env ZDOTDIR='{}' P11K_ANNOUNCE='{}' P11K_ACK='{}' P11K_PREFIX_OK='OK> ' \
+         P11K_PREFIX_ERR='ERR> ' P11K_USER_ZSHRC='{}' zsh -i",
+        sandbox.dir.path().display(),
+        sandbox.rc.display(),
+        sandbox.announce.display(),
+        sandbox.ack.display(),
+        user_rc.display(),
+    );
+    new_session(&sandbox.socket, &cmd);
+    let text = screen_until(&sandbox.socket, "$(touch", 1, Duration::from_secs(10));
+    assert!(
+        text.contains("$(touch"),
+        "the row text must appear literally; screen: {text:?}"
+    );
+    assert!(
+        !marker.exists(),
+        "the prompt text must not run; screen: {text:?}"
+    );
+    let _ = tmux(&sandbox.socket, &["kill-server"]);
+}
+
 /// The generated templates must parse with their own shell. A syntax error in a template only
 /// shows up as a broken prompt at runtime, where it is much harder to place.
 #[test]
@@ -615,7 +654,7 @@ fn a_locale_separator_does_not_break_the_command_duration() {
             std::fs::write(&sandbox.announce, "").expect("clear the announce file");
             // The sandbox has no engine, so plant an ack for every prompt: otherwise each round
             // waits out the ack timeout and the screen fills with that warning.
-            std::fs::write(&sandbox.ack, "1\nACK> \n1\n").expect("write the ack");
+            std::fs::write(&sandbox.ack, "1\n1\nACK> \n\n1\n").expect("write the ack");
             // The start lies five seconds in the past, so a working calculation reports about
             // 5000 ms. The separator is the only difference between the rounds.
             let command =

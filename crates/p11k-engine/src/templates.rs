@@ -279,7 +279,7 @@ mod tests {
         std::fs::write(&user, "function fish_prompt; echo USER-PROMPT; end\n").expect("user rc");
         let announce = dir.join("announce");
         let ack = dir.join("ack");
-        std::fs::write(&ack, "1\nOK> \n0\n").expect("ack");
+        std::fs::write(&ack, "1\n1\nOK> \n\n1\n").expect("ack");
         let out = std::process::Command::new("fish")
             .args(["-i", "-c", "fish_prompt"])
             .env("XDG_CONFIG_HOME", &dir)

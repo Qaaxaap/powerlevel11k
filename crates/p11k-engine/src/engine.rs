@@ -541,53 +541,20 @@ impl Engine {
                     // Transient prompt: `same-dir` folds the header only when the command left the
                     // shell where it was (p10k's `always` / `same-dir` split). The engine decides
                     // because it already knows both directories; the shell only reads the answer.
-                    let transient_on = transient_folds(
-                        self.config.layout.transient_prompt,
-                        self.last_prompt_cwd.as_deref(),
-                        &info.cwd,
-                    );
+                    let ack = self.prompt_ack(&info);
+                    // `prompt_ack` reads the previous prompt's directory for the fold decision, so
+                    // the record moves after it.
                     self.last_prompt_cwd = Some(info.cwd.clone());
-                    // Without the ack the shell falls back to the last prompt shape after its
-                    // timeout: the session stays usable. The log says why the header is missing,
-                    // instead of the engine exiting mid-session.
-                    let rows = self.geometry.header_rows
-                        + if self.instant_drawn {
-                            0
-                        } else {
-                            self.config.layout.prompt_add_newline
-                        };
-                    // The input row is part of the prompt string, so the shell prints it: the
-                    // engine cannot paint it later without overwriting the buffer. A stale git
-                    // result is dropped here instead of being frozen into a row the shell will
-                    // not repaint.
-                    let vcs = self
-                        .last_vcs
-                        .as_ref()
-                        .filter(|(cwd, _)| cwd == &info.cwd)
-                        .and_then(|(_, status)| status.as_ref());
-                    let input = crate::render::render_input_row(
-                        &self.config,
-                        &info,
-                        vcs,
-                        self.last_size.1 as usize,
-                        self.vi_mode,
-                        prompt_syntax(self.shell),
-                        matches!(self.shell, Shell::Zsh | Shell::Fish),
-                    );
                     if self.shell == Shell::Pwsh {
                         // Keep the visible text next to the coloured form: PSReadLine repaints the
                         // prompt from the visible text only, and the forwarding path replaces that
                         // copy with the coloured one.
                         self.pwsh_prefix =
-                            Some((crate::render::strip_ansi(&input.left), input.left.clone()));
+                            Some((crate::render::strip_ansi(&ack.left), ack.left.clone()));
                     }
-                    let ack = Ack {
-                        rows,
-                        fold: transient_on,
-                        left: input.left,
-                        right: input.right,
-                        right_indent: self.config.layout.right_indent,
-                    };
+                    // Without the ack the shell falls back to the last prompt shape after its
+                    // timeout: the session stays usable. The log says why the header is missing,
+                    // instead of the engine exiting mid-session.
                     if let Err(e) = write_ack(&self.state.ack, &ack) {
                         crate::log::log(
                             crate::log::Level::Error,
@@ -606,6 +573,9 @@ impl Engine {
                 }
                 AnnMsg::Resize => {
                     // The size check at the top of the handler already resized the pty.
+                    // The shell reprints the prompt string it holds, rendered for the old width:
+                    // `dir` shortening, a dropped right side and the right indent stay as they
+                    // were until the next prompt brings a new ack.
                     // zsh: zle repaints the prompt string and the backfill goes through the
                     // signal; repaint the header here.
                     // Other shells: after a resize the shell reprints the prompt string from
@@ -656,6 +626,49 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// The prompt shape for the state the engine holds: the header height, the fold flag and the
+    /// row the user types on.
+    ///
+    /// Announce and resize share it, so a resize cannot hand the shell a row that the next
+    /// announce would contradict.
+    fn prompt_ack(&self, info: &HeaderInfo) -> Ack {
+        let rows = self.geometry.header_rows
+            + if self.instant_drawn {
+                0
+            } else {
+                self.config.layout.prompt_add_newline
+            };
+        let fold = transient_folds(
+            self.config.layout.transient_prompt,
+            self.last_prompt_cwd.as_deref(),
+            &info.cwd,
+        );
+        // The input row is part of the prompt string, so the shell prints it: the engine cannot
+        // paint it later without overwriting the buffer. A stale git result is dropped here
+        // instead of being frozen into a row the shell will not repaint.
+        let vcs = self
+            .last_vcs
+            .as_ref()
+            .filter(|(cwd, _)| cwd == &info.cwd)
+            .and_then(|(_, status)| status.as_ref());
+        let input = crate::render::render_input_row(
+            &self.config,
+            info,
+            vcs,
+            self.last_size.1 as usize,
+            self.vi_mode,
+            prompt_syntax(self.shell),
+            matches!(self.shell, Shell::Zsh | Shell::Fish),
+        );
+        Ack {
+            rows,
+            fold,
+            left: input.left,
+            right: input.right,
+            right_indent: self.config.layout.right_indent,
+        }
     }
 
     /// Real-terminal input → pty. Returns false when the terminal closed (stop the loop).

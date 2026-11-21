@@ -268,6 +268,11 @@ pub(super) fn parse_line(node: &KdlNode) -> Vec<Element> {
                 continue;
             }
             let name = child.name().value();
+            // `line` wraps header rows. The input row has no wrapper, so a `line` there would
+            // become a segment named `line` and draw nothing.
+            if name == "line" {
+                warn_input_line_wrapper();
+            }
             // An absent value means enabled; an explicit #false disables it. The node is kept
             // so a configure round trip does not delete the commented-out segment.
             let enabled = first_value(child).map(bool_val).unwrap_or(true);
@@ -397,6 +402,12 @@ pub(super) fn first_state_name(node: &KdlNode) -> Option<String> {
 /// Warn when the config contains a key the engine does not know.
 pub(super) fn warn_unknown_key(name: &str) {
     eprintln!("p11k: {}", t_args("config-unknown-key", &[("key", name)]));
+}
+
+/// Warn when a `line` node sits where a row's elements go. The input row has no wrapper, so the
+/// node would become a segment named `line` and draw nothing.
+fn warn_input_line_wrapper() {
+    eprintln!("p11k: {}", t("config-input-line-wrapper"));
 }
 
 /// Parse the `separators` node: character child nodes (`segment`/`sub`/`end`/`right-start`/`right-segment`/`right-sub`/`left-tail`/`right-tail`/`gap`), values read as whole strings.
