@@ -293,11 +293,28 @@ pub fn is_modified(entry: &IndexEntry, st: &libc::stat, caps: &RepoCaps) -> bool
     } else {
         mode &= libc::S_IFMT;
     }
-    let ino_ok = entry.ino == 0 || u64::from(entry.ino) == st.st_ino;
+    // git keeps the inode and the size in 32 bits and compares them truncated
+    // (`statinfo.c` `match_stat_data`: `sd_ino != (unsigned int)st->st_ino`,
+    // `sd_size != munge_st_size(st->st_size)`). Comparing the full 64-bit values would mark
+    // every file over 4 GiB as modified on every scan.
+    let ino_ok = entry.ino == 0 || entry.ino == st.st_ino as u32;
+    // `stage` is the conflict flag; a conflicted entry is always a candidate.
     let stage_ok = entry.stage == 0;
-    let fsize_ok = i64::from(entry.fsize) == st.st_size;
+    let fsize_ok = entry.fsize == munge_st_size(st.st_size);
     let mtime_ok = i64::from(entry.mtime_sec) == st.st_mtime
         && (i64::from(entry.mtime_nsec) == st.st_mtime_nsec || entry.mtime_nsec == 0);
     let mode_ok = entry.mode == mode;
     !(ino_ok && stage_ok && fsize_ok && mtime_ok && mode_ok)
+}
+
+/// git's `munge_st_size`: the index stores the size in 32 bits. A file that is an exact multiple
+/// of 4 GiB would truncate to zero, which the index reads as a racily-clean entry, so git maps
+/// that case to `0x80000000` (`statinfo.c`).
+fn munge_st_size(size: i64) -> u32 {
+    let truncated = size as u32;
+    if truncated == 0 && size != 0 {
+        0x8000_0000
+    } else {
+        truncated
+    }
 }

@@ -132,6 +132,52 @@ fn is_modified_detects_ino_change() {
     assert!(is_modified(&e, &st, &caps()));
 }
 
+/// A stat with the fields `is_modified` compares, so a test can build one without a 4 GiB file.
+fn fake_stat(size: i64, ino: u64) -> libc::stat {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    st.st_ino = ino;
+    st.st_size = size;
+    st.st_mtime = 100;
+    st.st_mtime_nsec = 5;
+    st.st_mode = libc::S_IFREG | 0o644;
+    st
+}
+
+fn fake_entry(ino: u32, size: u32) -> IndexEntry {
+    IndexEntry {
+        path: b"big\0".to_vec(),
+        ino,
+        fsize: size,
+        mtime_sec: 100,
+        mtime_nsec: 5,
+        mode: 0o100644,
+        stage: 0,
+        flags_extended: 0,
+    }
+}
+
+/// git stores the size in 32 bits and compares it truncated. A file over 4 GiB must not be
+/// reported as modified only because its full size does not fit.
+#[test]
+fn is_modified_truncates_a_size_over_4gib() {
+    let st = fake_stat((1i64 << 32) + 0x1000, 7);
+    assert!(
+        !is_modified(&fake_entry(7, 0x1000), &st, &caps()),
+        "the low 32 bits of the size match, so the file is clean"
+    );
+}
+
+/// A file that is an exact multiple of 4 GiB truncates to zero, which the index reads as a
+/// racily-clean entry; git maps that case to `0x80000000`.
+#[test]
+fn is_modified_munges_an_exact_multiple_of_4gib() {
+    let st = fake_stat(1i64 << 32, 7);
+    assert!(
+        !is_modified(&fake_entry(7, 0x8000_0000), &st, &caps()),
+        "the munged size matches the index entry"
+    );
+}
+
 /// ZERO_NSEC special case: an index nsec of 0 skips nsec comparison (mirrors GITSTATUS_ZERO_NSEC).
 #[test]
 fn is_modified_zero_nsec_ignores_nsec_mismatch() {
