@@ -629,10 +629,7 @@ impl Engine {
     }
 
     /// The prompt shape for the state the engine holds: the header height, the fold flag and the
-    /// row the user types on.
-    ///
-    /// Announce and resize share it, so a resize cannot hand the shell a row that the next
-    /// announce would contradict.
+    /// row the user types on. Announce builds the ack with it.
     fn prompt_ack(&self, info: &HeaderInfo) -> Ack {
         let rows = self.geometry.header_rows
             + if self.instant_drawn {

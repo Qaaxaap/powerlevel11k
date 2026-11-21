@@ -427,6 +427,33 @@ fn zsh_does_not_run_prompt_subst_from_the_row() {
     let _ = tmux(&sandbox.socket, &["kill-server"]);
 }
 
+/// The right part of the row and its indent: fish has no `ZLE_RPROMPT_INDENT`, so the template
+/// pads the right part with spaces. Nothing else in the suite reads ack lines 4-5 end to end.
+#[test]
+fn fish_pads_the_right_part_by_the_indent() {
+    let mut sandbox = Sandbox::new("fish-right");
+    sandbox.copy_engine_rc("fish");
+    std::fs::write(&sandbox.ack, "1\n1\nLEFT> \nRIGHT\n3\n").expect("write the ack");
+    new_session(&sandbox.socket, &sandbox.shell_cmd("fish"));
+    // The first prompt takes the ack; plant it again for the prompt this case captures.
+    screen_until(&sandbox.socket, "LEFT>", 1, Duration::from_secs(10));
+    let capture = sandbox.dir.path().join("capture");
+    pipe_pane(&sandbox.socket, &capture);
+    std::fs::write(&sandbox.ack, "1\n1\nLEFT> \nRIGHT\n3\n").expect("write the ack");
+    let out = tmux(&sandbox.socket, &["send-keys", "-t", SESSION, "C-m"]);
+    assert!(out.status.success(), "send-keys C-m failed");
+    let text = capture_until(&capture, "RIGHT", Duration::from_secs(10));
+    assert!(
+        text.contains("RIGHT"),
+        "the right part should reach the terminal: {text:?}"
+    );
+    assert!(
+        text.contains("RIGHT   "),
+        "three columns of indent should follow the right part: {text:?}"
+    );
+    let _ = tmux(&sandbox.socket, &["kill-server"]);
+}
+
 /// The generated templates must parse with their own shell. A syntax error in a template only
 /// shows up as a broken prompt at runtime, where it is much harder to place.
 #[test]

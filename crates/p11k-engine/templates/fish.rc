@@ -11,19 +11,14 @@ set -g _p11k_right ''
 # Columns the right part keeps from the terminal edge, like the header rows.
 set -g _p11k_indent 1
 
-# Wait for the ack and load the prompt shape from it. `$argv[1]` bounds the wait in 5ms steps:
-# the prompt can afford two seconds, the resize path (~100ms) cannot block the input line.
-# Returns 1 when the engine did not answer; the caller keeps the values it already has.
+# Wait for the ack and load the prompt shape from it. Returns 1 when the engine did not answer;
+# the caller keeps the values it already has.
 function _p11k_read_ack
-    set -l _tries 400
-    if set -q argv[1]
-        set _tries $argv[1]
-    end
     set -l _wait 0
     while not test -f $P11K_ACK
         sleep 0.005
         set _wait (math $_wait + 1)
-        if test $_wait -ge $_tries
+        if test $_wait -ge 400
             return 1
         end
     end
@@ -46,8 +41,8 @@ function _p11k_read_ack
     return 0
 end
 
-# fish does not call fish_prompt again on a resize by itself: it reprints what it holds. The row
-# the user types on keeps the width it was rendered for until the next prompt.
+# The row the user types on keeps the width it was rendered for until the next prompt: the
+# resize branch below reprints the row from the previous ack.
 
 # fish_prompt is called when the main prompt is rendered. Two cases:
 # - size change (resize repaint): announce `r`.

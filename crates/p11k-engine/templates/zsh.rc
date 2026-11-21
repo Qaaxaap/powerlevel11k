@@ -27,16 +27,14 @@ _p11k_preexec() { _p11k_cmd_start=${EPOCHREALTIME:-} }
 autoload -Uz add-zsh-hook
 add-zsh-hook preexec _p11k_preexec
 
-# Wait for the ack and load the prompt shape from it. `_tries` bounds the wait: precmd can
-# afford two seconds, the resize hook (~100ms) cannot block the input line. Returns non-zero when
-# the engine did not answer; the caller keeps the values it already has.
+# Wait for the ack and load the prompt shape from it. Returns non-zero when the engine did not
+# answer; the caller keeps the values it already has.
 _p11k_read_ack() {
-  local _tries=${1:-400}
   local _wait=0
   until [[ -f "$P11K_ACK" ]]; do
     sleep 0.005
     _wait=$(( _wait + 1 ))
-    if (( _wait >= _tries )); then return 1; fi
+    if (( _wait >= 400 )); then return 1; fi
   done
   # The ack carries the prompt shape: header height, fold flag, the row the user types on and the
   # right indent. Reading them every prompt is what lets a reload change any of them without a
