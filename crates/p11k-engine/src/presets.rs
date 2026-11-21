@@ -1,14 +1,15 @@
 //! Built-in preset themes: constructed from [`Config`] structs, with no hard-coded KDL strings.
 //!
 //! Visually aligned with the official p10k configs (`config/p10k-{lean,classic,rainbow,pure}.zsh`).
-//! Color variants are parameterized: four classic segment backgrounds, four classic/rainbow/lean
-//! frame shades, lean 256/8 colors, pure original/snazzy. The wizard calls the constructors with
-//! the user's answers and edits fields; `--preset`/engine fallback use [`build`]'s defaults. p10k
-//! parameters the engine does not cover are not migrated.
+//! One colour table per preset; [`config`] turns a table and a layout into a [`Config`], so a fix
+//! to a segment's properties lands in all four. Color variants are parameters: four classic
+//! segment backgrounds, four classic/rainbow/lean frame shades, lean 256/8 colors, pure
+//! original/snazzy. `--preset` and the engine fallback use [`build`]'s defaults; the wizard calls
+//! the constructors with the user's answers and edits fields.
 
 use crate::config::{
-    Color, Config, Element, Frame, FramePiece, InputLine, Prop, Segment, Separators, StateSpec,
-    Style,
+    Color, Config, Element, Frame, FramePiece, InputLine, Layout, Prop, Segment, Separators,
+    StateSpec, Style,
 };
 
 /// Four classic segment backgrounds (Lightest/Light/Dark/Darkest).
@@ -22,14 +23,96 @@ fn x(n: u8) -> Color {
     Color::Xterm(n)
 }
 
-// ---- Segment constructors (shared by all four presets) ----
+// ---- One preset's colours ----
 
-fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> Segment {
-    let mut s = Segment::default();
-    s.style.fg = Some(x(fg));
-    if let Some(b) = bg {
-        s.style.bg = Some(x(b));
+/// Foreground and background of a segment that carries nothing else.
+struct PlainColours {
+    fg: Color,
+    bg: Option<Color>,
+}
+
+struct DirColours {
+    fg: Color,
+    shortened: Color,
+    anchor: Color,
+    anchor_bold: bool,
+    bg: Option<Color>,
+}
+
+/// `vcs` colours: either the five count properties, or a foreground for the whole segment.
+struct VcsColours {
+    fg: Option<Color>,
+    counts: Option<(u8, u8, u8, u8, u8)>,
+    bg: Option<Color>,
+}
+
+/// `status` colours: the foregrounds its `ok-foreground` and `error-foreground` properties take.
+struct StatusColours {
+    ok: u8,
+    err: u8,
+    bg: Option<Color>,
+}
+
+struct PromptCharColours {
+    ok: Color,
+    err: Color,
+}
+
+/// One preset's colours. A `None` segment is not part of the preset.
+struct Colours {
+    os_icon: Option<PlainColours>,
+    dir: DirColours,
+    vcs: VcsColours,
+    status: Option<StatusColours>,
+    exec: PlainColours,
+    jobs: Option<PlainColours>,
+    prompt_char: PromptCharColours,
+}
+
+// ---- Shared construction ----
+
+/// Turn one colour table and its layout into a theme.
+fn config(colours: &Colours, layout: Layout, separators: Separators, frame: Frame) -> Config {
+    let mut cfg = Config {
+        layout,
+        separators,
+        frame,
+        ..base()
+    };
+    if let Some(c) = &colours.os_icon {
+        cfg.segments.insert("os_icon".into(), plain_seg(c));
     }
+    cfg.segments.insert("dir".into(), dir_seg(&colours.dir));
+    cfg.segments.insert("vcs".into(), vcs_seg(&colours.vcs));
+    if let Some(c) = &colours.status {
+        cfg.segments.insert("status".into(), status_seg(c));
+    }
+    cfg.segments
+        .insert("command_execution_time".into(), exec_seg(&colours.exec));
+    if let Some(c) = &colours.jobs {
+        cfg.segments.insert("background_jobs".into(), jobs_seg(c));
+    }
+    cfg.segments
+        .insert("prompt_char".into(), prompt_char_seg(&colours.prompt_char));
+    cfg
+}
+
+fn plain_seg(c: &PlainColours) -> Segment {
+    Segment {
+        style: Style {
+            fg: Some(c.fg.clone()),
+            bg: c.bg.clone(),
+            ..Style::default()
+        },
+        ..Segment::default()
+    }
+}
+
+fn dir_seg(c: &DirColours) -> Segment {
+    let mut s = plain_seg(&PlainColours {
+        fg: c.fg.clone(),
+        bg: c.bg.clone(),
+    });
     s.props.insert(
         "shorten-strategy".into(),
         Prop::Str("truncate_to_unique".into()),
@@ -39,7 +122,7 @@ fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> 
         "SHORTENED".into(),
         StateSpec {
             style: Style {
-                fg: Some(x(short)),
+                fg: Some(c.shortened.clone()),
                 ..Style::default()
             },
             char: None,
@@ -49,8 +132,8 @@ fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> 
         "ANCHOR".into(),
         StateSpec {
             style: Style {
-                fg: Some(x(anchor)),
-                bold: Some(anchor_bold),
+                fg: Some(c.anchor.clone()),
+                bold: Some(c.anchor_bold),
                 ..Style::default()
             },
             char: None,
@@ -59,22 +142,18 @@ fn dir_seg(fg: u8, short: u8, anchor: u8, anchor_bold: bool, bg: Option<u8>) -> 
     s
 }
 
-fn vcs_seg(
-    fg: Option<u8>,
-    clean: u8,
-    modified: u8,
-    conflicted: u8,
-    untracked: u8,
-    meta: u8,
-    bg: Option<u8>,
-) -> Segment {
-    let mut s = Segment::default();
-    if let Some(f) = fg {
-        s.style.fg = Some(x(f));
-    }
-    if let Some(b) = bg {
-        s.style.bg = Some(x(b));
-    }
+fn vcs_seg(c: &VcsColours) -> Segment {
+    let mut s = Segment {
+        style: Style {
+            fg: c.fg.clone(),
+            bg: c.bg.clone(),
+            ..Style::default()
+        },
+        ..Segment::default()
+    };
+    let Some((clean, modified, conflicted, untracked, meta)) = c.counts else {
+        return s;
+    };
     s.props
         .insert("clean-foreground".into(), Prop::Int(clean as i64));
     s.props
@@ -100,56 +179,48 @@ fn vcs_seg(
     s
 }
 
-fn status_seg(ok: u8, err: u8, bg: Option<u8>) -> Segment {
-    let mut s = Segment::default();
-    if let Some(b) = bg {
-        s.style.bg = Some(x(b));
-    }
-    s.props.insert("ok-foreground".into(), Prop::Int(ok as i64));
+fn status_seg(c: &StatusColours) -> Segment {
+    let mut s = Segment {
+        style: Style {
+            bg: c.bg.clone(),
+            ..Style::default()
+        },
+        ..Segment::default()
+    };
     s.props
-        .insert("error-foreground".into(), Prop::Int(err as i64));
+        .insert("ok-foreground".into(), Prop::Int(c.ok as i64));
+    s.props
+        .insert("error-foreground".into(), Prop::Int(c.err as i64));
     s.props.insert("verbose".into(), Prop::Bool(true));
     s
 }
 
-fn exec_seg(fg: u8, bg: Option<u8>) -> Segment {
-    let mut s = Segment::default();
-    s.style.fg = Some(x(fg));
-    if let Some(b) = bg {
-        s.style.bg = Some(x(b));
-    }
+fn exec_seg(c: &PlainColours) -> Segment {
+    let mut s = plain_seg(c);
     s.props.insert("threshold-seconds".into(), Prop::Int(3));
     s.props.insert("precision".into(), Prop::Int(0));
     s
 }
 
-fn jobs_seg(fg: u8, bg: Option<u8>) -> Segment {
-    let mut s = Segment::default();
-    s.style.fg = Some(x(fg));
-    if let Some(b) = bg {
-        s.style.bg = Some(x(b));
-    }
+fn jobs_seg(c: &PlainColours) -> Segment {
+    let mut s = plain_seg(c);
     s.props.insert("verbose".into(), Prop::Bool(false));
     s
 }
 
-fn os_icon_seg(fg: u8, bg: Option<u8>) -> Segment {
-    let mut s = Segment::default();
-    s.style.fg = Some(x(fg));
-    if let Some(b) = bg {
-        s.style.bg = Some(x(b));
-    }
-    s
-}
-
-fn prompt_char_seg(ok: u8, err: u8) -> Segment {
-    let mut s = Segment::default();
-    s.style.fg = Some(x(ok));
+fn prompt_char_seg(c: &PromptCharColours) -> Segment {
+    let mut s = Segment {
+        style: Style {
+            fg: Some(c.ok.clone()),
+            ..Style::default()
+        },
+        ..Segment::default()
+    };
     s.states.insert(
         "ERROR".into(),
         StateSpec {
             style: Style {
-                fg: Some(x(err)),
+                fg: Some(c.err.clone()),
                 ..Style::default()
             },
             char: None,
@@ -158,7 +229,32 @@ fn prompt_char_seg(ok: u8, err: u8) -> Segment {
     s
 }
 
-// ---- Frame / separators ----
+// ---- Layout, frame and separators ----
+
+/// The one-row layout: the segments share the line with the prompt character.
+fn one_row(left: Vec<Element>, right: Vec<Element>) -> Layout {
+    Layout {
+        input: Some(InputLine { left, right }),
+        ..Layout::default()
+    }
+}
+
+/// The framed header: one row per side, the segments classic and rainbow use.
+fn framed_header() -> Layout {
+    Layout {
+        left: vec![vec![
+            Element::Seg("os_icon".into()),
+            Element::Seg("dir".into()),
+            Element::Seg("vcs".into()),
+        ]],
+        right: vec![vec![
+            Element::Seg("status".into()),
+            Element::Seg("command_execution_time".into()),
+            Element::Seg("background_jobs".into()),
+        ]],
+        ..Layout::default()
+    }
+}
 
 /// powerline arrow frame (classic/rainbow): first line `╭─`, middle `├─`, input line `╰─`.
 /// The frame-level fg colors every piece (aligns with p10k `%<frame_color>F╭─`).
@@ -188,8 +284,8 @@ fn powerline_frame(color: u8) -> Frame {
     f
 }
 
-/// Foreground of the `sub` thin line (p10k wizard's `sep_color`, varying with the classic shade).
-/// Not set for rainbow (p10k's rainbow subsep embeds no color and follows the segment background gradient).
+/// Foreground of the `sub` thin line (p10k wizard's `sep_color`). Not set for rainbow (p10k's
+/// rainbow subsep embeds no color and follows the segment background gradient).
 fn powerline_separators(sub_foreground: Option<u8>) -> Separators {
     Separators {
         segment: "\u{e0b0}".into(),
@@ -218,145 +314,189 @@ fn base() -> Config {
 /// segments share the line with the `❯`. `colors_8` requests the 8-color downgrade (aligns with
 /// p10k lean-8colors).
 pub fn lean(colors_8: bool) -> Config {
-    let (
-        dir,
-        short,
-        anchor,
-        anchor_bold,
-        vcs_clean,
-        vcs_mod,
-        vcs_conf,
-        vcs_unt,
-        vcs_meta,
-        st_ok,
-        st_err,
-        exec,
-        jobs,
-        pc_ok,
-        pc_err,
-    ) = if colors_8 {
+    let colours = if colors_8 {
         // p10k lean-8colors: clean 2 / modified 3 / untracked 4 (blue) / conflicted 1,
-        // with meta on the default foreground (%f, 0 here).
-        (4, 4, 4, false, 2, 3, 1, 4, 0, 2, 1, 3, 1, 2, 1)
+        // with meta on the default foreground (0 here).
+        Colours {
+            os_icon: None,
+            dir: DirColours {
+                fg: x(4),
+                shortened: x(4),
+                anchor: x(4),
+                anchor_bold: false,
+                bg: None,
+            },
+            vcs: VcsColours {
+                fg: None,
+                counts: Some((2, 3, 1, 4, 0)),
+                bg: None,
+            },
+            status: Some(StatusColours {
+                ok: 2,
+                err: 1,
+                bg: None,
+            }),
+            exec: PlainColours { fg: x(3), bg: None },
+            jobs: Some(PlainColours { fg: x(1), bg: None }),
+            prompt_char: PromptCharColours {
+                ok: x(2),
+                err: x(1),
+            },
+        }
     } else {
         // p10k lean: clean 76 / modified 178 / untracked 39 (blue) / conflicted 196,
         // meta 246 (gray).
-        (
-            31, 103, 39, true, 76, 178, 196, 39, 246, 70, 160, 101, 70, 76, 196,
-        )
+        Colours {
+            os_icon: None,
+            dir: DirColours {
+                fg: x(31),
+                shortened: x(103),
+                anchor: x(39),
+                anchor_bold: true,
+                bg: None,
+            },
+            vcs: VcsColours {
+                fg: None,
+                counts: Some((76, 178, 196, 39, 246)),
+                bg: None,
+            },
+            status: Some(StatusColours {
+                ok: 70,
+                err: 160,
+                bg: None,
+            }),
+            exec: PlainColours {
+                fg: x(101),
+                bg: None,
+            },
+            jobs: Some(PlainColours {
+                fg: x(70),
+                bg: None,
+            }),
+            prompt_char: PromptCharColours {
+                ok: x(76),
+                err: x(196),
+            },
+        }
     };
-
-    let mut cfg = base();
-    // The segments sit on the row the user types on; lean has no header row above it.
-    cfg.layout.input = Some(InputLine {
-        left: vec![Element::Seg("dir".into()), Element::Seg("vcs".into())],
-        right: vec![
-            Element::Seg("status".into()),
-            Element::Seg("command_execution_time".into()),
-            Element::Seg("background_jobs".into()),
-        ],
-    });
-    cfg.segments
-        .insert("dir".into(), dir_seg(dir, short, anchor, anchor_bold, None));
-    cfg.segments.insert(
-        "vcs".into(),
-        vcs_seg(None, vcs_clean, vcs_mod, vcs_conf, vcs_unt, vcs_meta, None),
-    );
-    cfg.segments
-        .insert("status".into(), status_seg(st_ok, st_err, None));
-    cfg.segments
-        .insert("command_execution_time".into(), exec_seg(exec, None));
-    cfg.segments
-        .insert("background_jobs".into(), jobs_seg(jobs, None));
-    cfg.segments
-        .insert("prompt_char".into(), prompt_char_seg(pc_ok, pc_err));
-    cfg
+    config(
+        &colours,
+        one_row(
+            vec![Element::Seg("dir".into()), Element::Seg("vcs".into())],
+            vec![
+                Element::Seg("status".into()),
+                Element::Seg("command_execution_time".into()),
+                Element::Seg("background_jobs".into()),
+            ],
+        ),
+        Separators::default(),
+        Frame::default(),
+    )
 }
 
-/// classic: multi-line frame + powerline arrows, one dark background for all segments. `color` is one of the four shades (1..=4).
+/// classic: multi-line frame + powerline arrows, one dark background for all segments. `color` is
+/// one of the four shades (1..=4).
 pub fn classic(color: usize) -> Config {
     let i = color.clamp(1, 4) - 1;
-    let bg = BG_COLORS[i];
-    let frame = FRAME_COLORS[i];
-
-    let mut cfg = base();
-    cfg.layout.left = vec![vec![
-        Element::Seg("os_icon".into()),
-        Element::Seg("dir".into()),
-        Element::Seg("vcs".into()),
-    ]];
-    cfg.layout.right = vec![vec![
-        Element::Seg("status".into()),
-        Element::Seg("command_execution_time".into()),
-        Element::Seg("background_jobs".into()),
-    ]];
-    cfg.separators = powerline_separators(Some(SEP_COLORS[i]));
-    cfg.frame = powerline_frame(frame);
-    // The background is written per segment (p10k classic inherits it from the global
-    // `POWERLEVEL9K_BACKGROUND=238`, while p11k's `defaults.bg` is also the fallback end for
-    // frame characters/text, so writing it there tints the **frame** pieces `╭─`/`╰─` too,
-    // whereas p10k's frame is transparent). Segments added later (the wizard's time etc.) get
-    // the same background from the wizard for the current style.
-    cfg.segments
-        .insert("os_icon".into(), os_icon_seg(255, Some(bg)));
-    cfg.segments
-        .insert("dir".into(), dir_seg(31, 103, 39, true, Some(bg)));
-    // untracked=39 (blue): p10k's classic/lean vcs formatting function uses
-    // `local untracked='%39F'`, which is not the same as
-    // POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND (76, used only by the vcs_info fallback path) —
-    // the actual rendering is blue.
-    // conflicted=196 (red): p10k classic `local conflicted='%196F'`.
-    cfg.segments
-        .insert("vcs".into(), vcs_seg(None, 76, 178, 196, 39, 246, Some(bg)));
-    cfg.segments
-        .insert("status".into(), status_seg(70, 160, Some(bg)));
-    cfg.segments
-        .insert("command_execution_time".into(), exec_seg(248, Some(bg)));
-    cfg.segments
-        .insert("background_jobs".into(), jobs_seg(37, Some(bg)));
-    cfg.segments
-        .insert("prompt_char".into(), prompt_char_seg(76, 196));
-    cfg
+    let bg = Some(x(BG_COLORS[i]));
+    let colours = Colours {
+        os_icon: Some(PlainColours {
+            fg: x(255),
+            bg: bg.clone(),
+        }),
+        dir: DirColours {
+            fg: x(31),
+            shortened: x(103),
+            anchor: x(39),
+            anchor_bold: true,
+            bg: bg.clone(),
+        },
+        // untracked=39 (blue): p10k's classic/lean vcs formatting function uses
+        // `local untracked='%39F'`, which is not the same as
+        // POWERLEVEL9K_VCS_UNTRACKED_FOREGROUND (76, used only by the vcs_info fallback path) —
+        // the actual rendering is blue.
+        // conflicted=196 (red): p10k classic `local conflicted='%196F'`.
+        vcs: VcsColours {
+            fg: None,
+            counts: Some((76, 178, 196, 39, 246)),
+            bg: bg.clone(),
+        },
+        status: Some(StatusColours {
+            ok: 70,
+            err: 160,
+            bg: bg.clone(),
+        }),
+        exec: PlainColours {
+            fg: x(248),
+            bg: bg.clone(),
+        },
+        jobs: Some(PlainColours {
+            fg: x(37),
+            bg: bg.clone(),
+        }),
+        prompt_char: PromptCharColours {
+            ok: x(76),
+            err: x(196),
+        },
+    };
+    config(
+        &colours,
+        framed_header(),
+        powerline_separators(Some(SEP_COLORS[i])),
+        powerline_frame(FRAME_COLORS[i]),
+    )
 }
 
-/// rainbow: classic structure but a colored background per segment (aligns with p10k rainbow). `color` is one of the four frame shades.
+/// rainbow: classic structure but a colored background per segment (aligns with p10k rainbow).
+/// `color` is one of the four frame shades.
 pub fn rainbow(color: usize) -> Config {
     let i = color.clamp(1, 4) - 1;
-    let frame = FRAME_COLORS[i];
-
-    let mut cfg = base();
-    cfg.layout.left = vec![vec![
-        Element::Seg("os_icon".into()),
-        Element::Seg("dir".into()),
-        Element::Seg("vcs".into()),
-    ]];
-    cfg.layout.right = vec![vec![
-        Element::Seg("status".into()),
-        Element::Seg("command_execution_time".into()),
-        Element::Seg("background_jobs".into()),
-    ]];
     // rainbow's thin lines embed no color (same as p10k, following the segment background gradient).
-    cfg.separators = powerline_separators(None);
-    cfg.frame = powerline_frame(frame);
-    // Rainbow backgrounds: os white, dir blue, vcs green, status black, exec yellow, jobs black.
-    cfg.segments
-        .insert("os_icon".into(), os_icon_seg(232, Some(7)));
-    cfg.segments
-        .insert("dir".into(), dir_seg(254, 250, 255, true, Some(4)));
-    // p10k rainbow's vcs formatting function: clean/modified/untracked are all `%0F` (black, on
-    // the green 2 segment background) and conflicted is `%1F` (red). Previously 2/3/2 was passed,
-    // and green on green made the branch name and ?N invisible.
-    cfg.segments
-        .insert("vcs".into(), vcs_seg(None, 0, 0, 1, 0, 7, Some(2)));
-    cfg.segments
-        .insert("status".into(), status_seg(2, 3, Some(0)));
-    cfg.segments
-        .insert("command_execution_time".into(), exec_seg(0, Some(3)));
-    cfg.segments
-        .insert("background_jobs".into(), jobs_seg(6, Some(0)));
-    cfg.segments
-        .insert("prompt_char".into(), prompt_char_seg(76, 196));
-    cfg
+    let colours = Colours {
+        // Rainbow backgrounds: os white, dir blue, vcs green, status black, exec yellow, jobs black.
+        os_icon: Some(PlainColours {
+            fg: x(232),
+            bg: Some(x(7)),
+        }),
+        dir: DirColours {
+            fg: x(254),
+            shortened: x(250),
+            anchor: x(255),
+            anchor_bold: true,
+            bg: Some(x(4)),
+        },
+        // p10k rainbow's vcs formatting function: clean/modified/untracked are all `%0F` (black, on
+        // the green 2 segment background) and conflicted is `%1F` (red). Previously 2/3/2 was passed,
+        // and green on green made the branch name and ?N invisible.
+        vcs: VcsColours {
+            fg: None,
+            counts: Some((0, 0, 1, 0, 7)),
+            bg: Some(x(2)),
+        },
+        status: Some(StatusColours {
+            ok: 2,
+            err: 3,
+            bg: Some(x(0)),
+        }),
+        exec: PlainColours {
+            fg: x(0),
+            bg: Some(x(3)),
+        },
+        jobs: Some(PlainColours {
+            fg: x(6),
+            bg: Some(x(0)),
+        }),
+        prompt_char: PromptCharColours {
+            ok: x(76),
+            err: x(196),
+        },
+    };
+    config(
+        &colours,
+        framed_header(),
+        powerline_separators(None),
+        powerline_frame(FRAME_COLORS[i]),
+    )
 }
 
 /// pure: one row with no frame or arrows and a transparent background, like p10k pure, whose
@@ -375,42 +515,50 @@ pub fn pure(snazzy: bool) -> Config {
     } else {
         (x(242), x(1), x(3), x(4), x(5))
     };
-
-    let mut cfg = base();
+    let colours = Colours {
+        os_icon: None,
+        dir: DirColours {
+            fg: blue.clone(),
+            shortened: grey.clone(),
+            anchor: blue,
+            anchor_bold: false,
+            bg: None,
+        },
+        vcs: VcsColours {
+            fg: Some(grey.clone()),
+            counts: None,
+            bg: None,
+        },
+        status: None,
+        exec: PlainColours {
+            fg: yellow,
+            bg: None,
+        },
+        jobs: None,
+        prompt_char: PromptCharColours {
+            ok: magenta,
+            err: red,
+        },
+    };
     // One row, like p10k pure: the segments share the line with the `❯`, and there is no right
     // column.
-    cfg.layout.input = Some(InputLine {
-        left: vec![
-            Element::Seg("context".into()),
-            Element::Seg("dir".into()),
-            Element::Seg("vcs".into()),
-            Element::Seg("command_execution_time".into()),
-        ],
-        right: Vec::new(),
-    });
-
+    let mut cfg = config(
+        &colours,
+        one_row(
+            vec![
+                Element::Seg("context".into()),
+                Element::Seg("dir".into()),
+                Element::Seg("vcs".into()),
+                Element::Seg("command_execution_time".into()),
+            ],
+            Vec::new(),
+        ),
+        Separators::default(),
+        Frame::default(),
+    );
     let mut context = Segment::default();
-    context.style.fg = Some(grey.clone());
+    context.style.fg = Some(grey);
     cfg.segments.insert("context".into(), context);
-
-    let mut dir = dir_seg(0, 0, 0, false, None);
-    dir.style.fg = Some(blue.clone());
-    dir.states.get_mut("SHORTENED").unwrap().style.fg = Some(grey.clone());
-    dir.states.get_mut("ANCHOR").unwrap().style.fg = Some(blue.clone());
-    cfg.segments.insert("dir".into(), dir);
-
-    let mut vcs = Segment::default();
-    vcs.style.fg = Some(grey.clone());
-    cfg.segments.insert("vcs".into(), vcs);
-
-    let mut exec = exec_seg(0, None);
-    exec.style.fg = Some(yellow.clone());
-    cfg.segments.insert("command_execution_time".into(), exec);
-
-    let mut pc = prompt_char_seg(0, 0);
-    pc.style.fg = Some(magenta.clone());
-    pc.states.get_mut("ERROR").unwrap().style.fg = Some(red.clone());
-    cfg.segments.insert("prompt_char".into(), pc);
     cfg
 }
 
