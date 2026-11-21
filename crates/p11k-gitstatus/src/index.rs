@@ -54,8 +54,6 @@ pub struct IndexEntry {
     pub stage: u16,
     /// GIT_INDEX_ENTRY_EXTENDED bits: SKIP_WORKTREE / INTENT_TO_ADD.
     pub flags_extended: u16,
-    /// GIT_INDEX_ENTRY_VALID (assume-unchanged).
-    pub assume_valid: bool,
 }
 
 /// Index directory-tree node. `dirs` is in pre-order (`dirs[0]` is the root).
@@ -254,7 +252,6 @@ impl Index {
             old.mode = new.mode;
             old.stage = new.stage;
             old.flags_extended = new.flags_extended;
-            old.assume_valid = new.assume_valid;
         }
     }
 

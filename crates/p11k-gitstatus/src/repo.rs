@@ -76,7 +76,6 @@ fn copy_entries(git_index: &GitIndex) -> Vec<IndexEntry> {
                 // GIT_INDEX_ENTRY_STAGE_SHIFT = 12 (git2 has no stage accessor).
                 stage: (e.flags >> 12) & 0x3,
                 flags_extended: e.flags_extended,
-                assume_valid: e.flags & git2::IndexEntryFlag::VALID.bits() != 0,
             }
         })
         .collect()
@@ -597,7 +596,7 @@ impl Repo {
         let mut index = self.index_tree_or_rebuild(&git_index, limits.max_num_untracked != 0);
 
         // Caps (RepoCaps; config missing → default true).
-        let caps = self.repo_caps(&git_index);
+        let caps = self.repo_caps();
 
         let mut stats = IndexStats {
             index_size,
@@ -968,7 +967,7 @@ impl Repo {
     }
 
     /// Repo capability bits (RepoCaps; config missing → defaults).
-    fn repo_caps(&self, _index: &GitIndex) -> RepoCaps {
+    fn repo_caps(&self) -> RepoCaps {
         let get_bool = |name: &str, default: bool| {
             self.git
                 .config()
