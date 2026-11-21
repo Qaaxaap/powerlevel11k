@@ -1,6 +1,7 @@
 use crate::options::Options;
 use crate::protocol::{self, Response};
 use crate::repo::RepoCache;
+use crate::sys;
 use std::panic::AssertUnwindSafe;
 use std::process::exit;
 
@@ -82,16 +83,14 @@ impl Daemon {
                 events: libc::POLLIN,
                 revents: 0,
             };
-            // SAFETY: pollfd layout is fixed by libc; 1s matches the original select.
-            let n = unsafe { libc::poll(&mut pfd, 1, 1000) };
-            if n < 0 {
-                let err = std::io::Error::last_os_error();
-                if err.kind() == std::io::ErrorKind::Interrupted {
-                    continue; // EINTR: retry
+            let n = match sys::poll(std::slice::from_mut(&mut pfd), 1000) {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    eprintln!("gitstatusd: poll: {e}");
+                    exit(0);
                 }
-                eprintln!("gitstatusd: poll: {err}");
-                exit(0);
-            }
+            };
             if n == 0 {
                 if !self.liveness_ok() {
                     exit(0);
@@ -101,22 +100,19 @@ impl Daemon {
             }
             // Readable.
             let mut chunk = [0u8; 256];
-            // SAFETY: writes into a stack array; nread bounds the slice.
-            let nread =
-                unsafe { libc::read(self.stdin_fd, chunk.as_mut_ptr().cast(), chunk.len()) };
-            if nread < 0 {
-                let err = std::io::Error::last_os_error();
-                if err.kind() == std::io::ErrorKind::Interrupted {
-                    continue;
+            let nread = match sys::read(self.stdin_fd, &mut chunk) {
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => {
+                    eprintln!("gitstatusd: read: {e}");
+                    exit(0);
                 }
-                eprintln!("gitstatusd: read: {err}");
-                exit(0);
-            }
+            };
             if nread == 0 {
                 // EOF: zsh closed the FIFO write end.
                 exit(0);
             }
-            buf.extend_from_slice(&chunk[..nread as usize]);
+            buf.extend_from_slice(&chunk[..nread]);
         }
     }
 
@@ -176,17 +172,14 @@ impl Daemon {
                 l_pid: 0,
             };
             // SAFETY: fl is a valid flock; F_GETLK fills it.
-            let locked = unsafe { libc::fcntl(self.options.lock_fd, libc::F_GETLK, &mut fl) } == 0
+            let locked = sys::fcntl_getlk(self.options.lock_fd, &mut fl).is_ok()
                 && fl.l_type != libc::F_UNLCK as _;
             if !locked {
                 return false;
             }
         }
-        if self.options.parent_pid >= 0 {
-            // SAFETY: signal-0 probe, standard usage.
-            if unsafe { libc::kill(self.options.parent_pid, 0) } != 0 {
-                return false;
-            }
+        if self.options.parent_pid >= 0 && sys::kill(self.options.parent_pid, 0).is_err() {
+            return false;
         }
         true
     }
@@ -204,15 +197,11 @@ enum RequestError {
 /// Write every byte to `fd` (short writes, EINTR).
 fn write_all(fd: i32, mut bytes: &[u8]) -> std::io::Result<()> {
     while !bytes.is_empty() {
-        // SAFETY: writes a bounded slice; the return value bounds the advance.
-        let n = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
-        if n < 0 {
-            let err = std::io::Error::last_os_error();
-            if err.kind() == std::io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(err);
-        }
+        let n = match sys::write(fd, bytes) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
         if n == 0 {
             return Err(std::io::Error::from(std::io::ErrorKind::WriteZero));
         }
@@ -229,13 +218,11 @@ mod tests {
     /// `ResponseGuard` called `exit(1)` from `Drop`, so the caller never saw this error.
     #[test]
     fn a_failed_write_is_returned() {
-        let mut fds = [0i32; 2];
-        // SAFETY: pipe() writes two fds into the array.
-        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
-        // SAFETY: close the read end so the write fails with EPIPE.
-        unsafe { libc::close(fds[0]) };
+        let (read_fd, write_fd) = sys::pipe().expect("pipe");
+        // Close the read end so the write fails with EPIPE.
+        sys::close(read_fd).expect("close the read end");
         let mut daemon = Daemon::new(Options::default());
-        daemon.stdout_fd = fds[1];
+        daemon.stdout_fd = write_fd;
         let resp = Response {
             id: b"1".to_vec(),
             is_repo: false,
@@ -245,7 +232,6 @@ mod tests {
             .write_response(&resp)
             .expect_err("a closed pipe must fail");
         assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
-        // SAFETY: close the write end.
-        unsafe { libc::close(fds[1]) };
+        sys::close(write_fd).expect("close the write end");
     }
 }
