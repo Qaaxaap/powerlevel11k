@@ -423,6 +423,10 @@ mod tests {
         let mut fds = [0i32; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
         let raw = RawTerminal::enter(fds[0]).expect("a non-terminal enters without a saved state");
+        assert!(
+            !raw.is_raw(),
+            "the caller has to be able to tell that raw mode was not entered"
+        );
         drop(raw);
         unsafe {
             libc::close(fds[0]);
