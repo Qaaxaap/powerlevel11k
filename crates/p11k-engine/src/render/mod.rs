@@ -24,11 +24,13 @@ use self::icons::{icon_str, resolve_icon_choice};
 use self::segment::{Ctx, IconStyle, SegmentValue};
 pub(crate) use self::segments::clear_cmd_cache;
 use self::segments::*;
+pub(crate) use self::style::PromptSyntax;
+#[cfg(test)]
+pub use self::style::input_prefix;
+use self::style::{input_left, input_right, named_256, paint, paint_attach};
 pub use self::style::{
-    InputPrefix, input_prefix, prefix_text, prefix_text_bash, prefix_text_zsh, prompt_state,
-    strip_ansi, transient_prompt_zsh,
+    prefix_text, prefix_text_bash, prefix_text_zsh, prompt_state, strip_ansi, transient_prompt_zsh,
 };
-use self::style::{named_256, paint, paint_attach};
 use std::collections::HashMap;
 
 /// Renders the header as per-line content (each line = left segments + right-aligned right
@@ -502,6 +504,67 @@ pub fn render_header_lines(
         .collect()
 }
 
+/// The row the user types on, in the syntax of one shell's prompt string.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct InputRow {
+    /// The frame's last prefix, the left column and the prompt character.
+    pub left: String,
+    /// The right column and the frame's last suffix, for a shell with a right prompt.
+    pub right: String,
+}
+
+/// Render the row the user types on.
+///
+/// The row is one line, built like a header row: the frame's last prefix, the left column and the
+/// prompt character on the left, the right column and the frame's last suffix on the right. The
+/// shell aligns the right side against the right edge, so nothing is filled between them.
+/// `right_prompt` drops that whole side for a shell without a right prompt (bash and pwsh). The
+/// strings come back in `syntax`, which turns the renderer's ANSI into the shell's prompt escapes.
+pub(crate) fn render_input_row(
+    config: &Config,
+    info: &HeaderInfo,
+    vcs: Option<&GitStatus>,
+    cols: usize,
+    vi_mode: ViMode,
+    syntax: PromptSyntax,
+    right_prompt: bool,
+) -> InputRow {
+    let state = prompt_state(config, Some(info), vi_mode);
+    let renderer = Renderer::new(config, info, vcs, cols, vi_mode);
+    let seps = &config.separators;
+    // The frame and the prompt character belong to the row but not to the shortening budget: the
+    // engine never sees the typed buffer. The overflow covers the left column plus the frame and
+    // the prompt character, and `dir` folds by that much. A folded `dir` here is best effort for
+    // the same reason.
+    let prefix = prefix_text(config, state);
+    let left_parts = match &config.layout.input {
+        Some(input) => renderer.row(&input.left, false, None),
+        None => Vec::new(),
+    };
+    let mut left_line = emit_input_left(&left_parts, seps);
+    let overflow = (left_line.width + display_width(&prefix) + config.layout.right_indent + 1)
+        .saturating_sub(cols);
+    if overflow > 0
+        && let Some(input) = &config.layout.input
+    {
+        let shortened = renderer.shorten_row(&input.left, false, left_parts, overflow);
+        left_line = emit_input_left(&shortened, seps);
+    }
+    let right = if right_prompt {
+        let parts = match &config.layout.input {
+            Some(input) => renderer.row(&input.right, true, None),
+            None => Vec::new(),
+        };
+        input_right(config, &emit_input_right(&parts, seps).text, syntax)
+    } else {
+        String::new()
+    };
+    InputRow {
+        left: input_left(config, state, &left_line.text, syntax),
+        right,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::env::*;
@@ -520,6 +583,163 @@ mod tests {
             history: 0,
             pipestatus: Vec::new(),
         }
+    }
+
+    /// lean with its segments moved back onto a header row. The header tests below exercise
+    /// header rendering, and lean itself is one row now.
+    fn lean_with_header() -> Config {
+        let mut cfg = Config::default_lean().unwrap();
+        if let Some(row) = cfg.layout.input.take() {
+            cfg.layout.left = vec![row.left];
+            cfg.layout.right = vec![row.right];
+        }
+        cfg
+    }
+
+    /// `prompt_char` is an ordinary segment when a layout names it: it draws a glyph. It does not
+    /// change the one before the cursor, which the engine draws after the row's segments.
+    #[test]
+    fn prompt_char_in_a_layout_draws_another_glyph() {
+        let cfg = Config::parse("layout { left { line { prompt_char } } }").unwrap();
+        let line = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("");
+        assert!(
+            line.contains('\u{276f}'),
+            "a layout entry draws the glyph: {line:?}"
+        );
+    }
+
+    /// The row is built like a header row: the frame decorates the row edge, so its last prefix
+    /// comes before the row's segments, and its last suffix after the right column.
+    #[test]
+    fn input_row_puts_the_frame_at_the_row_edges() {
+        let cfg = Config::parse(
+            "mode \"ascii\"\nlayout {\n  input {\n    left { dir }\n    right { status }\n  }\n}\n\
+             frame { last-prefix \"[\"; last-suffix \"]\" }",
+        )
+        .unwrap();
+        let row = render_input_row(
+            &cfg,
+            &info("/tmp", Some(1)),
+            None,
+            80,
+            ViMode::Unreported,
+            PromptSyntax::Ansi,
+            true,
+        );
+        let left = strip_ansi(&row.left);
+        assert_eq!(
+            left, "[/tmp > ",
+            "the frame comes before the segments, then the prompt character: {left:?}"
+        );
+        let right = strip_ansi(&row.right);
+        assert!(
+            right.contains('1'),
+            "the right part shows the failing exit code: {right:?}"
+        );
+        assert!(
+            right.ends_with(']'),
+            "the frame suffix ends the right part: {right:?}"
+        );
+    }
+
+    /// A shell without a right prompt draws neither the right column nor the frame's suffix.
+    #[test]
+    fn the_right_part_needs_a_right_prompt() {
+        let cfg = Config::parse(
+            "mode \"ascii\"\nlayout { input { right { status } } }\nframe { last-suffix \"]\" }",
+        )
+        .unwrap();
+        let row = render_input_row(
+            &cfg,
+            &info("/tmp", Some(1)),
+            None,
+            80,
+            ViMode::Unreported,
+            PromptSyntax::Ansi,
+            false,
+        );
+        assert!(
+            row.right.is_empty(),
+            "bash and pwsh have no right prompt: {:?}",
+            row.right
+        );
+    }
+
+    /// The row is part of the shell's prompt string, so its text arrives in that shell's
+    /// syntax: no raw escape byte, and the colour as prompt escapes.
+    #[test]
+    fn input_row_uses_the_shells_prompt_syntax() {
+        let cfg = Config::parse(
+            "mode \"ascii\"\nsegments { dir fg=39 }\nlayout { input { left { dir } } }",
+        )
+        .unwrap();
+        let info = info("/tmp", Some(0));
+        let zsh = render_input_row(
+            &cfg,
+            &info,
+            None,
+            80,
+            ViMode::Unreported,
+            PromptSyntax::Zsh,
+            true,
+        );
+        assert!(zsh.left.contains("%F{39}"), "zsh colour: {:?}", zsh.left);
+        assert!(
+            !zsh.left.contains('\x1b'),
+            "a zsh prompt string carries no raw escape: {:?}",
+            zsh.left
+        );
+
+        let bash = render_input_row(
+            &cfg,
+            &info,
+            None,
+            80,
+            ViMode::Unreported,
+            PromptSyntax::Bash,
+            false,
+        );
+        assert!(bash.left.contains("\\["), "bash brackets: {:?}", bash.left);
+        assert!(
+            bash.left.matches('\x1b').count() == bash.left.matches("\\[\x1b").count(),
+            "every escape sequence sits inside the zero-width brackets: {:?}",
+            bash.left
+        );
+        assert!(
+            bash.right.is_empty(),
+            "bash has no right prompt: {:?}",
+            bash.right
+        );
+    }
+
+    /// Without an `input` node the row keeps its implicit form: the frame's last prefix and the
+    /// prompt character. A layout with only an input row has no header line, so the prompt is
+    /// that one row.
+    #[test]
+    fn an_undeclared_input_row_keeps_the_frame_and_prompt_char() {
+        let cfg =
+            Config::parse("layout { left { line { dir } } }\nframe { last-prefix \"[\" }").unwrap();
+        let row = render_input_row(
+            &cfg,
+            &info("/tmp", Some(0)),
+            None,
+            80,
+            ViMode::Unreported,
+            PromptSyntax::Ansi,
+            true,
+        );
+        assert_eq!(
+            strip_ansi(&row.left),
+            "[\u{276f} ",
+            "the frame and the prompt character stay: {:?}",
+            row.left
+        );
+        assert!(row.right.is_empty(), "no right part without a right column");
+        let single = Config::parse("layout { input { left { dir } } }").unwrap();
+        assert!(
+            render_header_lines(&single, &info("/tmp", Some(0)), None, 80).is_empty(),
+            "the input row is not a header line"
+        );
     }
 
     /// Last `38;5;N` foreground code before `needle`: asserts which color some text used,
@@ -1201,7 +1421,7 @@ mod tests {
         }
         // p10k's vcs formatting function order: ⇣behind⇡ahead → *stashes → action →
         // ~conflicted → +staged → !unstaged → ?untracked; no space between ahead/behind.
-        let cfg = Config::default_lean().unwrap();
+        let cfg = lean_with_header();
         let v = GitStatus {
             branch: "main".into(),
             commit: String::new(),
@@ -1341,7 +1561,7 @@ mod tests {
 
     #[test]
     fn renders_pure_text_header_with_right_align() {
-        let cfg = Config::default_lean().unwrap();
+        let cfg = lean_with_header();
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
         // The header is a single line: dir + status icon (nerdfont default ); prompt_char (❯) is not in the header.
         assert!(
@@ -1358,7 +1578,7 @@ mod tests {
 
     #[test]
     fn right_aligns_to_cols() {
-        let cfg = Config::default_lean().unwrap();
+        let cfg = lean_with_header();
         let h = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80).join("\r\n");
         // The right status icon is right-aligned: gap filling makes the row's display width
         // = cols. The right column also keeps `right-indent` (default 1, same as zsh
@@ -1525,7 +1745,7 @@ mod tests {
 
     #[test]
     fn vcs_counts_appear() {
-        let cfg = Config::default_lean().unwrap();
+        let cfg = lean_with_header();
         let v = GitStatus {
             branch: "master".into(),
             commit: String::new(),
@@ -2532,9 +2752,10 @@ mod tests {
         cfg
     }
 
-    /// The full header and input-line output for one preset.
-    /// The output covers each width in the matrix.
-    fn golden_lines(kind: crate::presets::PresetKind) -> Vec<(usize, Vec<String>)> {
+    /// The full prompt for one preset: the header lines, the row the user types on (its left
+    /// column followed by the prefix the shell draws the buffer after) and that row's right
+    /// column. The output covers each width in the matrix.
+    fn golden_lines(kind: crate::presets::PresetKind) -> Vec<(usize, Vec<String>, String)> {
         let cfg = golden_config(kind);
         let info = golden_info();
         let vcs = golden_vcs();
@@ -2542,8 +2763,17 @@ mod tests {
             .into_iter()
             .map(|cols| {
                 let mut lines = render_header_lines(&cfg, &info, Some(&vcs), cols);
-                lines.push(crate::render::input_prefix(&cfg, None, ViMode::Unreported).text);
-                (cols, lines)
+                let row = render_input_row(
+                    &cfg,
+                    &info,
+                    Some(&vcs),
+                    cols,
+                    ViMode::Unreported,
+                    PromptSyntax::Ansi,
+                    true,
+                );
+                lines.push(row.left);
+                (cols, lines, row.right)
             })
             .collect()
     }
@@ -2560,7 +2790,7 @@ mod tests {
             registry::SEGMENTS.len(),
             "duplicate segment name"
         );
-        let cfg = Config::default_lean().unwrap();
+        let cfg = lean_with_header();
         let header = info("/tmp", Some(0));
         for spec in registry::SEGMENTS {
             let ctx = Ctx {
@@ -2632,7 +2862,7 @@ mod tests {
     /// assembling instead of re-scanning the line later.
     #[test]
     fn painted_line_width_matches_the_visible_width() {
-        let cfg = Config::default_lean().unwrap();
+        let cfg = lean_with_header();
         let lines = render_header_lines_with_widths(
             &cfg,
             &info("/tmp", Some(0)),

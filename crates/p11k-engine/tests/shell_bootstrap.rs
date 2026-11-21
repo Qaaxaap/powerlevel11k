@@ -323,7 +323,8 @@ impl Sandbox {
 
     /// Start the shell with a pre-written ack: the prompt must take its prefix without waiting.
     fn start_shell_with_ack(&self, shell: &str) {
-        std::fs::write(&self.ack, "1\nACK> \n1\n").expect("write the ack");
+        // Header rows, fold flag, the row the user types on (left and right) and the right indent.
+        std::fs::write(&self.ack, "1\n1\nACK> \n\n1\n").expect("write the ack");
         new_session(&self.socket, &self.shell_cmd(shell));
     }
 }
@@ -682,7 +683,7 @@ fn a_real_comma_locale_reports_the_command_duration() {
     for shell in ["bash", "zsh"] {
         let mut sandbox = Sandbox::new(&format!("comma-locale-{shell}"));
         sandbox.copy_engine_rc(shell);
-        std::fs::write(&sandbox.ack, "1\nOK> \n1\n").expect("write the ack");
+        std::fs::write(&sandbox.ack, "1\n1\nOK> \n\n1\n").expect("write the ack");
         new_session(
             &sandbox.socket,
             &sandbox.shell_cmd_env(shell, &[("LC_ALL", "it_IT.UTF-8"), ("LANG", "it_IT.UTF-8")]),
@@ -693,7 +694,7 @@ fn a_real_comma_locale_reports_the_command_duration() {
             "{shell}: the prompt did not appear; screen: {text:?}"
         );
         std::fs::write(&sandbox.announce, "").expect("clear the announce file");
-        std::fs::write(&sandbox.ack, "1\nOK> \n1\n").expect("write the ack");
+        std::fs::write(&sandbox.ack, "1\n1\nOK> \n\n1\n").expect("write the ack");
         // A real command: the shell measures it with its own timestamps under the locale.
         send_keys(&sandbox.socket, "sleep 2");
         let records = wait_for_announce(&sandbox.announce, 1, Duration::from_secs(10));

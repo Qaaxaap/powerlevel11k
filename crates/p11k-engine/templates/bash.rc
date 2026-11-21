@@ -6,7 +6,10 @@ PS1="\[$_p11k_signal\]"
 # Last prompt shape from the engine ack, kept across prompts so a dead or stuck engine cannot
 # block the prompt forever: _p11k_prompt_command falls back to these values after the ack timeout.
 _p11k_rows=1
-_p11k_prefix=$P11K_PREFIX_OK
+# The row the user types on, in bash's prompt syntax: the frame prefix, the row's segments and
+# the prompt character. bash has no right prompt, so neither the right column nor the frame suffix
+# is drawn.
+_p11k_left=$P11K_PREFIX_OK
 
 # Command timing for bash. Bash has no CMD_DURATION and no preexec. A DEBUG trap records
 # EPOCHREALTIME before the first simple command after a prompt. `_p11k_cmd_start` is set once
@@ -63,23 +66,24 @@ _p11k_prompt_command() {
     if (( _wait >= 400 )); then break; fi
   done
   if [[ -f "$P11K_ACK" ]]; then
-    # The ack carries the prompt shape: header height on the first line, then the two prefix
-    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    # The ack carries the prompt shape: header height, the fold flag, the row the user types on
+    # and the right indent. Reading them every prompt is what lets a reload change any of them
+    # without a restart. bash has no right prompt, so it reads only the height and the left part.
     local -a _ack
     mapfile -t _ack < "$P11K_ACK"
     rm -f "$P11K_ACK"
     _p11k_rows=${_ack[0]:-1}
-    _p11k_prefix=${_ack[1]:-$P11K_PREFIX_OK}
+    _p11k_left=${_ack[2]:-$P11K_PREFIX_OK}
   elif [[ -z "${_p11k_ack_warned:-}" ]]; then
     _p11k_ack_warned=1
     if (( _st == 0 )); then
-      _p11k_prefix=$P11K_PREFIX_OK
+      _p11k_left=$P11K_PREFIX_OK
     else
-      _p11k_prefix=$P11K_PREFIX_ERR
+      _p11k_left=$P11K_PREFIX_ERR
     fi
     printf 'p11k: %s\n' "the engine did not answer in time; the prompt is drawn without a header" >&2
   fi
-  # The prefix belongs in PS1: readline draws the buffer right after it, and painting it later
+  # The row belongs in PS1: readline draws the buffer right after it, and painting it later
   # would overwrite the first characters on a completion redraw.
   #
   # Every prompt prints its own header rows. On the first prompt the instant header stays above
@@ -95,9 +99,9 @@ _p11k_prompt_command() {
   for (( _i = 0; _i < ${_p11k_rows:-1}; _i++ )); do
     _lead+=$'\n'
   done
-  # `\r` puts the prompt at column 0: the engine draws the instant prefix on the input line
-  # before the shell starts, and without this readline would append the prompt after it.
-  PS1='\r'"$_lead\[$_p11k_signal\]${_p11k_prefix:-$P11K_PREFIX_OK}"
+  # `\r` puts the prompt at column 0: before the shell starts nothing has been printed on the
+  # input row, and without this readline would append the prompt after the instant row.
+  PS1='\r'"$_lead\[$_p11k_signal\]${_p11k_left}"
 }
 PROMPT_COMMAND=_p11k_prompt_command
 
@@ -126,7 +130,11 @@ elif [[ -r "$HOME/.bashrc" ]]; then
 fi
 
 # ===== protocol invariants =====
-PS1="\[$_p11k_signal\]"
+# The engine generates PS1 from the theme, including user text that may contain a dollar sign.
+# `promptvars` would expand that text as parameters and run command substitutions, so it is off:
+# the engine's escape handling (`\[..\]` and `\\`) is all PS1 needs.
+shopt -u promptvars
+PS1="\[$_p11k_signal\]${_p11k_left}"
 PROMPT_COMMAND=_p11k_prompt_command
 trap '_p11k_winch' WINCH
 trap '_p11k_preexec' DEBUG

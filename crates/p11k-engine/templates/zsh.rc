@@ -11,8 +11,12 @@ _p11k_pwd=$PWD
 # Last prompt shape from the engine ack, kept across prompts so a dead or stuck engine cannot
 # block the prompt forever: precmd falls back to these values after the ack timeout.
 typeset -g _p11k_rows=1
-typeset -g _p11k_prefix=$P11K_PREFIX_OK
 typeset -g _p11k_fold=1
+# The row the user types on, as prompt escapes: the frame prefix, the row's segments and the
+# prompt character on the left, the right column and the frame suffix on the right. The engine
+# renders both; the shell only places them.
+typeset -g _p11k_left=$P11K_PREFIX_OK
+typeset -g _p11k_right=
 
 # Command timing for zsh. Zsh has no CMD_DURATION. A preexec hook records EPOCHREALTIME
 # before the command runs. Precmd turns the difference into milliseconds for the announce.
@@ -59,27 +63,34 @@ _p11k_precmd() {
     if (( _wait >= 400 )); then break; fi
   done
   if [[ -f "$P11K_ACK" ]]; then
-    # The ack carries the prompt shape: header height on the first line, then the two prefix
-    # strings. Reading them every prompt is what lets a reload change either without a restart.
+    # The ack carries the prompt shape: header height, fold flag, the row the user types on and
+    # the right indent. Reading them every prompt is what lets a reload change any of them
+    # without a restart.
     local -a _ack=("${(@f)$(<"$P11K_ACK")}")
     rm -f "$P11K_ACK"
     typeset -g _p11k_rows=${_ack[1]:-1}
-    typeset -g _p11k_prefix=${_ack[2]:-$P11K_PREFIX_OK}
-    # Third ack line: whether this prompt folds (transient). The hook that folds runs later,
+    # Second ack line: whether this prompt folds (transient). The hook that folds runs later,
     # after the ack is gone, so the answer is kept in a global.
-    typeset -g _p11k_fold=${_ack[3]:-1}
+    typeset -g _p11k_fold=${_ack[2]:-1}
+    # Third and fourth ack lines: the row. The left part joins PROMPT, the right part is
+    # RPROMPT; zsh aligns RPROMPT itself, so the engine sends it without any gap.
+    typeset -g _p11k_left=${_ack[3]:-$P11K_PREFIX_OK}
+    typeset -g _p11k_right=${_ack[4]:-}
+    # The right part keeps `right-indent` columns from the edge, like the header rows. zsh's own
+    # default is the same one, so an unset ack keeps the previous value.
+    ZLE_RPROMPT_INDENT=${_ack[5]:-1}
   elif (( ! ${+_p11k_ack_warned} )); then
     typeset -g _p11k_ack_warned=1
     if (( _p11k_status == 0 )); then
-      typeset -g _p11k_prefix=$P11K_PREFIX_OK
+      typeset -g _p11k_left=$P11K_PREFIX_OK
     else
-      typeset -g _p11k_prefix=$P11K_PREFIX_ERR
+      typeset -g _p11k_left=$P11K_PREFIX_ERR
     fi
     print -u2 -- "p11k: the engine did not answer in time; the prompt is drawn without a header"
   fi
-  # The prompt is the blank rows + prompt-ready signal + the prefix for this exit code. The
-  # prefix belongs in PROMPT: zle draws the user's buffer right after it, and the engine
-  # painting it later would overwrite the first characters on a completion redraw.
+  # The prompt is the blank rows + prompt-ready signal + the row the user types on. That row
+  # belongs in PROMPT: zle draws the user's buffer right after it, and the engine painting it
+  # later would overwrite the first characters on a completion redraw.
   #
   # The first prompt prints the same blank rows as every later one. The instant header
   # already sits on those rows, so the cursor has to step back over them first: zle then
@@ -97,7 +108,8 @@ _p11k_precmd() {
   if [[ -n "${P11K_INSTANT:-}" ]]; then
     unset P11K_INSTANT
   fi
-  PROMPT="$_lead$_p11k_signal${_p11k_prefix:-$P11K_PREFIX_OK}"
+  PROMPT="$_lead$_p11k_signal${_p11k_left}"
+  RPROMPT=$_p11k_right
 }
 
 # zle calls this when it takes over the input line. The prompt is already on screen by then
@@ -134,11 +146,12 @@ elif [[ -r "$HOME/.zshrc" ]]; then
 fi
 
 # ===== protocol invariants =====
-# PROMPT carries the zero-width prompt-ready signal (OSC 1337;p11k;p) and the input-line prefix.
-# The signal is what a serialised prompt protocol keys on: it occupies no columns and the
-# engine reads it out of the byte stream.
-PROMPT="$_p11k_signal$P11K_PREFIX_OK"
-RPROMPT=''
+# PROMPT carries the zero-width prompt-ready signal (OSC 1337;p11k;p) and the row the user types
+# on. The signal is what a serialised prompt protocol keys on: it occupies no columns and the
+# engine reads it out of the byte stream. RPROMPT is the right part of that row, frame suffix
+# included; zsh aligns it against the right edge.
+PROMPT="$_p11k_signal${_p11k_left}"
+RPROMPT=$_p11k_right
 PROMPT2='> '
 # zsh prints its EOF mark (a reverse-video `%` at an unterminated output line) before the first
 # prompt. On the instant header the mark shows as a flash just before the real redraw. p11k owns

@@ -12,14 +12,12 @@ use crate::config::Config;
 use crate::geometry::Geometry;
 use crate::i18n::{t, t_args};
 use crate::log::info;
-use crate::render::InputPrefix;
 use crate::state::{RawTerminal, StateDir, tty_size};
 
 /// The parts of a started engine that the event loop needs.
 pub struct Session {
     pub config: Config,
     pub config_path: Option<PathBuf>,
-    pub prefix: InputPrefix,
     pub geometry: Geometry,
     pub state: StateDir,
     pub shell: Shell,
@@ -58,13 +56,12 @@ impl Session {
         // command reads it from wherever the shell happens to be, not from the starting directory.
         // A path that cannot be resolved is kept as it is: reloading then reports the real error.
         let config_path = theme_file().map(|p| p.canonicalize().unwrap_or(p));
-        let prefix = crate::render::input_prefix(&config, None, crate::model::ViMode::Unreported);
         // The prompt skeleton each shell prints: `header_rows` blank rows for the header, then the
-        // zero-width prompt-ready signal. Handed over as data so no template carries it. The engine
-        // fills the blank rows when the signal arrives; the prefix travels in the same prompt
-        // string, which keeps its styling in the theme and its width unconstrained. Counting the
-        // header rows inside the prompt is also what lets zsh fold transient cleanly with
-        // `reset-prompt`.
+        // zero-width prompt-ready signal and the row the user types on. Handed over as data so no
+        // template carries it. The engine fills the blank rows when the signal arrives; the row
+        // travels in the same prompt string, which keeps its styling in the theme and its width
+        // unconstrained. Counting the header rows inside the prompt is also what lets zsh fold
+        // transient cleanly with `reset-prompt`.
         //
         // The signal has to be written by the shell: each shell marks non-printing sequences
         // differently (`%{...%}` in zsh, `\[...\]` in bash), and the engine handing over a bare OSC
@@ -214,7 +211,6 @@ impl Session {
         Ok(Self {
             config,
             config_path,
-            prefix,
             geometry,
             state,
             shell,

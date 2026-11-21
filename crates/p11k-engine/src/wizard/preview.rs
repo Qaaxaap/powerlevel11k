@@ -45,14 +45,26 @@ pub(super) fn sample_vcs() -> crate::model::GitStatus {
     }
 }
 
-/// Render a full prompt preview of the current config (header lines + input line) for per-option previews.
+/// Render a full prompt preview of the current config (header lines + the row the user types on)
+/// for per-option previews.
 pub(super) fn preview_lines(cfg: &Config) -> Vec<String> {
     let cols = crate::state::tty_size()
         .map(|(_, c, ..)| c as usize)
         .unwrap_or(80);
     let vcs = sample_vcs();
-    let mut lines = crate::render::render_header_lines(cfg, &sample_info(), Some(&vcs), cols);
-    // Input line: the prompt_char prefix the engine draws (the shell's buffer follows).
-    lines.push(crate::render::input_prefix(cfg, None, crate::model::ViMode::Unreported).text);
+    let info = sample_info();
+    let mut lines = crate::render::render_header_lines(cfg, &info, Some(&vcs), cols);
+    // The row the user types on, frame included. The right part is left out: the terminal aligns
+    // it against the edge, and the preview prints one column of text.
+    let row = crate::render::render_input_row(
+        cfg,
+        &info,
+        Some(&vcs),
+        cols,
+        crate::model::ViMode::Unreported,
+        crate::render::PromptSyntax::Ansi,
+        false,
+    );
+    lines.push(row.left);
     lines
 }

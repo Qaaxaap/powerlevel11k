@@ -174,7 +174,8 @@ pub(super) fn parse_frame(node: &KdlNode) -> Result<Frame, String> {
     Ok(f)
 }
 
-/// Parse `layout`: the two layout line groups `left`/`right`, plus `prompt-add-newline`, `transient-prompt`, `show-ruler`, `right-indent`.
+/// Parse `layout`: the two layout line groups `left`/`right`, the `input` row the user types on,
+/// plus `prompt-add-newline`, `transient-prompt`, `show-ruler`, `right-indent`.
 pub(super) fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     let mut layout = Layout::default();
     if let Some(ch) = node.children() {
@@ -182,6 +183,7 @@ pub(super) fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
             match child.name().value() {
                 "left" => layout.left = parse_lines(child),
                 "right" => layout.right = parse_lines(child),
+                "input" => layout.input = Some(parse_input(child)),
                 // `prompt-add-newline #true` = 1 line; a number is taken as is (0 = off).
                 "prompt-add-newline" => {
                     layout.prompt_add_newline = match first_value(child) {
@@ -218,6 +220,22 @@ pub(super) fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
         }
     }
     Ok(layout)
+}
+
+/// Parse `input`: the row the user types on. `left` and `right` each hold the elements of that
+/// one row, so they are parsed like a `line` body without the `line` wrapper.
+pub(super) fn parse_input(node: &KdlNode) -> InputLine {
+    let mut input = InputLine::default();
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            match child.name().value() {
+                "left" => input.left = parse_line(child),
+                "right" => input.right = parse_line(child),
+                _ => warn_unknown_key(child.name().value()),
+            }
+        }
+    }
+    input
 }
 
 /// Parse one side: each child node is one line.

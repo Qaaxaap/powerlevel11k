@@ -3,28 +3,34 @@
 
 /// Generate the bootstrap .zshrc handed to the shell.
 /// Sequence: precmd announces `h` → polls ack → zsh prints the prompt string (header blank
-/// rows + zero-width signal + prefix) through zle → the engine backfills the header. The prompt
-/// string is printed by zle or its equivalent; the theme is always the engine's job.
+/// rows + zero-width signal + the row the user types on) through zle → the engine backfills the
+/// header. The prompt string is printed by zle or its equivalent; the theme is always the
+/// engine's job. The right part of the row, frame suffix included, travels in RPROMPT, which zsh
+/// aligns.
 pub const ZSHRC_TEMPLATE: &str = include_str!("../templates/zsh.rc");
 
-/// bash has no `p` announce: after the ack bash prints PS1 (the prompt lead + signal + prefix)
-/// directly, and the engine reads the signal out of the stream to backfill the header. resize
-/// detects size changes via trap WINCH and announces `r`.
+/// bash has no `p` announce: after the ack bash prints PS1 (the prompt lead + signal + the row
+/// the user types on) directly, and the engine reads the signal out of the stream to backfill
+/// the header. bash has no right prompt, so neither the right part of the row nor the frame
+/// suffix is drawn. resize detects size changes via trap WINCH and announces `r`.
 pub const BASHRC_TEMPLATE: &str = include_str!("../templates/bash.rc");
 
 /// fish protocol layer (injected via XDG_CONFIG_HOME redirection). fish_prompt + announce.
 ///
 /// fish has no precmd/zle/PROMPT_COMMAND: the `h` announce lives in `fish_prompt`, which prints
 /// the prompt string after the ack; the engine reads the signal out of that string and backfills
-/// the header. resize uses `--on-signal WINCH`.
+/// the header. The right part of the row, frame suffix included, comes from
+/// `fish_right_prompt`. resize uses `--on-signal WINCH`.
 pub const FISH_TEMPLATE: &str = include_str!("../templates/fish.rc");
 
 /// pwsh protocol layer (injected via `-NoProfile -NoExit -Command ". <rc>"`).
 ///
 /// pwsh likewise has no precmd/zle/PROMPT_COMMAND: the `h` announce lives in the prompt
 /// function, which prints the prompt string only after the engine ack; the engine reads the
-/// signal out of that string and backfills the header. resize compares the window size inside
-/// prompt and then announces `r`: pwsh does not turn SIGWINCH into a hookable event.
+/// signal out of that string and backfills the header. The row the user types on is part of that
+/// string; pwsh has no right prompt, so neither the right part of the row nor the frame suffix is
+/// drawn. resize compares the window size inside prompt and then announces `r`: pwsh does not
+/// turn SIGWINCH into a hookable event.
 ///
 /// The body is a standalone function and prompt only forwards: after a user profile
 /// overrides prompt, the tail points it back at the engine implementation.
@@ -172,21 +178,63 @@ mod tests {
         assert!(
             ZSHRC_TEMPLATE.contains("_ack[1]")
                 && ZSHRC_TEMPLATE.contains("_ack[2]")
-                && ZSHRC_TEMPLATE.contains("_ack[3]"),
-            "zsh reads rows, prefix and fold from ack lines 1-3"
+                && ZSHRC_TEMPLATE.contains("_ack[3]")
+                && ZSHRC_TEMPLATE.contains("_ack[4]")
+                && ZSHRC_TEMPLATE.contains("_ack[5]"),
+            "zsh reads rows, fold, the row and the right indent from ack lines 1-5"
         );
         assert!(
-            BASHRC_TEMPLATE.contains("_ack[0]") && BASHRC_TEMPLATE.contains("_ack[1]"),
-            "bash reads rows and prefix from ack lines 0-1"
+            BASHRC_TEMPLATE.contains("_ack[0]") && BASHRC_TEMPLATE.contains("_ack[2]"),
+            "bash reads rows and the left part of the row from ack lines 0 and 2"
         );
         assert!(
-            FISH_TEMPLATE.contains("$_ack[1]") && FISH_TEMPLATE.contains("$_ack[2]"),
-            "fish reads rows and prefix from ack lines 1-2"
+            FISH_TEMPLATE.contains("$_ack[1]")
+                && FISH_TEMPLATE.contains("$_ack[3]")
+                && FISH_TEMPLATE.contains("$_ack[4]"),
+            "fish reads rows and the row from ack lines 1, 3 and 4"
         );
         assert!(
             PWSH_TEMPLATE.contains("$P11kAckLines[0]")
-                && PWSH_TEMPLATE.contains("$P11kAckLines[1]"),
-            "pwsh reads rows and prefix from ack lines 0-1"
+                && PWSH_TEMPLATE.contains("$P11kAckLines[2]"),
+            "pwsh reads rows and the left part of the row from ack lines 0 and 2"
+        );
+    }
+
+    /// The row is part of the prompt string, so the shell prints it. zsh and fish also print its
+    /// right part, frame suffix included, in their own right prompt. bash and pwsh have no right
+    /// prompt and must not print it.
+    #[test]
+    fn the_input_row_reaches_the_shells_prompt_string() {
+        assert!(
+            ZSHRC_TEMPLATE.contains("${_p11k_left}")
+                && ZSHRC_TEMPLATE.contains("RPROMPT=$_p11k_right"),
+            "zsh prints the left part in PROMPT and the right part in RPROMPT"
+        );
+        assert!(
+            ZSHRC_TEMPLATE.contains("ZLE_RPROMPT_INDENT="),
+            "the right part keeps the configured indent"
+        );
+        assert!(
+            BASHRC_TEMPLATE.contains("${_p11k_left}"),
+            "bash prints the left part in PS1"
+        );
+        assert!(
+            BASHRC_TEMPLATE.contains("shopt -u promptvars"),
+            "bash must not expand the theme's text as parameters"
+        );
+        assert!(
+            FISH_TEMPLATE.contains("function fish_right_prompt")
+                && FISH_TEMPLATE.contains("$_p11k_right"),
+            "fish prints the right part in fish_right_prompt"
+        );
+        assert!(
+            FISH_TEMPLATE.contains("functions --copy fish_right_prompt")
+                && FISH_TEMPLATE.contains("_p11k_engine_right_prompt"),
+            "a user fish_right_prompt must not replace the engine's"
+        );
+        assert!(
+            PWSH_TEMPLATE.contains("$script:P11kLeft"),
+            "pwsh prints the left part in the prompt string"
         );
     }
 

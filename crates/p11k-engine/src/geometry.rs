@@ -1,9 +1,10 @@
 //! The prompt geometry the engine and the inner shell agree on.
 //!
-//! The shell prints `header_rows` blank lines before the prompt-ready signal, and the prefix
-//! string after it. Both live here so the startup path and the reload path derive them the same
+//! The shell prints `header_rows` blank lines before the prompt-ready signal, and the row the user
+//! types on after it. Both live here so the startup path and the reload path derive them the same
 //! way. The row count travels to the shell in the ack on every prompt, so a reload that changes
-//! the header height takes effect on the next prompt; the prefix is handed over once at startup.
+//! the header height takes effect on the next prompt; the row's left part is also handed over at
+//! startup, for a shell that gets no ack.
 
 use crate::cli::Shell;
 use crate::config::Config;
@@ -15,9 +16,11 @@ pub struct Geometry {
     /// ruler row counts here: it sits above the columns and belongs to the prompt area, or the
     /// engine would paint it over the last line of the previous output.
     pub header_rows: usize,
-    /// `P11K_PREFIX_OK`, in the syntax the shell's prompt string needs.
+    /// `P11K_PREFIX_OK`: the row's left part for a successful command, in the syntax the shell's
+    /// prompt string needs. It carries the frame prefix and the prompt character; the segments
+    /// arrive in the ack, because their values come from the prompt state.
     pub prefix_ok: String,
-    /// `P11K_PREFIX_ERR`, likewise.
+    /// `P11K_PREFIX_ERR`, likewise, for a failed command.
     pub prefix_err: String,
 }
 
@@ -32,7 +35,8 @@ impl Geometry {
         }
     }
 
-    /// The prefix for one prompt state, in the syntax that shell's prompt string needs.
+    /// The row's left part without segments for one prompt state, in the syntax that shell's
+    /// prompt string needs.
     ///
     /// The state is the engine's to decide: it is the only side that sees the exit code, the
     /// pipeline statuses and the vi mode, and a shell that had to pick for itself could not tell

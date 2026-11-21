@@ -105,6 +105,63 @@ fn layout_flags_and_indent_round_trip() {
     assert_eq!(cfg.layout.right_indent, 9);
 }
 
+/// The `input` node is the row the user types on: one row per side, parsed like a `line` body,
+/// serialized without the `line` wrapper, and outside the header lines.
+#[test]
+fn input_row_parses_and_round_trips() {
+    let cfg = Config::parse(
+        "layout {\n    input {\n        left { dir; vcs; text \"|\" }\n        right { status; time #false }\n    }\n}\n",
+    )
+    .unwrap();
+    let input = cfg.layout.input.as_ref().expect("input row");
+    assert_eq!(
+        input.left,
+        vec![
+            Element::Seg("dir".into()),
+            Element::Seg("vcs".into()),
+            Element::Text("|".into()),
+        ]
+    );
+    assert_eq!(
+        input.right,
+        vec![
+            Element::Seg("status".into()),
+            Element::Disabled("time".into()),
+        ]
+    );
+    // The row is not a header line: a layout with only an `input` node has no header rows.
+    assert!(cfg.layout.left.is_empty() && cfg.layout.right.is_empty());
+
+    let text = cfg.to_kdl();
+    assert!(
+        !text.contains("line {"),
+        "the input row has no line wrapper:\n{text}"
+    );
+    let again = Config::parse(&text).unwrap();
+    assert_eq!(
+        again.layout.input, cfg.layout.input,
+        "round trip failed:\n{text}"
+    );
+}
+
+/// No `input` node keeps the implicit prefix-only row instead of an empty declared one.
+#[test]
+fn a_config_without_an_input_node_has_no_input_row() {
+    assert_eq!(Config::default().layout.input, None);
+    let cfg = Config::parse("layout { left { line { dir } } }").unwrap();
+    assert_eq!(cfg.layout.input, None);
+    assert!(!cfg.to_kdl().contains("input"));
+}
+
+/// An explicitly empty row still round-trips: `input {}` means the row exists with no segments.
+#[test]
+fn an_empty_input_row_round_trips() {
+    let cfg = Config::parse("layout { input {} }").unwrap();
+    assert_eq!(cfg.layout.input, Some(InputLine::default()));
+    let again = Config::parse(&cfg.to_kdl()).unwrap();
+    assert_eq!(again.layout.input, Some(InputLine::default()));
+}
+
 /// An explicit `fg=default` or `bold=#false` is a real value: a later layer can clear a
 /// colour or a bold flag with it, so it must survive the serializer too.
 #[test]
@@ -469,13 +526,21 @@ fn effective_style_three_way_fallback() {
 fn default_lean_parses() {
     let c = Config::default_lean().unwrap();
     assert!(!c.segments.is_empty());
-    assert_eq!(c.layout.left.len(), 1, "lean left header is a single line");
+    let row = c
+        .layout
+        .input
+        .as_ref()
+        .expect("lean draws its segments on the row the user types on");
+    assert!(
+        c.layout.left.is_empty() && c.layout.right.is_empty(),
+        "lean has no header row"
+    );
     assert_eq!(
-        c.layout.left[0],
+        row.left,
         vec![Element::Seg("dir".into()), Element::Seg("vcs".into())]
     );
     assert_eq!(
-        c.layout.right[0],
+        row.right,
         vec![
             Element::Seg("status".into()),
             Element::Seg("command_execution_time".into()),
@@ -483,15 +548,21 @@ fn default_lean_parses() {
         ]
     );
     assert!(c.segment("dir").props.contains_key("shorten-strategy"));
-    // The prompt_char segment is still there (to color the input line prefix) but is not in the header layout.
+    // prompt_char colors the input-line prefix and is never a layout element.
     assert_eq!(c.segment("prompt_char").style.fg, Some(Color::Xterm(76)));
-    assert!(
-        !c.layout
-            .left
-            .iter()
-            .flatten()
-            .any(|e| matches!(e, Element::Seg(s) if s == "prompt_char"))
-    );
+    for row in c
+        .layout
+        .left
+        .iter()
+        .chain(&c.layout.right)
+        .chain([&row.left, &row.right])
+    {
+        assert!(
+            !row.iter()
+                .any(|e| matches!(e, Element::Seg(s) if s == "prompt_char")),
+            "prompt_char belongs to the prefix, not to the layout: {row:?}"
+        );
+    }
     assert!(
         c.layout.prompt_add_newline == 0,
         "lean is compact, no blank lines"
