@@ -27,6 +27,7 @@ config-state-needs-name = `state` needs a name (a positional string)
 config-element-needs-text = { $element } needs text (a positional string)
 config-layout-required = the config needs a layout block
 config-unknown-key = unknown config key: { $key }
+config-input-line-wrapper = the input row has no line wrapper; write its segments directly
 config-mode-fallback = "{ $declared }" cannot be displayed by this locale; falling back to "{ $effective }"
 config-glyph-fallback = { $field } "{ $glyph }": cannot be displayed; using the built-in default
 config-unrenderable-glyphs = the config has a glyph this locale cannot display in mode "{ $mode }": { $glyphs }

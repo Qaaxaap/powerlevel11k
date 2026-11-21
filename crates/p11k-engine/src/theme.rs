@@ -86,6 +86,12 @@ pub fn redraw_header_cfg(
     if last.as_ref() == Some(&lines) {
         return Ok(());
     }
+    if lines.is_empty() {
+        // A one-row theme has no header: the cursor already sits on the row the user types on,
+        // and moving up would touch the line above it.
+        *last = Some(lines);
+        return Ok(());
+    }
     let n = lines.len().max(1);
     write!(out, "\x1b7\x1b[{}A", n)?;
     header_body(out, &lines)?;
@@ -173,5 +179,38 @@ mod tests {
         )
         .unwrap();
         assert!(out.len() > second, "an empty cache must force the paint");
+    }
+
+    /// A one-row theme has no header row. The signal arrives with the cursor already on the row
+    /// the user types on, so the paint must not move up over the line above it.
+    #[test]
+    fn a_one_row_theme_paints_no_header() {
+        let config = crate::config::Config::parse("layout { input { left { dir } } }\n").unwrap();
+        let header = HeaderInfo {
+            exit_code: Some(0),
+            cwd: "/tmp".to_string(),
+            exec_seconds: 0.0,
+            exec_ms: None,
+            jobs: 0,
+            history: 0,
+            pipestatus: Vec::new(),
+        };
+        let mut out = Vec::new();
+        let mut last = None;
+        redraw_header_cfg(
+            &mut out,
+            80,
+            &config,
+            &header,
+            None,
+            &mut last,
+            crate::model::ViMode::Unreported,
+        )
+        .unwrap();
+        assert!(
+            out.is_empty(),
+            "no cursor movement without a header: {out:?}"
+        );
+        assert_eq!(last, Some(Vec::new()));
     }
 }

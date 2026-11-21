@@ -2,7 +2,7 @@
 
 use std::io::Write;
 
-use crate::config::{Color, Config, Element, Frame, IconMode, Prop, Segment, Separators};
+use crate::config::{Color, Config, Element, Frame, IconMode, InputLine, Prop, Segment};
 use crate::presets::{self, PresetKind};
 
 use super::Answer;
@@ -154,9 +154,19 @@ pub(super) fn ask_use_rprompt(
         &["wizard-side-left", "wizard-side-right"],
         cfg,
         |c, i| {
-            // First remove exec from both columns, then put it back on the left/right per the choice.
-            for row in c.layout.left.iter_mut().chain(c.layout.right.iter_mut()) {
-                row.retain(|e| !matches!(e, Element::Seg(s) if s == "command_execution_time"));
+            // First remove exec from every row, then put it back on the left/right per the
+            // choice.
+            remove_segment(c, "command_execution_time");
+            if c.layout.left.is_empty() && c.layout.right.is_empty() {
+                // One row: the segment joins the row the user types on.
+                let row = c.layout.input.get_or_insert_with(InputLine::default);
+                let side = if i == 0 {
+                    &mut row.left
+                } else {
+                    &mut row.right
+                };
+                side.push(Element::Seg("command_execution_time".into()));
+                return;
             }
             let side = if i == 0 {
                 &mut c.layout.left
@@ -321,7 +331,8 @@ pub(super) fn ask_tails(
     )
 }
 
-/// Height: one line (no header) / two lines.
+/// Height: one row (the segments share the line with the prompt character) or two (a header row
+/// above the row the user types on).
 pub(super) fn ask_num_lines(
     out: &mut dyn Write,
     input: &mut dyn Input,
@@ -335,10 +346,38 @@ pub(super) fn ask_num_lines(
         cfg,
         |c, i| {
             if i == 0 {
-                c.layout.left.clear();
-                c.layout.right.clear();
+                // One row: the header segments move onto the row the user types on instead of
+                // being dropped, so the theme keeps its content and only loses the header. The
+                // frame decorates header rows, which this mode does not have.
+                if !(c.layout.left.is_empty() && c.layout.right.is_empty()) {
+                    let mut left = Vec::new();
+                    let mut right = Vec::new();
+                    for row in c.layout.left.drain(..) {
+                        left.extend(row);
+                    }
+                    for row in c.layout.right.drain(..) {
+                        right.extend(row);
+                    }
+                    c.layout.input = Some(InputLine { left, right });
+                }
                 c.frame = Frame::default();
-                c.separators = Separators::default();
+            } else if let Some(row) = c.layout.input.take() {
+                // Two rows: the segments move back up and the row the user types on keeps only
+                // the prefix.
+                if !row.left.is_empty() {
+                    if c.layout.left.is_empty() {
+                        c.layout.left = vec![row.left];
+                    } else {
+                        c.layout.left[0].extend(row.left);
+                    }
+                }
+                if !row.right.is_empty() {
+                    if c.layout.right.is_empty() {
+                        c.layout.right = vec![row.right];
+                    } else {
+                        c.layout.right[0].extend(row.right);
+                    }
+                }
             }
         },
     )

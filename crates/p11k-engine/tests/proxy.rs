@@ -507,15 +507,25 @@ fn read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
 /// Same loop, but a timeout returns what was read so far. For the few callers that check
 /// themselves, such as `wait_ready_within` with its own diagnostics.
 fn try_read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
+    try_read_until_any(master, &[needle], timeout)
+}
+
+/// Read until the earliest of `needles` appears. The cursor stops at that match, so the bytes
+/// after it stay readable.
+fn try_read_until_any(master: &Tmux, needles: &[&str], timeout: Duration) -> String {
     let start = Instant::now();
     let mut acc = String::new();
     loop {
         acc.push_str(&master.fresh());
-        if let Some(pos) = acc.find(needle) {
+        let hit = needles
+            .iter()
+            .filter_map(|n| acc.find(n).map(|pos| (pos, n.len())))
+            .min_by_key(|(pos, _)| *pos);
+        if let Some((pos, len)) = hit {
             // Stop consuming at the end of the needle. Everything after it goes back into the
             // unread window, so the next read can find it; otherwise a case that reads two
             // markers in sequence fails whenever one read delivers both.
-            let end = pos + needle.len();
+            let end = pos + len;
             master.unread(acc.len() - end);
             acc.truncate(end);
             return acc;
@@ -526,6 +536,12 @@ fn try_read_until(master: &Tmux, needle: &str, timeout: Duration) -> String {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// A theme whose header row carries the directory and the exit status. The built-in lean theme
+/// draws those segments on the row the user types on, and bash and pwsh have no right column, so
+/// the status glyph would never reach the screen there.
+const HEADER_THEME: &str =
+    "layout { left { line { dir; status } } }\nsegments { status verbose=#true }\n";
 
 /// What a timing assertion needs when it fails: the rendered pane and the tail of the engine's
 /// own log. A prompt that never arrives is a shell that never announced it, an engine that never
@@ -543,9 +559,11 @@ fn diagnose(master: &Tmux) -> String {
     )
 }
 
-/// Wait for the real first prompt to be ready. The criterion is `✔`: the instant header is painted
-/// by the engine from the state known at startup and carries no exit code; only the header
-/// repainted after the inner shell finishes loading and runs its first precmd carries it.
+/// Wait for the real first prompt to be ready.
+///
+/// The engine paints one prefix in the instant phase, before the shell starts. The shell paints
+/// the next one after it has loaded its rc and run its first precmd, so the second prefix means
+/// every part of the real prompt is on screen.
 fn wait_ready(master: &Tmux) -> String {
     wait_ready_within(master, Duration::from_secs(15))
 }
@@ -553,7 +571,15 @@ fn wait_ready(master: &Tmux) -> String {
 /// Same, with a caller-chosen budget: pwsh loads its runtime on every start, so its first prompt
 /// takes several times as long as zsh's or bash's.
 fn wait_ready_within(master: &Tmux, timeout: Duration) -> String {
-    read_until(master, "\u{f00c}", timeout)
+    let mut acc = try_read_until(master, "\u{276f}", timeout);
+    if acc.contains('\u{276f}') {
+        acc.push_str(&try_read_until(master, "\u{276f}", timeout));
+    }
+    // A right prompt (zsh `RPROMPT`, fish's right prompt) follows the row. Wait for it briefly so
+    // a caller that asserts on the status glyph sees it. A theme without a right prompt times out
+    // here, which is not a failure.
+    acc.push_str(&try_read_until(master, "\u{f00c}", Duration::from_secs(2)));
+    acc
 }
 
 #[test]
@@ -1577,6 +1603,7 @@ fn marker_shell_paints_its_prompt(shell: &str) {
     let eng = EngineSpec::new()
         .shell(shell)
         .config_home("/nonexistent-p11k-config")
+        .theme(HEADER_THEME)
         .start();
     let out = wait_ready_within(&eng.master, SHELL_READY);
 
@@ -1609,6 +1636,7 @@ fn marker_shell_runs_a_command(shell: &str, fail: &str) {
     let mut eng = EngineSpec::new()
         .shell(shell)
         .config_home("/nonexistent-p11k-config")
+        .theme(HEADER_THEME)
         .start();
     wait_ready_within(&eng.master, SHELL_READY);
 
@@ -1745,11 +1773,18 @@ segments { status verbose=#true }
 /// The git worker finishes after the prompt is already on screen. Its result has to wake the
 /// main loop and repaint the header: without the wake byte the vcs segment stays absent until
 /// the next keypress.
+///
+/// The theme puts the vcs segment on a header row: the engine repaints header rows, while the row
+/// the user types on is printed by the shell and cannot be repainted without disturbing the
+/// buffer.
 #[test]
 fn a_slow_git_result_repaints_the_header_without_input() {
     let repo = create_slow_git_repo();
     let dir = repo.0.to_string_lossy().into_owned();
-    let engine = EngineSpec::new().cwd(&dir).start();
+    let engine = EngineSpec::new()
+        .cwd(&dir)
+        .theme("layout { left { line { dir; vcs } } }")
+        .start();
     let _ = wait_ready(&engine.master);
     let screen = engine
         .master

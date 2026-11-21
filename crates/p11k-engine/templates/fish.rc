@@ -4,7 +4,45 @@ set -g _p11k_last_cols $COLUMNS
 set -g _p11k_last_rows $LINES
 # Prompt shape, refreshed from the ack on every prompt; the resize path reuses it.
 set -g _p11k_rows 1
-set -g _p11k_prefix "$P11K_PREFIX_OK"
+# The row the user types on, already rendered as ANSI: the frame prefix, the row's segments and
+# the prompt character on the left, the right column and the frame suffix on the right.
+set -g _p11k_left "$P11K_PREFIX_OK"
+set -g _p11k_right ''
+# Columns the right part keeps from the terminal edge, like the header rows.
+set -g _p11k_indent 1
+
+# Wait for the ack and load the prompt shape from it. Returns 1 when the engine did not answer;
+# the caller keeps the values it already has.
+function _p11k_read_ack
+    set -l _wait 0
+    while not test -f $P11K_ACK
+        sleep 0.005
+        set _wait (math $_wait + 1)
+        if test $_wait -ge 400
+            return 1
+        end
+    end
+    # The ack carries the prompt shape: header height, fold flag, the row the user types on and
+    # the right indent. Reading them every prompt is what lets a reload change any of them
+    # without a restart.
+    # `read` instead of `cat`: command substitution drops empty lines, and an empty right part
+    # (the usual case) would shift every later field up by one.
+    set -l _ack
+    while read -l _ack_line
+        set -a _ack $_ack_line
+    end < $P11K_ACK
+    rm -f $P11K_ACK
+    set -g _p11k_rows $_ack[1]
+    set -g _p11k_left $_ack[3]
+    set -g _p11k_right $_ack[4]
+    if set -q _ack[5]
+        set -g _p11k_indent $_ack[5]
+    end
+    return 0
+end
+
+# The row the user types on keeps the width it was rendered for until the next prompt: the
+# resize branch below reprints the row from the previous ack.
 
 # fish_prompt is called when the main prompt is rendered. Two cases:
 # - size change (resize repaint): announce `r`.
@@ -28,7 +66,7 @@ function fish_prompt
         # single row would become an empty string and the engine would cover one row too many.
         # The resize reflow above the header is cleared by the engine.
         printf '\n%.0s' (seq 1 $_p11k_rows)
-        printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
+        printf '\e]1337;p11k;p\a%s' "$_p11k_left"
         return
     end
     # $CMD_DURATION is fish's own measurement of the previous command in milliseconds.
@@ -55,41 +93,40 @@ function fish_prompt
     printf 'h\t%s\t%s\t%s\t%s\t%s\t%s\n' $_st $_pwd_esc (jobs -p | count) "" "$_pipes" "$_cmd_ms" >> $P11K_ANNOUNCE
     # Wait at most two seconds for the ack. A dead or stuck engine must not block the prompt;
     # the previous prompt shape is reused and the fallback is reported once.
-    set -l _wait 0
-    while not test -f $P11K_ACK
-        sleep 0.005
-        set _wait (math $_wait + 1)
-        if test $_wait -ge 400
-            break
+    if not _p11k_read_ack
+        if not set -q _p11k_ack_warned
+            set -g _p11k_ack_warned 1
+            if test $_st -eq 0
+                set -g _p11k_left $P11K_PREFIX_OK
+            else
+                set -g _p11k_left $P11K_PREFIX_ERR
+            end
+            echo "p11k: the engine did not answer in time; the prompt is drawn without a header" >&2
         end
-    end
-    if test -f $P11K_ACK
-        # The ack carries the prompt shape: header height on the first line, then the two prefix
-        # strings. Reading them every prompt is what lets a reload change either without a restart.
-        set -l _ack (cat $P11K_ACK)
-        rm -f $P11K_ACK
-        set -g _p11k_rows $_ack[1]
-        set -g _p11k_prefix $_ack[2]
-    else if not set -q _p11k_ack_warned
-        set -g _p11k_ack_warned 1
-        if test $_st -eq 0
-            set -g _p11k_prefix $P11K_PREFIX_OK
-        else
-            set -g _p11k_prefix $P11K_PREFIX_ERR
-        end
-        echo "p11k: the engine did not answer in time; the prompt is drawn without a header" >&2
     end
     # Print the blank header rows directly: `string collect` drops the final newline, so a
     # single row would become an empty string and the engine would cover one row too many.
     printf '\r'
     printf '\n%.0s' (seq 1 $_p11k_rows)
-    printf '\e]1337;p11k;p\a%s' "$_p11k_prefix"
+    printf '\e]1337;p11k;p\a%s' "$_p11k_left"
+end
+
+# The right part of the row the user types on. fish aligns it against the right edge itself, so
+# the frame suffix lands in the rightmost cell. fish has no equivalent of zsh's
+# `ZLE_RPROMPT_INDENT`, so the configured indent is printed as trailing spaces; without it the
+# right part would sit one column further right than on the header rows.
+function fish_right_prompt
+    printf '%s' "$_p11k_right"
+    if test -n "$_p11k_right"; and test "$_p11k_indent" -gt 0
+        string repeat -n $_p11k_indent ' '
+    end
 end
 
 # A user config may define fish_prompt (starship, tide, a hand-written prompt). Keep a copy of
 # the engine prompt and restore it after the user rc, so the announce and the prompt signal are
-# still emitted.
+# still emitted. The right prompt is replaced the same way.
 functions --copy fish_prompt _p11k_engine_prompt
+functions --copy fish_right_prompt _p11k_engine_right_prompt
 
 # ===== user config =====
 # Start the user rc on a fresh line. During the instant phase the prefix and the typed text are
@@ -103,10 +140,12 @@ else if test -r "$HOME/.config/fish/config.fish"
     source "$HOME/.config/fish/config.fish"
 end
 
-# A user config may have replaced fish_prompt. Restore the engine prompt so the announce and
-# the prompt signal are still emitted.
+# A user config may have replaced fish_prompt or fish_right_prompt. Restore the engine prompts so
+# the announce and the prompt signal are still emitted and the input row keeps its right column.
 functions --erase fish_prompt
 functions --copy _p11k_engine_prompt fish_prompt
+functions --erase fish_right_prompt
+functions --copy _p11k_engine_right_prompt fish_right_prompt
 
 # ===== protocol invariants =====
 # The greeting prints a line between the instant header and the first prompt, which pushes the

@@ -182,45 +182,33 @@ fn charset_reports_ascii_on_the_second_option() {
     assert!(matches!(answer, Ok(true)), "ASCII: {answer:?}");
 }
 
-/// The exec segment moves to the chosen column; a missing segment is added.
+/// The exec segment moves to the chosen column of the row the user types on; a missing segment
+/// is added.
 #[test]
 fn non_permanent_content_moves_between_columns() {
     let mut cfg = presets::pure(false);
     remove_segment(&mut cfg, "command_execution_time");
     let (answer, _) = run_question(b"1", |o, i| ask_use_rprompt(o, i, &mut cfg));
     assert!(matches!(answer, Ok(())));
-    let left_has = cfg
-        .layout
-        .left
-        .iter()
-        .any(|row| row.contains(&Element::Seg("command_execution_time".into())));
+    let row = cfg.layout.input.as_ref().expect("pure is one row");
     assert!(
-        left_has,
-        "left column should hold exec: {:?}",
-        cfg.layout.left
+        row.left
+            .contains(&Element::Seg("command_execution_time".into())),
+        "left side should hold exec: {row:?}"
     );
 
     let (answer, _) = run_question(b"2", |o, i| ask_use_rprompt(o, i, &mut cfg));
     assert!(matches!(answer, Ok(())));
-    let right_has = cfg
-        .layout
-        .right
-        .iter()
-        .any(|row| row.contains(&Element::Seg("command_execution_time".into())));
+    let row = cfg.layout.input.as_ref().expect("pure is one row");
     assert!(
-        right_has,
-        "right column should hold exec: {:?}",
-        cfg.layout.right
+        row.right
+            .contains(&Element::Seg("command_execution_time".into())),
+        "right side should hold exec: {row:?}"
     );
-    let left_has = cfg
-        .layout
-        .left
-        .iter()
-        .any(|row| row.contains(&Element::Seg("command_execution_time".into())));
     assert!(
-        !left_has,
-        "exec must leave the left column: {:?}",
-        cfg.layout.left
+        !row.left
+            .contains(&Element::Seg("command_execution_time".into())),
+        "exec must leave the left side: {row:?}"
     );
 }
 
@@ -292,12 +280,52 @@ fn separator_questions_write_their_glyphs() {
 
 #[test]
 fn height_and_spacing_options() {
+    // One row: the header segments move onto the row the user types on instead of being
+    // dropped, and the frame goes away with the header it decorates.
     let mut cfg = presets::classic(2);
     let (answer, _) = run_question(b"1", |o, i| ask_num_lines(o, i, &mut cfg));
     assert!(matches!(answer, Ok(())));
     assert!(cfg.layout.left.is_empty() && cfg.layout.right.is_empty());
+    let row = cfg.layout.input.as_ref().expect("the segments moved down");
+    assert!(
+        row.left.contains(&Element::Seg("dir".into())),
+        "left segments keep their order: {row:?}"
+    );
+    assert!(
+        row.right.contains(&Element::Seg("status".into())),
+        "right segments move too: {row:?}"
+    );
     assert_eq!(cfg.frame, Frame::default());
-    assert_eq!(cfg.separators, Separators::default());
+    // The separators stay: two neighbouring blocks on one row still need their arrows.
+    assert_ne!(cfg.separators, Separators::default());
+
+    // Two rows from a one-row theme: the segments move back up and the input row keeps only the
+    // prefix.
+    let mut cfg = presets::lean(false);
+    let (answer, _) = run_question(b"2", |o, i| ask_num_lines(o, i, &mut cfg));
+    assert!(matches!(answer, Ok(())));
+    assert!(
+        cfg.layout.input.is_none(),
+        "the input row is implicit again"
+    );
+    assert!(
+        cfg.layout
+            .left
+            .iter()
+            .flatten()
+            .any(|e| matches!(e, Element::Seg(s) if s == "dir")),
+        "the segments moved into the header: {:?}",
+        cfg.layout.left
+    );
+    assert!(
+        cfg.layout
+            .right
+            .iter()
+            .flatten()
+            .any(|e| matches!(e, Element::Seg(s) if s == "status")),
+        "the right segments moved into the header: {:?}",
+        cfg.layout.right
+    );
 
     let mut cfg = presets::classic(2);
     let (answer, _) = run_question(b"2", |o, i| ask_empty_line(o, i, &mut cfg));

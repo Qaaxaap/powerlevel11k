@@ -1309,6 +1309,27 @@ fn emit_side(
     }
 }
 
+/// The left column of the row the user types on. The shell prints it right before the prompt
+/// prefix, so it needs no right alignment and no gap filling: just the column and its caps.
+pub(super) fn emit_input_left(
+    parts: &[SegmentText],
+    seps: &crate::config::Separators,
+) -> super::PaintedLine {
+    let parts: Vec<&SegmentText> = parts.iter().filter(|s| !s.text.is_empty()).collect();
+    emit_side(&parts, seps, Side::Left)
+}
+
+/// The right column of the row the user types on. The shell aligns it against the right edge
+/// (zsh `RPROMPT`, fish right prompt), so the engine emits the column alone: a gap here would
+/// offset the alignment by the columns it filled.
+pub(super) fn emit_input_right(
+    parts: &[SegmentText],
+    seps: &crate::config::Separators,
+) -> super::PaintedLine {
+    let parts: Vec<&SegmentText> = parts.iter().filter(|s| !s.text.is_empty()).collect();
+    emit_side(&parts, seps, Side::Right)
+}
+
 pub(super) fn assemble_row(
     left: &[SegmentText],
     right: &[SegmentText],

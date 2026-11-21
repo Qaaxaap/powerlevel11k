@@ -28,6 +28,7 @@ config-state-needs-name = `state` 需要一个名字（位置参数）
 config-element-needs-text = { $element } 需要文本（位置参数）
 config-layout-required = 配置缺少 layout 段
 config-unknown-key = 未知配置键：{ $key }
+config-input-line-wrapper = 输入行无需 line 包装，请直接写段
 config-mode-fallback = "{ $declared }" 无法在当前 locale 显示，回退到 "{ $effective }"
 config-glyph-fallback = { $field } "{ $glyph }"：无法显示，使用内置默认值
 config-unrenderable-glyphs = 当前 locale 在 "{ $mode }" 模式下存在无法显示的字形：{ $glyphs }

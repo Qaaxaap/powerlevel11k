@@ -174,7 +174,8 @@ pub(super) fn parse_frame(node: &KdlNode) -> Result<Frame, String> {
     Ok(f)
 }
 
-/// Parse `layout`: the two layout line groups `left`/`right`, plus `prompt-add-newline`, `transient-prompt`, `show-ruler`, `right-indent`.
+/// Parse `layout`: the two layout line groups `left`/`right`, the `input` row the user types on,
+/// plus `prompt-add-newline`, `transient-prompt`, `show-ruler`, `right-indent`.
 pub(super) fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     let mut layout = Layout::default();
     if let Some(ch) = node.children() {
@@ -182,6 +183,7 @@ pub(super) fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
             match child.name().value() {
                 "left" => layout.left = parse_lines(child),
                 "right" => layout.right = parse_lines(child),
+                "input" => layout.input = Some(parse_input(child)),
                 // `prompt-add-newline #true` = 1 line; a number is taken as is (0 = off).
                 "prompt-add-newline" => {
                     layout.prompt_add_newline = match first_value(child) {
@@ -220,6 +222,22 @@ pub(super) fn parse_layout(node: &KdlNode) -> Result<Layout, String> {
     Ok(layout)
 }
 
+/// Parse `input`: the row the user types on. `left` and `right` each hold the elements of that
+/// one row, so they are parsed like a `line` body without the `line` wrapper.
+pub(super) fn parse_input(node: &KdlNode) -> InputLine {
+    let mut input = InputLine::default();
+    if let Some(ch) = node.children() {
+        for child in ch.nodes() {
+            match child.name().value() {
+                "left" => input.left = parse_line(child),
+                "right" => input.right = parse_line(child),
+                _ => warn_unknown_key(child.name().value()),
+            }
+        }
+    }
+    input
+}
+
 /// Parse one side: each child node is one line.
 pub(super) fn parse_lines(node: &KdlNode) -> Vec<Vec<Element>> {
     let mut rows = Vec::new();
@@ -250,6 +268,11 @@ pub(super) fn parse_line(node: &KdlNode) -> Vec<Element> {
                 continue;
             }
             let name = child.name().value();
+            // `line` wraps header rows. The input row has no wrapper, so a `line` there would
+            // become a segment named `line` and draw nothing.
+            if name == "line" {
+                warn_input_line_wrapper();
+            }
             // An absent value means enabled; an explicit #false disables it. The node is kept
             // so a configure round trip does not delete the commented-out segment.
             let enabled = first_value(child).map(bool_val).unwrap_or(true);
@@ -379,6 +402,12 @@ pub(super) fn first_state_name(node: &KdlNode) -> Option<String> {
 /// Warn when the config contains a key the engine does not know.
 pub(super) fn warn_unknown_key(name: &str) {
     eprintln!("p11k: {}", t_args("config-unknown-key", &[("key", name)]));
+}
+
+/// Warn when a `line` node sits where a row's elements go. The input row has no wrapper, so the
+/// node would become a segment named `line` and draw nothing.
+fn warn_input_line_wrapper() {
+    eprintln!("p11k: {}", t("config-input-line-wrapper"));
 }
 
 /// Parse the `separators` node: character child nodes (`segment`/`sub`/`end`/`right-start`/`right-segment`/`right-sub`/`left-tail`/`right-tail`/`gap`), values read as whole strings.

@@ -18,19 +18,39 @@ pub(super) fn remove_segment(cfg: &mut Config, name: &str) {
     {
         row.retain(|e| !matches!(e, Element::Seg(s) if s == name));
     }
+    if let Some(input) = &mut cfg.layout.input {
+        input
+            .left
+            .retain(|e| !matches!(e, Element::Seg(s) if s == name));
+        input
+            .right
+            .retain(|e| !matches!(e, Element::Seg(s) if s == name));
+    }
 }
 
 pub(super) fn add_to_right(cfg: &mut Config, name: &str) {
-    if cfg
+    let in_header = cfg
         .layout
         .right
         .iter()
         .flatten()
-        .any(|e| matches!(e, Element::Seg(s) if s == name))
-    {
+        .any(|e| matches!(e, Element::Seg(s) if s == name));
+    let in_input = cfg.layout.input.as_ref().is_some_and(|input| {
+        input
+            .right
+            .iter()
+            .any(|e| matches!(e, Element::Seg(s) if s == name))
+    });
+    if in_header || in_input {
         return;
     }
     if cfg.layout.right.is_empty() {
+        // No header row: the row the user types on is the only row, so the segment joins its
+        // right column.
+        if let Some(input) = &mut cfg.layout.input {
+            input.right.push(Element::Seg(name.into()));
+            return;
+        }
         cfg.layout.right.push(Vec::new());
     }
     cfg.layout.right[0].push(Element::Seg(name.into()));

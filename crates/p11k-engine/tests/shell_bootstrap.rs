@@ -323,7 +323,8 @@ impl Sandbox {
 
     /// Start the shell with a pre-written ack: the prompt must take its prefix without waiting.
     fn start_shell_with_ack(&self, shell: &str) {
-        std::fs::write(&self.ack, "1\nACK> \n1\n").expect("write the ack");
+        // Header rows, fold flag, the row the user types on (left and right) and the right indent.
+        std::fs::write(&self.ack, "1\n1\nACK> \n\n1\n").expect("write the ack");
         new_session(&self.socket, &self.shell_cmd(shell));
     }
 }
@@ -385,6 +386,96 @@ fn a_written_ack_sets_the_prompt_prefix() {
         );
         let _ = tmux(&sandbox.socket, &["kill-server"]);
     }
+}
+
+/// zsh expands `$(…)` in PROMPT when `prompt_subst` is on. The engine renders the prompt from
+/// theme text (directory and branch names), so the template turns the option off after the user
+/// rc; otherwise a crafted name would run on every prompt.
+#[test]
+fn zsh_does_not_run_prompt_subst_from_the_row() {
+    let mut sandbox = Sandbox::new("prompt-subst");
+    sandbox.copy_engine_rc("zsh");
+    let user_rc = sandbox.dir.path().join("user.zshrc");
+    std::fs::write(&user_rc, "setopt prompt_subst\n").expect("user rc");
+    let marker = sandbox.dir.path().join("pwned");
+    std::fs::write(
+        &sandbox.ack,
+        format!("1\n1\n$(touch {})> \n\n1\n", marker.display()),
+    )
+    .expect("write the ack");
+    // The ack carries the row, so the test needs no engine; the copied template is enough.
+    let cmd = format!(
+        "unset P11K_LANG P11K_LOCALEDIR LANGUAGE; export LC_ALL=C.UTF-8; cd '{}' && \
+         env ZDOTDIR='{}' P11K_ANNOUNCE='{}' P11K_ACK='{}' P11K_PREFIX_OK='OK> ' \
+         P11K_PREFIX_ERR='ERR> ' P11K_USER_ZSHRC='{}' zsh -i",
+        sandbox.dir.path().display(),
+        sandbox.rc.display(),
+        sandbox.announce.display(),
+        sandbox.ack.display(),
+        user_rc.display(),
+    );
+    new_session(&sandbox.socket, &cmd);
+    let text = screen_until(&sandbox.socket, "$(touch", 1, Duration::from_secs(10));
+    assert!(
+        text.contains("$(touch"),
+        "the row text must appear literally; screen: {text:?}"
+    );
+    assert!(
+        !marker.exists(),
+        "the prompt text must not run; screen: {text:?}"
+    );
+    let _ = tmux(&sandbox.socket, &["kill-server"]);
+}
+
+/// The right part of the row and its indent: fish has no `ZLE_RPROMPT_INDENT`, so the template
+/// pads the right part with spaces. Nothing else in the suite reads ack lines 4-5 end to end.
+#[test]
+fn fish_pads_the_right_part_by_the_indent() {
+    let mut sandbox = Sandbox::new("fish-right");
+    sandbox.copy_engine_rc("fish");
+    std::fs::write(&sandbox.ack, "1\n1\nLEFT> \nRIGHT\n3\n").expect("write the ack");
+    new_session(&sandbox.socket, &sandbox.shell_cmd("fish"));
+    // The first prompt takes the ack; plant it again for the prompt this case captures.
+    screen_until(&sandbox.socket, "LEFT>", 1, Duration::from_secs(10));
+    let capture = sandbox.dir.path().join("capture");
+    pipe_pane(&sandbox.socket, &capture);
+    std::fs::write(&sandbox.ack, "1\n1\nLEFT> \nRIGHT\n3\n").expect("write the ack");
+    let out = tmux(&sandbox.socket, &["send-keys", "-t", SESSION, "C-m"]);
+    assert!(out.status.success(), "send-keys C-m failed");
+    let text = capture_until(&capture, "RIGHT", Duration::from_secs(10));
+    assert!(
+        text.contains("RIGHT"),
+        "the right part should reach the terminal: {text:?}"
+    );
+    assert!(
+        text.contains("RIGHT   "),
+        "three columns of indent should follow the right part: {text:?}"
+    );
+    let _ = tmux(&sandbox.socket, &["kill-server"]);
+}
+
+/// zsh draws the right part through `RPROMPT`, and the indent goes through
+/// `ZLE_RPROMPT_INDENT`, which zle applies itself. This case covers ack lines 4-5 reaching
+/// `RPROMPT`; the indent itself is pinned by the template and the manual runs.
+#[test]
+fn zsh_prints_the_right_part() {
+    let mut sandbox = Sandbox::new("zsh-right");
+    sandbox.copy_engine_rc("zsh");
+    std::fs::write(&sandbox.ack, "1\n1\nLEFT> \nRIGHT\n3\n").expect("write the ack");
+    new_session(&sandbox.socket, &sandbox.shell_cmd("zsh"));
+    // The first prompt takes the ack; plant it again for the prompt this case captures.
+    screen_until(&sandbox.socket, "LEFT>", 1, Duration::from_secs(10));
+    let capture = sandbox.dir.path().join("capture");
+    pipe_pane(&sandbox.socket, &capture);
+    std::fs::write(&sandbox.ack, "1\n1\nLEFT> \nRIGHT\n3\n").expect("write the ack");
+    let out = tmux(&sandbox.socket, &["send-keys", "-t", SESSION, "C-m"]);
+    assert!(out.status.success(), "send-keys C-m failed");
+    let text = capture_until(&capture, "RIGHT", Duration::from_secs(10));
+    assert!(
+        text.contains("RIGHT"),
+        "zsh should print the right part: {text:?}"
+    );
+    let _ = tmux(&sandbox.socket, &["kill-server"]);
 }
 
 /// The generated templates must parse with their own shell. A syntax error in a template only
@@ -614,7 +705,7 @@ fn a_locale_separator_does_not_break_the_command_duration() {
             std::fs::write(&sandbox.announce, "").expect("clear the announce file");
             // The sandbox has no engine, so plant an ack for every prompt: otherwise each round
             // waits out the ack timeout and the screen fills with that warning.
-            std::fs::write(&sandbox.ack, "1\nACK> \n1\n").expect("write the ack");
+            std::fs::write(&sandbox.ack, "1\n1\nACK> \n\n1\n").expect("write the ack");
             // The start lies five seconds in the past, so a working calculation reports about
             // 5000 ms. The separator is the only difference between the rounds.
             let command =
@@ -682,7 +773,7 @@ fn a_real_comma_locale_reports_the_command_duration() {
     for shell in ["bash", "zsh"] {
         let mut sandbox = Sandbox::new(&format!("comma-locale-{shell}"));
         sandbox.copy_engine_rc(shell);
-        std::fs::write(&sandbox.ack, "1\nOK> \n1\n").expect("write the ack");
+        std::fs::write(&sandbox.ack, "1\n1\nOK> \n\n1\n").expect("write the ack");
         new_session(
             &sandbox.socket,
             &sandbox.shell_cmd_env(shell, &[("LC_ALL", "it_IT.UTF-8"), ("LANG", "it_IT.UTF-8")]),
@@ -693,7 +784,7 @@ fn a_real_comma_locale_reports_the_command_duration() {
             "{shell}: the prompt did not appear; screen: {text:?}"
         );
         std::fs::write(&sandbox.announce, "").expect("clear the announce file");
-        std::fs::write(&sandbox.ack, "1\nOK> \n1\n").expect("write the ack");
+        std::fs::write(&sandbox.ack, "1\n1\nOK> \n\n1\n").expect("write the ack");
         // A real command: the shell measures it with its own timestamps under the locale.
         send_keys(&sandbox.socket, "sleep 2");
         let records = wait_for_announce(&sandbox.announce, 1, Duration::from_secs(10));

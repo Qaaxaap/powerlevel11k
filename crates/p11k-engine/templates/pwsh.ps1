@@ -3,7 +3,10 @@ $P11kAnnounce = $env:P11K_ANNOUNCE
 $P11kAck = $env:P11K_ACK
 # Last prompt shape from the engine ack; reused when the engine does not answer (ack timeout).
 $script:P11kHeaderRows = 1
-$script:P11kPrefix = $env:P11K_PREFIX_OK
+# The row the user types on, already rendered as ANSI: the frame prefix, the row's segments and
+# the prompt character. PowerShell has no right prompt, so neither the right column nor the frame
+# suffix is drawn.
+$script:P11kLeft = $env:P11K_PREFIX_OK
 $script:P11kAckWarned = $false
 $script:P11kCols = $Host.UI.RawUI.WindowSize.Width
 $script:P11kRows = $Host.UI.RawUI.WindowSize.Height
@@ -45,32 +48,34 @@ function global:P11kEnginePrompt {
         if ($P11kWait -ge 400) { break }
     }
     if ([IO.File]::Exists($script:P11kAck)) {
-        # The ack carries the prompt shape: header height on the first line, then the two prefix
-        # strings. Reading them every prompt is what lets a reload change either without a restart.
+        # The ack carries the prompt shape: header height, the fold flag, the row the user types
+        # on and the right indent. Reading them every prompt is what lets a reload change any of
+        # them without a restart. PowerShell has no right prompt, so it reads only the height and
+        # the left part.
         $P11kAckLines = @(Get-Content $script:P11kAck)
         [IO.File]::Delete($script:P11kAck)
         $script:P11kHeaderRows = [int]$P11kAckLines[0]
-        $script:P11kPrefix = $P11kAckLines[1]
+        $script:P11kLeft = $P11kAckLines[2]
     } elseif (-not $script:P11kAckWarned) {
         $script:P11kAckWarned = $true
         if ($P11kCode -eq 0) {
-            $script:P11kPrefix = $env:P11K_PREFIX_OK
+            $script:P11kLeft = $env:P11K_PREFIX_OK
         } else {
-            $script:P11kPrefix = $env:P11K_PREFIX_ERR
+            $script:P11kLeft = $env:P11K_PREFIX_ERR
         }
         [Console]::Error.WriteLine("p11k: the engine did not answer in time; the prompt is drawn without a header")
     }
     # Prompt is ready, clear the anti-recursion flag (same as zsh's zle-line-init): a manual
     # p11k started later in the session is then not treated as a recursive load.
     if ($null -ne $env:P11K_ENGINE) { $env:P11K_ENGINE = $null }
-    # The prefix belongs in the prompt string: PSReadLine draws the buffer right after it.
+    # The row belongs in the prompt string: PSReadLine draws the buffer right after it.
     # Every prompt prints its own header rows. On the first prompt the instant header stays
     # above as history instead of being overwritten.
     if ($env:P11K_INSTANT) {
         Remove-Item Env:P11K_INSTANT -ErrorAction SilentlyContinue
     }
     $P11kLead = "`n" * $script:P11kHeaderRows
-    "$P11kLead`e]1337;p11k;p`a$($script:P11kPrefix)"
+    "$P11kLead`e]1337;p11k;p`a$($script:P11kLeft)"
 }
 
 function global:prompt { P11kEnginePrompt }

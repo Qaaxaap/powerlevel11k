@@ -170,10 +170,26 @@ pub enum Element {
     Disabled(String),
 }
 
+/// The row the user types on: the segments left of the cursor and the right column beside them.
+///
+/// The row exists whether or not it is declared. Without an `input` node the engine and the
+/// shell draw only the prompt prefix (`frame.last-prefix` plus `prompt_char`), which is the
+/// implicit input row. A declared row reuses the header's row assembly, so the same segments,
+/// separators and frame pieces work on the row the user types on.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InputLine {
+    /// Segments left of the cursor, drawn before the prompt prefix.
+    pub left: Vec<Element>,
+    /// Right column. Only the shells with a right prompt show it (zsh and fish).
+    pub right: Vec<Element>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layout {
     pub left: Vec<Vec<Element>>,
     pub right: Vec<Vec<Element>>,
+    /// The row the user types on; absent keeps the implicit prefix-only row.
+    pub input: Option<InputLine>,
     /// Sparse layout: how many blank lines to leave between consecutive prompts (0 = compact).
     /// Aligns with p10k `POWERLEVEL9K_PROMPT_ADD_NEWLINE` + `_COUNT`.
     pub prompt_add_newline: usize,
@@ -194,6 +210,7 @@ impl Default for Layout {
         Layout {
             left: Vec::new(),
             right: Vec::new(),
+            input: None,
             prompt_add_newline: 0,
             transient_prompt: TransientPrompt::Off,
             show_ruler: false,

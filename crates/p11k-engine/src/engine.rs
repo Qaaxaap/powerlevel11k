@@ -36,7 +36,6 @@ use crate::git::{GitRequest, GitResult, spawn_git_worker};
 use crate::log::{debug, info};
 use crate::model::{GitStatus, HeaderInfo, ViMode};
 use crate::protocol::{AnnMsg, SignalScanner, drain_announce, is_terminal_reply};
-use crate::render::InputPrefix;
 use crate::state::{RawTerminal, StateDir, tty_size};
 use crate::theme;
 use crate::window::paint_prompt;
@@ -66,7 +65,6 @@ impl PromptState {
 struct Engine {
     config: Config,
     config_path: Option<PathBuf>,
-    prefix: InputPrefix,
     geometry: Geometry,
     state: StateDir,
     shell: Shell,
@@ -109,7 +107,6 @@ impl Engine {
         let crate::session::Session {
             config,
             config_path,
-            prefix,
             geometry,
             state,
             shell,
@@ -176,7 +173,6 @@ impl Engine {
         let mut engine = Self {
             config,
             config_path,
-            prefix,
             geometry,
             state,
             shell,
@@ -217,7 +213,18 @@ impl Engine {
         Ok(engine)
     }
 
-    /// Draw the provisional header and the input-line prefix before the shell starts.
+    /// The left part of the row the user types on, from the state known at startup.
+    fn instant_left(&self) -> String {
+        instant_row_left(
+            &self.config,
+            &self.instant_info,
+            self.last_size.1 as usize,
+            self.vi_mode,
+        )
+    }
+
+    /// Draw the provisional prompt before the shell starts: the header, then the row the user
+    /// types on.
     fn draw_instant(&mut self) -> io::Result<()> {
         theme::render_header_cfg(
             &mut self.stdout,
@@ -227,11 +234,11 @@ impl Engine {
             None,
             self.vi_mode,
         )?;
-        // Draw the instant prefix without the save/restore-cursor dance: the shell has not
-        // started yet, so restoring the cursor would put it back at column 0 and the user's
-        // typing would overwrite the prefix. With a plain `\r` the cursor ends up right after
-        // it.
-        write!(self.stdout, "\r{}", self.prefix.text)?;
+        // Draw the instant row without the save/restore-cursor dance: the shell has not started
+        // yet, so restoring the cursor would put it back at column 0 and the user's typing would
+        // overwrite the row. With a plain `\r` the cursor ends up right after it. The right side
+        // stays unpainted: the shell aligns its own copy against the edge.
+        write!(self.stdout, "\r{}", self.instant_left())?;
         write!(self.stdout, "\x1b]133;B\x07")?;
         self.stdout.flush()?;
         self.instant_drawn = true;
@@ -348,7 +355,6 @@ impl Engine {
                         // reload that changes it lands on the next one. The prefix travelled to
                         // the shell at startup and can only change with a restart.
                         self.config = new_config;
-                        self.prefix = crate::render::input_prefix(&self.config, None, self.vi_mode);
                         let new_geometry = Geometry::new(&self.config, self.shell);
                         if new_geometry.prefix_ok != self.geometry.prefix_ok
                             || new_geometry.prefix_err != self.geometry.prefix_err
@@ -433,9 +439,11 @@ impl Engine {
                 None,
                 self.vi_mode,
             )?;
-            // Same as the initial instant draw: keep the cursor after the prefix instead of
-            // restoring it to column 0.
-            write!(self.stdout, "\r{}", self.prefix.text)?;
+            // Same as the initial instant draw: keep the cursor after the row instead of
+            // restoring it to column 0. The row is rendered for the new width, so a `dir` that
+            // now fits shows its full path again.
+            let left = self.instant_left();
+            write!(self.stdout, "\r{left}")?;
             write!(self.stdout, "\x1b]133;B\x07")?;
             self.stdout.flush()?;
         }
@@ -524,40 +532,30 @@ impl Engine {
                     // draws it.
                     theme::prompt_start(&mut self.stdout)?;
                     self.stdout.flush()?;
-                    // Release precmd and hand the shell the prompt shape: the header height on
-                    // the first line, then the prefix for this prompt. The engine picks that
-                    // prefix because it is the only side that knows the exit code, the pipeline
-                    // statuses and the vi mode; a shell choosing between two strings of its own
-                    // could not tell `OK_PIPE` from `OK`.
-                    let state_name =
-                        crate::render::prompt_state(&self.config, Some(&info), self.vi_mode);
-                    let prefix = Geometry::prefix_for(&self.config, self.shell, state_name);
+                    // Release precmd and hand the shell the prompt shape: the header height, the
+                    // fold flag and the row the user types on. The engine renders that row because
+                    // it is the only side that knows the exit code, the pipeline statuses and the
+                    // vi mode; a shell choosing between two strings of its own could not tell
+                    // `OK_PIPE` from `OK`.
+                    //
+                    // Transient prompt: `same-dir` folds the header only when the command left the
+                    // shell where it was (p10k's `always` / `same-dir` split). The engine decides
+                    // because it already knows both directories; the shell only reads the answer.
+                    let ack = self.prompt_ack(&info);
+                    // `prompt_ack` reads the previous prompt's directory for the fold decision, so
+                    // the record moves after it.
+                    self.last_prompt_cwd = Some(info.cwd.clone());
                     if self.shell == Shell::Pwsh {
                         // Keep the visible text next to the coloured form: PSReadLine repaints the
                         // prompt from the visible text only, and the forwarding path replaces that
                         // copy with the coloured one.
                         self.pwsh_prefix =
-                            Some((crate::render::strip_ansi(&prefix), prefix.clone()));
+                            Some((crate::render::strip_ansi(&ack.left), ack.left.clone()));
                     }
-                    // Transient prompt: `same-dir` folds the header only when the command left the
-                    // shell where it was (p10k's `always` / `same-dir` split). The engine decides
-                    // because it already knows both directories; the shell only reads the answer.
-                    let transient_on = transient_folds(
-                        self.config.layout.transient_prompt,
-                        self.last_prompt_cwd.as_deref(),
-                        &info.cwd,
-                    );
-                    self.last_prompt_cwd = Some(info.cwd.clone());
                     // Without the ack the shell falls back to the last prompt shape after its
                     // timeout: the session stays usable. The log says why the header is missing,
                     // instead of the engine exiting mid-session.
-                    let rows = self.geometry.header_rows
-                        + if self.instant_drawn {
-                            0
-                        } else {
-                            self.config.layout.prompt_add_newline
-                        };
-                    if let Err(e) = write_ack(&self.state.ack, rows, &prefix, transient_on) {
+                    if let Err(e) = write_ack(&self.state.ack, &ack) {
                         crate::log::log(
                             crate::log::Level::Error,
                             &format!("cannot write the prompt ack: {e}"),
@@ -575,6 +573,9 @@ impl Engine {
                 }
                 AnnMsg::Resize => {
                     // The size check at the top of the handler already resized the pty.
+                    // The shell reprints the prompt string it holds, rendered for the old width:
+                    // `dir` shortening, a dropped right side and the right indent stay as they
+                    // were until the next prompt brings a new ack.
                     // zsh: zle repaints the prompt string and the backfill goes through the
                     // signal; repaint the header here.
                     // Other shells: after a resize the shell reprints the prompt string from
@@ -625,6 +626,46 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// The prompt shape for the state the engine holds: the header height, the fold flag and the
+    /// row the user types on. Announce builds the ack with it.
+    fn prompt_ack(&self, info: &HeaderInfo) -> Ack {
+        let rows = self.geometry.header_rows
+            + if self.instant_drawn {
+                0
+            } else {
+                self.config.layout.prompt_add_newline
+            };
+        let fold = transient_folds(
+            self.config.layout.transient_prompt,
+            self.last_prompt_cwd.as_deref(),
+            &info.cwd,
+        );
+        // The input row is part of the prompt string, so the shell prints it: the engine cannot
+        // paint it later without overwriting the buffer. A stale git result is dropped here
+        // instead of being frozen into a row the shell will not repaint.
+        let vcs = self
+            .last_vcs
+            .as_ref()
+            .filter(|(cwd, _)| cwd == &info.cwd)
+            .and_then(|(_, status)| status.as_ref());
+        let input = crate::render::render_input_row(
+            &self.config,
+            info,
+            vcs,
+            self.last_size.1 as usize,
+            self.vi_mode,
+            prompt_syntax(self.shell),
+            matches!(self.shell, Shell::Zsh | Shell::Fish),
+        );
+        Ack {
+            rows,
+            fold,
+            left: input.left,
+            right: input.right,
+            right_indent: self.config.layout.right_indent,
+        }
     }
 
     /// Real-terminal input → pty. Returns false when the terminal closed (stop the loop).
@@ -807,6 +848,33 @@ fn transient_folds(
     }
 }
 
+/// How one shell's prompt string expresses colour: zsh and bash mark sequences with their own
+/// zero-width syntax, fish and pwsh read the engine's ANSI.
+fn prompt_syntax(shell: Shell) -> crate::render::PromptSyntax {
+    match shell {
+        Shell::Zsh => crate::render::PromptSyntax::Zsh,
+        Shell::Bash => crate::render::PromptSyntax::Bash,
+        Shell::Fish | Shell::Pwsh => crate::render::PromptSyntax::Ansi,
+    }
+}
+
+/// The left part of the row the user types on, as the engine paints it during the instant phase.
+///
+/// ANSI, not the shell's prompt syntax: the engine writes this text to the terminal itself, and
+/// prompt escapes mean nothing there.
+fn instant_row_left(config: &Config, info: &HeaderInfo, cols: usize, vi_mode: ViMode) -> String {
+    crate::render::render_input_row(
+        config,
+        info,
+        None,
+        cols,
+        vi_mode,
+        crate::render::PromptSyntax::Ansi,
+        false,
+    )
+    .left
+}
+
 /// PSReadLine repaints the prompt from a copy without the SGR sequences it was handed, so the
 /// frame's last prefix loses its colour after the first redraw (PSReadLine issues #986 and
 /// #4716: it does not remember the colours of the prompt). Replace that visible copy with the
@@ -837,22 +905,44 @@ fn rewrite_pwsh_prefix(data: &[u8], shell: Shell, prefix: Option<&(String, Strin
     out
 }
 
-/// Write the ack the shell waits for. The ack is line-oriented: header height, prefix, fold
-/// flag. A prefix with a line break would shift the following values into the wrong lines, so
-/// it is rejected instead of producing an ack the shell reads incorrectly.
-fn write_ack(path: &std::path::Path, rows: usize, prefix: &str, fold: bool) -> io::Result<()> {
-    if prefix.contains(['\n', '\r']) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "the prompt prefix contains a line break; the ack is line oriented",
-        ));
+/// The prompt shape one prompt hands to the shell, in the order the ack file carries it.
+///
+/// The ack is line-oriented, so no value may contain a line break. The shells read the lines by
+/// number: changing the order means changing every template with it.
+struct Ack {
+    /// Blank rows the shell prints before the prompt-ready signal.
+    rows: usize,
+    /// Whether this prompt folds (transient prompt).
+    fold: bool,
+    /// The row the user types on, left of the buffer: the frame's last prefix, the left column
+    /// and the prompt character.
+    left: String,
+    /// The right column and the frame's last suffix, for a shell with a right prompt.
+    right: String,
+    /// Columns kept free to the right of the right column (zsh `ZLE_RPROMPT_INDENT`).
+    right_indent: usize,
+}
+
+/// Write the ack the shell waits for. A value with a line break would shift the following values
+/// into the wrong lines, so it is rejected instead of producing an ack the shell reads
+/// incorrectly.
+fn write_ack(path: &std::path::Path, ack: &Ack) -> io::Result<()> {
+    for (name, value) in [("left", &ack.left), ("right", &ack.right)] {
+        if value.contains(['\n', '\r']) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("the prompt {name} contains a line break; the ack is line oriented"),
+            ));
+        }
     }
     let tmp = path.with_extension("tmp");
     {
         let mut file = File::create(&tmp)?;
-        writeln!(file, "{rows}")?;
-        writeln!(file, "{prefix}")?;
-        writeln!(file, "{}", u8::from(fold))?;
+        writeln!(file, "{}", ack.rows)?;
+        writeln!(file, "{}", u8::from(ack.fold))?;
+        writeln!(file, "{}", ack.left)?;
+        writeln!(file, "{}", ack.right)?;
+        writeln!(file, "{}", ack.right_indent)?;
         file.flush()?;
     }
     std::fs::rename(&tmp, path)
@@ -937,6 +1027,38 @@ mod tests {
         assert!(!is_terminal_reply(b""));
     }
 
+    /// The instant row is painted by the engine, so it must be ANSI. A shell's prompt escapes
+    /// (`%F…`, `\[…\]`) would reach the terminal as literal text, because no shell expands them
+    /// on the engine's writes.
+    #[test]
+    fn the_instant_row_is_ansi() {
+        let config =
+            Config::parse("layout { input { left { dir } } }\nsegments { prompt_char char=\"λ\" }")
+                .unwrap();
+        let info = HeaderInfo {
+            exit_code: None,
+            cwd: "/tmp".into(),
+            exec_seconds: 0.0,
+            exec_ms: None,
+            jobs: 0,
+            history: 0,
+            pipestatus: Vec::new(),
+        };
+        let left = instant_row_left(&config, &info, 80, ViMode::Unreported);
+        assert!(
+            left.contains('\u{03bb}'),
+            "the prompt character must be in the row: {left:?}"
+        );
+        assert!(
+            !left.contains("%F"),
+            "a zsh escape would show literally: {left:?}"
+        );
+        assert!(
+            !left.contains("\\["),
+            "a bash escape would show literally: {left:?}"
+        );
+    }
+
     /// The shell polls for the ack and reads it the moment the file exists. A half-written file
     /// would give it the wrong prompt shape, so the writer goes through a sibling temp file and a
     /// rename.
@@ -947,29 +1069,60 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ack");
 
-        write_ack(&path, 2, "%F{red}❯ ", true).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "2\n%F{red}❯ \n1\n");
+        let ack = Ack {
+            rows: 2,
+            fold: true,
+            left: "%F{39}/tmp %F{red}❯ ".into(),
+            right: "%F{160}1%f%k%b".into(),
+            right_indent: 1,
+        };
+        write_ack(&path, &ack).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "2\n1\n%F{39}/tmp %F{red}❯ \n%F{160}1%f%k%b\n1\n"
+        );
         assert!(!dir.join("ack.tmp").exists(), "the temp file must be gone");
 
-        write_ack(&path, 1, "❯ ", false).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "1\n❯ \n0\n");
+        let ack = Ack {
+            rows: 1,
+            fold: false,
+            left: "❯ ".into(),
+            right: String::new(),
+            right_indent: 1,
+        };
+        write_ack(&path, &ack).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "1\n0\n❯ \n\n1\n");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A prefix with a line break would shift the fold flag into another line, so the ack is
-    /// rejected instead of written in a shape the shell would misread.
+    /// A value with a line break would shift the following values into another line, so the ack
+    /// is rejected instead of written in a shape the shell would misread.
     #[test]
-    fn ack_rejects_a_prefix_with_a_line_break() {
+    fn ack_rejects_a_value_with_a_line_break() {
         let dir = std::env::temp_dir().join(format!("p11k-ack-break-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("ack");
 
-        for prefix in ["a\nb", "a\rb", "\n"] {
-            let err = write_ack(&path, 1, prefix, false).expect_err("a line break is invalid");
-            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "prefix {prefix:?}");
-            assert!(!path.exists(), "no ack file for prefix {prefix:?}");
+        let base = || Ack {
+            rows: 1,
+            fold: false,
+            left: "❯ ".into(),
+            right: String::new(),
+            right_indent: 1,
+        };
+        for broken in ["a\nb", "a\rb", "\n"] {
+            let mut ack = base();
+            ack.left = broken.into();
+            let err = write_ack(&path, &ack).expect_err("a line break is invalid");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "left {broken:?}");
+            assert!(!path.exists(), "no ack file for left {broken:?}");
+
+            let mut ack = base();
+            ack.right = broken.into();
+            let err = write_ack(&path, &ack).expect_err("a line break is invalid");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "right {broken:?}");
         }
 
         let _ = std::fs::remove_dir_all(&dir);

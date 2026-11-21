@@ -7,7 +7,8 @@
 //! parameters the engine does not cover are not migrated.
 
 use crate::config::{
-    Color, Config, Element, Frame, FramePiece, Prop, Segment, Separators, StateSpec, Style,
+    Color, Config, Element, Frame, FramePiece, InputLine, Prop, Segment, Separators, StateSpec,
+    Style,
 };
 
 /// Four classic segment backgrounds (Lightest/Light/Dark/Darkest).
@@ -213,7 +214,9 @@ fn base() -> Config {
 
 // ---- The four presets ----
 
-/// lean: single line, no frame or arrows, transparent background. `colors_8` requests the 8-color downgrade (aligns with p10k lean-8colors).
+/// lean: one row with no frame or arrows and a transparent background, like p10k lean, whose
+/// segments share the line with the `❯`. `colors_8` requests the 8-color downgrade (aligns with
+/// p10k lean-8colors).
 pub fn lean(colors_8: bool) -> Config {
     let (
         dir,
@@ -244,12 +247,15 @@ pub fn lean(colors_8: bool) -> Config {
     };
 
     let mut cfg = base();
-    cfg.layout.left = vec![vec![Element::Seg("dir".into()), Element::Seg("vcs".into())]];
-    cfg.layout.right = vec![vec![
-        Element::Seg("status".into()),
-        Element::Seg("command_execution_time".into()),
-        Element::Seg("background_jobs".into()),
-    ]];
+    // The segments sit on the row the user types on; lean has no header row above it.
+    cfg.layout.input = Some(InputLine {
+        left: vec![Element::Seg("dir".into()), Element::Seg("vcs".into())],
+        right: vec![
+            Element::Seg("status".into()),
+            Element::Seg("command_execution_time".into()),
+            Element::Seg("background_jobs".into()),
+        ],
+    });
     cfg.segments
         .insert("dir".into(), dir_seg(dir, short, anchor, anchor_bold, None));
     cfg.segments.insert(
@@ -353,7 +359,9 @@ pub fn rainbow(color: usize) -> Config {
     cfg
 }
 
-/// pure: single-line minimal, no frame or arrows, transparent background. `snazzy` selects the Snazzy true colors, otherwise Original.
+/// pure: one row with no frame or arrows and a transparent background, like p10k pure, whose
+/// segments share the line with the `❯`. `snazzy` selects the Snazzy true colors, otherwise
+/// Original.
 pub fn pure(snazzy: bool) -> Config {
     // Aligns with the pure_original / pure_snazzy palettes of p10k pure.
     let (grey, red, yellow, blue, magenta) = if snazzy {
@@ -369,14 +377,17 @@ pub fn pure(snazzy: bool) -> Config {
     };
 
     let mut cfg = base();
-    cfg.layout.left = vec![vec![
-        Element::Seg("context".into()),
-        Element::Seg("dir".into()),
-        Element::Seg("vcs".into()),
-        Element::Seg("command_execution_time".into()),
-    ]];
-    // p10k pure has no right column.
-    cfg.layout.right = Vec::new();
+    // One row, like p10k pure: the segments share the line with the `❯`, and there is no right
+    // column.
+    cfg.layout.input = Some(InputLine {
+        left: vec![
+            Element::Seg("context".into()),
+            Element::Seg("dir".into()),
+            Element::Seg("vcs".into()),
+            Element::Seg("command_execution_time".into()),
+        ],
+        right: Vec::new(),
+    });
 
     let mut context = Segment::default();
     context.style.fg = Some(grey.clone());

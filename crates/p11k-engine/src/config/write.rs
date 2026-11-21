@@ -90,6 +90,14 @@ impl Config {
             right.ensure_children().nodes_mut().push(line_node(row));
         }
         ch.nodes_mut().push(right);
+        if let Some(input) = &self.layout.input {
+            // The input row is one row per side, so it has no `line` wrapper.
+            let mut node = KdlNode::new("input");
+            let ich = node.ensure_children();
+            ich.nodes_mut().push(side_node("left", &input.left));
+            ich.nodes_mut().push(side_node("right", &input.right));
+            ch.nodes_mut().push(node);
+        }
         if self.layout.prompt_add_newline == 1 {
             ch.nodes_mut().push(leaf("prompt-add-newline", true));
         } else if self.layout.prompt_add_newline > 1 {
@@ -299,31 +307,45 @@ pub(super) fn prop_value(p: &Prop) -> KdlValue {
 /// One line of layout elements → a `line { … }` node.
 pub(super) fn line_node(row: &[Element]) -> KdlNode {
     let mut n = KdlNode::new("line");
-    let ch = n.ensure_children();
+    n.ensure_children().nodes_mut().extend(element_nodes(row));
+    n
+}
+
+/// One row of layout elements under a named node: the input row's `left` / `right`, which carry
+/// their elements directly instead of a nested `line`.
+pub(super) fn side_node(name: &str, row: &[Element]) -> KdlNode {
+    let mut n = KdlNode::new(name);
+    n.ensure_children().nodes_mut().extend(element_nodes(row));
+    n
+}
+
+/// The element nodes of one row.
+fn element_nodes(row: &[Element]) -> Vec<KdlNode> {
+    let mut out = Vec::with_capacity(row.len());
     for el in row {
         match el {
             Element::Seg(name) => {
-                ch.nodes_mut().push(KdlNode::new(name.as_str()));
+                out.push(KdlNode::new(name.as_str()));
             }
             Element::Joined(name) => {
-                ch.nodes_mut().push(KdlNode::new(format!("{name}_joined")));
+                out.push(KdlNode::new(format!("{name}_joined")));
             }
             Element::Text(t) => {
-                ch.nodes_mut().push(leaf("text", t.clone()));
+                out.push(leaf("text", t.clone()));
             }
             Element::NamedText(name, t) => {
                 let mut n = KdlNode::new(name.as_str());
                 n.entries_mut().push(KdlEntry::new(t.clone()));
-                ch.nodes_mut().push(n);
+                out.push(n);
             }
             Element::Disabled(name) => {
                 let mut n = KdlNode::new(name.as_str());
                 n.entries_mut().push(KdlEntry::new(false));
-                ch.nodes_mut().push(n);
+                out.push(n);
             }
         }
     }
-    n
+    out
 }
 
 /// One segment → a `<name> … { state … text-* … }` node.
