@@ -6,12 +6,16 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crate::paths;
 
 /// Rotate the log once it grows past this size. One generation is kept.
 const MAX_LOG_BYTES: u64 = 1 << 20;
+
+/// Whether a failed write was already reported on stderr. A broken log must say so once, not on
+/// every prompt.
+static WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Severity of a log line. A line is written when its level is at or below the configured one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -47,21 +51,27 @@ pub fn path() -> PathBuf {
 /// Rotate an oversized log. Call at startup before the first write; [`append`] also rotates
 /// while the engine runs.
 pub fn init() {
-    rotate_if_oversized(&path());
+    if let Err(e) = rotate_if_oversized(&path()) {
+        eprintln!(
+            "p11k: {}",
+            crate::i18n::t_args("log-rotate-failed", &[("error", &e.to_string())])
+        );
+    }
 }
 
 /// Move the log to its one kept generation.
-fn rotate(path: &Path) {
-    let _ = fs::rename(path, path.with_extension("log.1"));
+fn rotate(path: &Path) -> io::Result<()> {
+    fs::rename(path, path.with_extension("log.1"))
 }
 
-fn rotate_if_oversized(path: &Path) {
+fn rotate_if_oversized(path: &Path) -> io::Result<()> {
     if fs::metadata(path)
         .map(|meta| meta.len() > MAX_LOG_BYTES)
         .unwrap_or(false)
     {
-        rotate(path);
+        rotate(path)?;
     }
+    Ok(())
 }
 
 /// Append one line, rotating first when the file is already past the limit.
@@ -75,7 +85,7 @@ fn append(path: &Path, msg: &str) -> io::Result<()> {
         .open(path)?;
     if file.metadata()?.len() > MAX_LOG_BYTES {
         drop(file);
-        rotate(path);
+        rotate(path)?;
         file = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -93,7 +103,14 @@ pub fn log(level: Level, msg: &str) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let _ = append(&path, msg);
+    if let Err(e) = append(&path, msg)
+        && !WRITE_ERROR_REPORTED.swap(true, Ordering::Relaxed)
+    {
+        eprintln!(
+            "p11k: {}",
+            crate::i18n::t_args("log-write-failed", &[("error", &e.to_string())])
+        );
+    }
 }
 
 /// Low-frequency engine events: startup, reload, recoverable errors.

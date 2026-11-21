@@ -1696,6 +1696,46 @@ mod tests {
         assert!(p.text.ends_with(' '), "prefix should end with a space");
     }
 
+    /// Each shell's prompt string needs its own zero-width syntax; the engine hands the prefix
+    /// over in that syntax, not as ANSI.
+    #[test]
+    fn the_prefix_uses_each_shells_prompt_syntax() {
+        let cfg = Config::parse(
+            "segments { prompt_char fg=196 char=\"λ\" }\nlayout { left { line { dir } } }",
+        )
+        .unwrap();
+        let bash = prefix_text_bash(&cfg, None);
+        assert!(bash.contains('λ'), "bash: {bash:?}");
+        assert!(
+            bash.contains("\\[") && bash.contains("\\]"),
+            "readline needs the escapes bracketed: {bash:?}"
+        );
+        let zsh = prefix_text_zsh(&cfg, None);
+        assert!(zsh.contains('λ'), "zsh: {zsh:?}");
+        assert!(
+            zsh.contains("%F{196}"),
+            "zle needs `%F` for the colour: {zsh:?}"
+        );
+        assert!(
+            !zsh.contains('\u{1b}'),
+            "a zsh prompt string carries no raw escape: {zsh:?}"
+        );
+    }
+
+    /// A header of two rows: the first row takes `first-*`, the second `newline-*`.
+    #[test]
+    fn a_two_row_header_uses_the_frame_rows() {
+        let cfg = Config::parse(
+            "mode \"ascii\"\nlayout {\n  left { line { dir }; line { dir } }\n}\n\
+             frame { first-prefix \"A\"; newline-prefix \"B\" }",
+        )
+        .unwrap();
+        let lines = render_header_lines(&cfg, &info("/tmp", Some(0)), None, 80);
+        assert_eq!(lines.len(), 2, "one line per header row: {lines:?}");
+        assert!(lines[0].starts_with('A'), "first row: {:?}", lines[0]);
+        assert!(lines[1].starts_with('B'), "second row: {:?}", lines[1]);
+    }
+
     #[test]
     fn vcs_state_colors_and_inner_spaces() {
         // classic(2): segment background 238, clean 76, modified 178.

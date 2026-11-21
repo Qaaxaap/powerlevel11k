@@ -44,11 +44,6 @@ impl UntrackedCache {
     pub fn enabled(&self) -> bool {
         self.supported.load(Ordering::Relaxed)
     }
-
-    /// Dir mtime unchanged (the cache is fresh) when it equals the record.
-    pub fn is_fresh(&self, cached: Option<(i64, i64)>, cur: (i64, i64)) -> bool {
-        self.enabled() && cached == Some(cur)
-    }
 }
 
 /// Probe body (mirrors CheckDirMtime). Any failure → false (safe degrade).

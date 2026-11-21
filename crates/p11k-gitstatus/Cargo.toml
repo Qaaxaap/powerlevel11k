@@ -16,8 +16,6 @@ libc.workspace = true
 git2 = { workspace = true, features = ["vendored-libgit2"] }
 log = "0.4.35"
 env_logger = "0.11.11"
-# Raw FFI: notify_cb/range_start/range_end for the dirty diff (git2 does not bind them),
-# matching the original StartDirtyScan range optimization.
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }

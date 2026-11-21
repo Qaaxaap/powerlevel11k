@@ -86,6 +86,9 @@ impl Session {
         // (the shell never sees it), and the kernel also echoes input, doubling every character.
         // The shell's own terminal (portable-pty's slave) has its termios managed by the shell.
         let raw = RawTerminal::enter(libc::STDIN_FILENO)?;
+        if !raw.is_raw() {
+            info("stdin is not a terminal; the input line is not in raw mode");
+        }
 
         let (rows, cols, xpix, ypix) = tty_size().unwrap_or((24, 80, 0, 0));
         let pty_system = native_pty_system();

@@ -115,3 +115,5 @@ wizard-overwrite = p11k config file already exists. Overwrite { $path }?
 wizard-new-config = New config: { $path }.
 wizard-add-to-rc = Add one of these to your shell rc:
 wizard-engine-is-theme = The engine is the theme: remove any ZSH_THEME/theme setup first, otherwise they will stack.
+log-rotate-failed = cannot rotate the engine log: { $error }
+log-write-failed = cannot write the engine log: { $error }

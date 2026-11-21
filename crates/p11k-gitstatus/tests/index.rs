@@ -41,7 +41,6 @@ fn entry(path: &str, st: &libc::stat) -> IndexEntry {
         mode: st.st_mode,
         stage: 0,
         flags_extended: 0,
-        assume_valid: false,
     }
 }
 
@@ -79,7 +78,6 @@ fn from_entries_builds_tree() {
             mode: 0o100644,
             stage: 0,
             flags_extended: 0,
-            assume_valid: false,
         }
     };
     let entries = vec![fake("a"), fake("dir/b"), fake("dir/sub/c")];
@@ -219,7 +217,6 @@ fn splits_are_monotonic() {
             mode: 0o100644,
             stage: 0,
             flags_extended: 0,
-            assume_valid: false,
         }
     };
     let entries: Vec<IndexEntry> = (0..2000).map(fake).collect();

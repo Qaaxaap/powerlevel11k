@@ -220,6 +220,7 @@ impl RawTerminal {
         unsafe {
             let mut t: libc::termios = std::mem::zeroed();
             if libc::tcgetattr(fd, &mut t) != 0 {
+                // Not a terminal: leave it alone and let the caller report the missing raw mode.
                 return Ok(Self { fd, orig: None });
             }
             let orig = t;
@@ -235,6 +236,13 @@ impl RawTerminal {
                 orig: Some(orig),
             })
         }
+    }
+
+    /// Whether the terminal accepted raw mode. False on a non-terminal: the kernel then echoes
+    /// and line-buffers the input itself, so line editing and the echo the engine expects do not
+    /// apply.
+    pub fn is_raw(&self) -> bool {
+        self.orig.is_some()
     }
 }
 
@@ -415,6 +423,10 @@ mod tests {
         let mut fds = [0i32; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
         let raw = RawTerminal::enter(fds[0]).expect("a non-terminal enters without a saved state");
+        assert!(
+            !raw.is_raw(),
+            "the caller has to be able to tell that raw mode was not entered"
+        );
         drop(raw);
         unsafe {
             libc::close(fds[0]);
