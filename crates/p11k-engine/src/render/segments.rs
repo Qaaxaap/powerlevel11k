@@ -337,7 +337,7 @@ pub(super) fn date_text(seg: &crate::config::Segment) -> String {
 /// Format the current local time with a strftime format. An invalid format yields an empty
 /// string instead of an error; a segment with a broken format shows nothing.
 pub(super) fn strftime_now(fmt: &str) -> String {
-    jiff::fmt::strtime::format(fmt, &jiff::Zoned::now()).unwrap_or_default()
+    jiff::fmt::strtime::format(fmt, &jiff::ZonedDateTime::now()).unwrap_or_default()
 }
 
 // Toolchain version segments: run `cmd --version`, cache the output and parse the version;
