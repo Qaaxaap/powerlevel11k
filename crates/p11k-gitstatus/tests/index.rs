@@ -178,6 +178,32 @@ fn is_modified_munges_an_exact_multiple_of_4gib() {
     );
 }
 
+/// The inode is 32-bit in the index and git compares it truncated. A 64-bit inode whose low half
+/// matches the entry is clean.
+#[test]
+fn is_modified_truncates_an_inode_over_32_bits() {
+    let mut st = fake_stat(3, 7);
+    st.st_ino = (1u64 << 32) + 7;
+    assert!(
+        !is_modified(&fake_entry(7, 3), &st, &caps()),
+        "the low 32 bits of the inode match, so the file is clean"
+    );
+}
+
+/// The mtime seconds are 32-bit in the index as well; git compares `(unsigned int)st_mtime`.
+/// An mtime past 2038 does not fit in the signed index field and must still compare equal.
+#[test]
+fn is_modified_truncates_an_mtime_past_2038() {
+    let mut st = fake_stat(3, 7);
+    st.st_mtime = 2_208_960_000; // 2040-01-01
+    let mut entry = fake_entry(7, 3);
+    entry.mtime_sec = 2_208_960_000u32 as i32;
+    assert!(
+        !is_modified(&entry, &st, &caps()),
+        "the 32-bit mtime matches, so the file is clean"
+    );
+}
+
 /// ZERO_NSEC special case: an index nsec of 0 skips nsec comparison (mirrors GITSTATUS_ZERO_NSEC).
 #[test]
 fn is_modified_zero_nsec_ignores_nsec_mismatch() {

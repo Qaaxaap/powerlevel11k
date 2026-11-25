@@ -15,10 +15,11 @@
 //! - field assembly (branch/remote/action/ahead-behind; libgit2 caches
 //!   internally)
 //! - unstaged/untracked worktree pass: the p11k index tree is reused while
-//!   `.git/index` is unchanged ([`Repo::index_tree_or_rebuild`]), then one
-//!   `fstatat` per tracked file (stat refresh) plus one per directory
-//!   (untracked-cache mtime check); readdir only on an untracked-cache miss.
-//!   Candidates are classified without a git diff ([`Repo::compute_dirty`]).
+//!   `.git/index` is unchanged (`Repo::index_tree_or_rebuild`, in
+//!   `index_stats`), then one `fstatat` per tracked file (stat refresh) plus
+//!   one per directory (untracked-cache mtime check); readdir only on an
+//!   untracked-cache miss. Candidates are classified without a git diff
+//!   (`Repo::compute_dirty`).
 //!   Baseline: the `iai` benchmark counts 3.1 M instructions for a warm
 //!   `build_fields` on a 5000-file repository and 0.47 M on 50. Callgrind
 //!   counts do not move with the machine, so they judge a change; the

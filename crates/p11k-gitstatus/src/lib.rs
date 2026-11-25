@@ -12,11 +12,9 @@
 //! | [`options`] | Command-line arguments and exit codes |
 //! | [`daemon`] | Process lifecycle: FIFO, pgid handshake, liveness, main loop |
 //! | [`repo`] | Repo handle and LRU cache |
-//! | [`index_stats`] | Index and dirty worktree statistics |
 //! | [`index`] | git index parsing and dirty-candidate scan (performance core) |
 //! | [`scan`] | Worktree traversal (root-fd fstatat, untracked-cache pruning) |
 //! | [`untracked_cache`] | CheckDirMtime probe and untracked cache |
-//! | [`sys`] | Safe wrappers for the libc calls |
 //!
 //! # Performance
 //!
@@ -27,10 +25,10 @@
 
 pub mod daemon;
 pub mod index;
-pub mod index_stats;
+mod index_stats;
 pub mod options;
 pub mod protocol;
 pub mod repo;
 pub mod scan;
-pub mod sys;
+mod sys;
 pub mod untracked_cache;

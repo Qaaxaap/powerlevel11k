@@ -301,7 +301,9 @@ pub fn is_modified(entry: &IndexEntry, st: &libc::stat, caps: &RepoCaps) -> bool
     // `stage` is the conflict flag; a conflicted entry is always a candidate.
     let stage_ok = entry.stage == 0;
     let fsize_ok = entry.fsize == munge_st_size(st.st_size);
-    let mtime_ok = i64::from(entry.mtime_sec) == st.st_mtime
+    // The mtime seconds are 32-bit in the index too, and git compares `(unsigned int)st_mtime`.
+    // A file with an mtime past 2038 is otherwise reported as modified on every scan.
+    let mtime_ok = (entry.mtime_sec as u32) == (st.st_mtime as u32)
         && (i64::from(entry.mtime_nsec) == st.st_mtime_nsec || entry.mtime_nsec == 0);
     let mode_ok = entry.mode == mode;
     !(ino_ok && stage_ok && fsize_ok && mtime_ok && mode_ok)

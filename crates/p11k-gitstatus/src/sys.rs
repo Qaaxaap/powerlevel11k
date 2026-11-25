@@ -296,6 +296,7 @@ pub fn kill(pid: i32, sig: i32) -> io::Result<()> {
 }
 
 /// `pipe(2)`, returning the read and write ends.
+#[cfg(test)]
 pub fn pipe() -> io::Result<(RawFd, RawFd)> {
     let mut fds = [0; 2];
     // SAFETY: `fds` is a valid array of two descriptors.
