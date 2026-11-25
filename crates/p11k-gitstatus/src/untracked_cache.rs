@@ -16,6 +16,8 @@
 //! optimistic default). Leftover probe dirs (`.gitstatus.` prefix) are
 //! removed so a crashed previous run cannot interfere.
 
+use crate::sys;
+use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -52,7 +54,7 @@ fn probe_support(gitdir: &Path) -> bool {
     remove_stale_dirs(gitdir);
 
     // mkdtemp: gitdir/.gitstatus.XXXXXX
-    let Some(tmp) = mkdtemp(gitdir.join(".gitstatus.XXXXXX")) else {
+    let Ok(tmp) = sys::mkdtemp(&gitdir.join(".gitstatus.XXXXXX")) else {
         return false;
     };
     // RAII cleanup: remove the probe dir on every exit path.
@@ -60,15 +62,13 @@ fn probe_support(gitdir: &Path) -> bool {
 
     let a_dir = tmp.join("a");
     let b_dir = tmp.join("b");
-    // SAFETY: path is NUL-terminated via nul(); standard mkdir semantics.
-    if unsafe { libc::mkdir(nul(&a_dir).as_ptr().cast(), 0o755) } != 0 {
+    if sys::mkdir(&a_dir, 0o755).is_err() {
         return false;
     }
     let Some(a_st) = lstat(&a_dir) else {
         return false;
     };
-    // SAFETY: as above.
-    if unsafe { libc::mkdir(nul(&b_dir).as_ptr().cast(), 0o755) } != 0 {
+    if sys::mkdir(&b_dir, 0o755).is_err() {
         return false;
     }
     let Some(b_st) = lstat(&b_dir) else {
@@ -80,8 +80,7 @@ fn probe_support(gitdir: &Path) -> bool {
 
     // a/1 subdir: does creating a subdir update the parent's mtime?
     let a1 = a_dir.join("1");
-    // SAFETY: as above.
-    if unsafe { libc::mkdir(nul(&a1).as_ptr().cast(), 0o755) } != 0 {
+    if sys::mkdir(&a1, 0o755).is_err() {
         return false;
     }
     if !stat_changed(&a_dir, &a_st) {
@@ -91,28 +90,13 @@ fn probe_support(gitdir: &Path) -> bool {
     // b/1 file: does creating a file update the parent's mtime?
     // (matches Touch = creat 0444)
     let b1 = b_dir.join("1");
-    // SAFETY: as above.
-    let fd = unsafe {
-        libc::open(
-            nul(&b1).as_ptr().cast(),
-            libc::O_CREAT | libc::O_WRONLY | libc::O_CLOEXEC,
-            0o444,
-        )
-    };
-    if fd < 0 {
+    let Ok(fd) = sys::create_file(&b1, 0o444) else {
         return false;
+    };
+    if let Err(e) = sys::close(fd) {
+        log::debug!("close of the probe file failed: {e}");
     }
-    // SAFETY: standard close semantics.
-    unsafe { libc::close(fd) };
     stat_changed(&b_dir, &b_st)
-}
-
-/// Path bytes + trailing NUL (a helper so every lstat/mkdir call is
-/// NUL-terminated and cannot over-read).
-fn nul(path: &Path) -> Vec<u8> {
-    let mut b = path.as_os_str().as_bytes().to_vec();
-    b.push(0);
-    b
 }
 
 /// RAII cleanup: recursively remove the probe dir on drop
@@ -128,39 +112,23 @@ impl Drop for Cleanup {
         let b = root.join("b");
         for p in [&b1, &b, &a1, &a, root] {
             let is_dir = p != &b1;
-            // SAFETY: path is NUL-terminated via nul().
             let r = if is_dir {
-                unsafe { libc::rmdir(nul(p).as_ptr().cast()) }
+                sys::rmdir(p)
             } else {
-                unsafe { libc::unlink(nul(p).as_ptr().cast()) }
+                sys::unlink(p)
             };
-            let _ = r; // cleanup failure is not fatal
+            if let Err(e) = r {
+                log::debug!("probe cleanup of {} failed: {e}", p.display());
+            }
         }
     }
 }
 
-/// mkdtemp wrapper; libc fills the trailing XXXXXX.
-fn mkdtemp(template: PathBuf) -> Option<PathBuf> {
-    let mut bytes = template.as_os_str().as_bytes().to_vec();
-    bytes.push(0);
-    // SAFETY: bytes is a NUL-terminated mutable buffer; last 6 bytes are X.
-    let p = unsafe { libc::mkdtemp(bytes.as_mut_ptr().cast()) };
-    if p.is_null() {
-        return None;
-    }
-    // SAFETY: on success p points to the filled NUL-terminated path.
-    let cstr = unsafe { std::ffi::CStr::from_ptr(p) };
-    Some(PathBuf::from(std::ffi::OsStr::from_bytes(cstr.to_bytes())))
-}
-
 /// lstat → (mtime_sec, mtime_nsec).
 fn lstat(path: &Path) -> Option<(i64, i64)> {
-    let mut st: libc::stat = unsafe { std::mem::zeroed() };
-    // SAFETY: path is NUL-terminated via nul(); st is a valid buffer.
-    if unsafe { libc::lstat(nul(path).as_ptr().cast(), &mut st) } != 0 {
-        return None;
-    }
-    Some((st.st_mtime, st.st_mtime_nsec))
+    sys::lstat(path)
+        .ok()
+        .map(|st| (st.st_mtime, st.st_mtime_nsec))
 }
 
 /// Whether the mtime changed (StatChanged: negation of StatEq).
@@ -172,72 +140,51 @@ fn stat_changed(path: &Path, prev: &(i64, i64)) -> bool {
 /// gitdir, find `.gitstatus.`-prefixed dirs with mtime older than now-10s,
 /// and delete them in reverse order (a/1, a, b/1, b, root).
 fn remove_stale_dirs(gitdir: &Path) {
-    // SAFETY: path is NUL-terminated via nul().
-    let dir_fd = unsafe {
-        libc::open(
-            nul(gitdir).as_ptr().cast(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
-        )
-    };
-    if dir_fd < 0 {
+    let Ok(dir_fd) = sys::open_dir(gitdir) else {
         return;
-    }
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
-    let mut names: Vec<Vec<u8>> = Vec::new();
-    let dup_fd = unsafe { libc::dup(dir_fd) };
-    if dup_fd >= 0 {
-        let dirp = unsafe { libc::fdopendir(dup_fd) };
-        if !dirp.is_null() {
-            loop {
-                let ent = unsafe { libc::readdir(dirp) };
-                if ent.is_null() {
-                    break;
-                }
-                let name = unsafe { std::ffi::CStr::from_ptr((*ent).d_name.as_ptr()) }.to_bytes();
-                if name.starts_with(b".gitstatus.") {
-                    names.push(name.to_vec());
-                }
-            }
-            unsafe { libc::closedir(dirp) };
-        } else {
-            unsafe { libc::close(dup_fd) };
+    };
+    let now = sys::time_seconds();
+    let entries = match sys::read_dir(dir_fd) {
+        Ok(entries) => entries,
+        Err(e) => {
+            log::debug!("cannot list the gitdir for stale probes: {e}");
+            let _ = sys::close(dir_fd);
+            return;
         }
-    }
-    for name in names {
-        let mut path = gitdir.to_path_buf();
-        path.push(std::ffi::OsStr::from_bytes(&name));
-        let mut st: libc::stat = unsafe { std::mem::zeroed() };
-        // SAFETY: standard fstatat semantics.
-        let ok = unsafe {
-            libc::fstatat(
-                dir_fd,
-                std::ffi::CString::new(name.clone())
-                    .unwrap()
-                    .as_bytes_with_nul()
-                    .as_ptr()
-                    .cast(),
-                &mut st,
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        } == 0;
-        if !ok || st.st_mtime + 10 > now {
+    };
+    for entry in entries {
+        if !entry.name.starts_with(b".gitstatus.") {
             continue;
         }
-        // Reverse-order delete: a/1, a, b/1, b, root (NUL via nul()).
-        let mut sub = path.clone();
-        sub.push("a/1");
-        unsafe { libc::rmdir(nul(&sub).as_ptr().cast()) };
-        let mut sub = path.clone();
-        sub.push("a");
-        unsafe { libc::rmdir(nul(&sub).as_ptr().cast()) };
-        let mut sub = path.clone();
-        sub.push("b/1");
-        unsafe { libc::unlink(nul(&sub).as_ptr().cast()) };
-        let mut sub = path.clone();
-        sub.push("b");
-        unsafe { libc::rmdir(nul(&sub).as_ptr().cast()) };
-        unsafe { libc::rmdir(nul(&path).as_ptr().cast()) };
+        // `read_dir` keeps the NUL for the scanner; a path does not take it.
+        let name = &entry.name[..entry.name.len() - 1];
+        let Ok(st) = sys::fstatat(dir_fd, &entry.name) else {
+            continue;
+        };
+        if st.st_mtime + 10 > now {
+            continue;
+        }
+        let mut path = gitdir.to_path_buf();
+        path.push(OsStr::from_bytes(name));
+        // Reverse-order delete: a/1, a, b/1, b, root. A path may already be gone, which is not
+        // an error here.
+        ignore_missing(sys::rmdir(&path.join("a/1")));
+        ignore_missing(sys::rmdir(&path.join("a")));
+        ignore_missing(sys::unlink(&path.join("b/1")));
+        ignore_missing(sys::rmdir(&path.join("b")));
+        ignore_missing(sys::rmdir(&path));
     }
-    // SAFETY: standard close semantics.
-    unsafe { libc::close(dir_fd) };
+    if let Err(e) = sys::close(dir_fd) {
+        log::debug!("close of the gitdir failed: {e}");
+    }
+}
+
+/// Cleanup of a stale probe path: absent is the normal case after a crash, other errors go to
+/// the debug log.
+fn ignore_missing(result: std::io::Result<()>) {
+    if let Err(e) = result
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        log::debug!("stale probe cleanup failed: {e}");
+    }
 }

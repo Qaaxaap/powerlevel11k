@@ -25,8 +25,10 @@
 
 pub mod daemon;
 pub mod index;
+mod index_stats;
 pub mod options;
 pub mod protocol;
 pub mod repo;
 pub mod scan;
+mod sys;
 pub mod untracked_cache;

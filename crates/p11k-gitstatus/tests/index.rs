@@ -132,6 +132,78 @@ fn is_modified_detects_ino_change() {
     assert!(is_modified(&e, &st, &caps()));
 }
 
+/// A stat with the fields `is_modified` compares, so a test can build one without a 4 GiB file.
+fn fake_stat(size: i64, ino: u64) -> libc::stat {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    st.st_ino = ino;
+    st.st_size = size;
+    st.st_mtime = 100;
+    st.st_mtime_nsec = 5;
+    st.st_mode = libc::S_IFREG | 0o644;
+    st
+}
+
+fn fake_entry(ino: u32, size: u32) -> IndexEntry {
+    IndexEntry {
+        path: b"big\0".to_vec(),
+        ino,
+        fsize: size,
+        mtime_sec: 100,
+        mtime_nsec: 5,
+        mode: 0o100644,
+        stage: 0,
+        flags_extended: 0,
+    }
+}
+
+/// git stores the size in 32 bits and compares it truncated. A file over 4 GiB must not be
+/// reported as modified only because its full size does not fit.
+#[test]
+fn is_modified_truncates_a_size_over_4gib() {
+    let st = fake_stat((1i64 << 32) + 0x1000, 7);
+    assert!(
+        !is_modified(&fake_entry(7, 0x1000), &st, &caps()),
+        "the low 32 bits of the size match, so the file is clean"
+    );
+}
+
+/// A file that is an exact multiple of 4 GiB truncates to zero, which the index reads as a
+/// racily-clean entry; git maps that case to `0x80000000`.
+#[test]
+fn is_modified_munges_an_exact_multiple_of_4gib() {
+    let st = fake_stat(1i64 << 32, 7);
+    assert!(
+        !is_modified(&fake_entry(7, 0x8000_0000), &st, &caps()),
+        "the munged size matches the index entry"
+    );
+}
+
+/// The inode is 32-bit in the index and git compares it truncated. A 64-bit inode whose low half
+/// matches the entry is clean.
+#[test]
+fn is_modified_truncates_an_inode_over_32_bits() {
+    let mut st = fake_stat(3, 7);
+    st.st_ino = (1u64 << 32) + 7;
+    assert!(
+        !is_modified(&fake_entry(7, 3), &st, &caps()),
+        "the low 32 bits of the inode match, so the file is clean"
+    );
+}
+
+/// The mtime seconds are 32-bit in the index as well; git compares `(unsigned int)st_mtime`.
+/// An mtime past 2038 does not fit in the signed index field and must still compare equal.
+#[test]
+fn is_modified_truncates_an_mtime_past_2038() {
+    let mut st = fake_stat(3, 7);
+    st.st_mtime = 2_208_960_000; // 2040-01-01
+    let mut entry = fake_entry(7, 3);
+    entry.mtime_sec = 2_208_960_000u32 as i32;
+    assert!(
+        !is_modified(&entry, &st, &caps()),
+        "the 32-bit mtime matches, so the file is clean"
+    );
+}
+
 /// ZERO_NSEC special case: an index nsec of 0 skips nsec comparison (mirrors GITSTATUS_ZERO_NSEC).
 #[test]
 fn is_modified_zero_nsec_ignores_nsec_mismatch() {
